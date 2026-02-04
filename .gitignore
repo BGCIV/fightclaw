@@ -1,5 +1,8 @@
 # Dependencies
 node_modules
+.pnpm-store
+.pnpm-store/
+node_modules/.pnpm
 .pnp
 .pnp.js
 
@@ -53,3 +56,4 @@ temp
 CLAUDE.md
 FUTURE_FIXES.md
 index.ts
+project docs/
