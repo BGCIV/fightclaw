@@ -10,6 +10,7 @@ type RateLimitBinding = {
 type AppBindings = {
   DB: D1Database;
   CORS_ORIGIN: string;
+  DEV_AGENT_KEY: string;
   MATCHMAKER: DurableObjectNamespace;
   MATCH: DurableObjectNamespace;
   MOVE_SUBMIT_LIMIT?: RateLimitBinding;
@@ -51,6 +52,13 @@ const getMatchStub = (c: { env: AppBindings }, matchId: string) => {
   return c.env.MATCH.get(id);
 };
 
+const getBearerToken = (authorization?: string) => {
+  if (!authorization) return null;
+  const [scheme, token] = authorization.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
+  return token.trim();
+};
+
 app.use(
   "/*",
   cors({
@@ -71,6 +79,15 @@ app.use("/*", async (c, next) => {
   const outcome = await limiter.limit({ key });
   if (!outcome.success) return c.text("Too Many Requests", 429);
 
+  return next();
+});
+
+app.use("/v1/matches/:id/move", async (c, next) => {
+  const token = getBearerToken(c.req.header("authorization"));
+  if (!token) return c.text("Unauthorized", 401);
+  const expected = c.env.DEV_AGENT_KEY;
+  if (!expected) return c.text("Auth not configured", 500);
+  if (token !== expected) return c.text("Unauthorized", 401);
   return next();
 });
 
