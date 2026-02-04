@@ -51,7 +51,6 @@ coverage
 .cache
 tmp
 temp
-pnpm-workspace.yaml
 
 # Local notes/scratch
 CLAUDE.md
