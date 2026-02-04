@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { z } from "zod";
+import { MoveSchema } from "@fightclaw/engine";
 
 type RateLimitBinding = {
   limit: (params: { key: string }) => Promise<{ success: boolean }>;
@@ -71,7 +72,7 @@ const movePayloadSchema = z
   .object({
     moveId: z.string().min(1),
     expectedVersion: z.number().int(),
-    move: z.unknown(),
+    move: MoveSchema,
   })
   .strict();
 
@@ -121,6 +122,11 @@ app.use("/*", async (c, next) => {
 });
 
 app.use("/v1/matches/*", async (c, next) => {
+  const path = c.req.path;
+  if (c.req.method === "GET" && (path.endsWith("/state") || path.endsWith("/spectate"))) {
+    return next();
+  }
+
   const token = getBearerToken(c.req.header("authorization"));
   if (!token) return c.text("Unauthorized", 401);
   const pepper = c.env.API_KEY_PEPPER;
@@ -142,9 +148,18 @@ app.get("/", (c) => {
   return c.text("OK");
 });
 
+app.get("/health", (c) => {
+  return c.text("OK");
+});
+
 app.post("/v1/matches/queue", async (c) => {
   const stub = getMatchmakerStub(c);
-  return stub.fetch("https://do/queue", { method: "POST" });
+  return stub.fetch("https://do/queue", {
+    method: "POST",
+    headers: {
+      "x-agent-id": c.get("agentId"),
+    },
+  });
 });
 
 app.post("/v1/matches/:id/move", async (c) => {
@@ -188,6 +203,11 @@ app.post("/v1/matches/:id/finish", async (c) => {
     return c.text("Forbidden", 403);
   }
 
+  const agentId = c.get("agentId") ?? c.req.header("x-agent-id");
+  if (!agentId) {
+    return c.text("Unauthorized", 401);
+  }
+
   const jsonResult = await parseJson(c);
   if (!jsonResult.ok) {
     return c.json({ ok: false, error: "Invalid JSON body." }, 400);
@@ -204,10 +224,47 @@ app.post("/v1/matches/:id/finish", async (c) => {
     body: JSON.stringify(payloadResult.data),
     headers: {
       "content-type": "application/json",
-      "x-agent-id": c.get("agentId"),
+      "x-agent-id": agentId,
       "x-match-id": matchIdResult.data,
     },
   });
+});
+
+app.get("/v1/matches/:id/state", async (c) => {
+  const matchId = c.req.param("id");
+  const matchIdResult = matchIdSchema.safeParse(matchId);
+  if (!matchIdResult.success) {
+    return c.json({ ok: false, error: "Match id must be a UUID." }, 400);
+  }
+
+  const stub = getMatchStub(c, matchIdResult.data);
+  return stub.fetch("https://do/state");
+});
+
+app.get("/v1/matches/:id/stream", async (c) => {
+  const matchId = c.req.param("id");
+  const matchIdResult = matchIdSchema.safeParse(matchId);
+  if (!matchIdResult.success) {
+    return c.json({ ok: false, error: "Match id must be a UUID." }, 400);
+  }
+
+  const stub = getMatchStub(c, matchIdResult.data);
+  return stub.fetch("https://do/stream", {
+    headers: {
+      "x-agent-id": c.get("agentId"),
+    },
+  });
+});
+
+app.get("/v1/matches/:id/spectate", async (c) => {
+  const matchId = c.req.param("id");
+  const matchIdResult = matchIdSchema.safeParse(matchId);
+  if (!matchIdResult.success) {
+    return c.json({ ok: false, error: "Match id must be a UUID." }, 400);
+  }
+
+  const stub = getMatchStub(c, matchIdResult.data);
+  return stub.fetch("https://do/spectate");
 });
 
 app.get("/v1/leaderboard", async (c) => {
