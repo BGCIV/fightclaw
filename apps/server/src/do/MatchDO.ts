@@ -58,6 +58,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
         );
       }
 
+      await this.ensureMatchId(request);
+
       const agentId = request.headers.get("x-agent-id");
       if (!agentId) {
         return Response.json({ ok: false, error: "Agent id is required." }, { status: 400 });
@@ -113,6 +115,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
         return Response.json({ ok: false, error: "Finish payload must be empty or include reason." }, { status: 400 });
       }
 
+      await this.ensureMatchId(request);
+
       const agentId = request.headers.get("x-agent-id");
       if (!agentId) {
         return Response.json({ ok: false, error: "Agent id is required." }, { status: 400 });
@@ -123,6 +127,12 @@ export class MatchDO extends DurableObject<MatchEnv> {
       const players = Array.isArray(state.players) ? state.players : [];
 
       if (state.status === "ended") {
+        try {
+          await this.ensureFinalized(state);
+        } catch (error) {
+          console.error("Failed to persist match finalization", error);
+          return Response.json({ ok: false, error: "Failed to finalize match." }, { status: 500 });
+        }
         const response: FinishResponse = { ok: true, state };
         return Response.json(response);
       }
@@ -147,7 +157,12 @@ export class MatchDO extends DurableObject<MatchEnv> {
       };
 
       await this.ctx.storage.put("state", nextState);
-      await this.persistFinalization(nextState);
+      try {
+        await this.persistFinalization(nextState);
+      } catch (error) {
+        console.error("Failed to persist match finalization", error);
+        return Response.json({ ok: false, error: "Failed to finalize match." }, { status: 500 });
+      }
 
       const response: FinishResponse = { ok: true, state: nextState };
       return Response.json(response);
@@ -163,7 +178,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
   }
 
   private async persistFinalization(state: MatchState) {
-    const matchId = this.ctx.id.name;
+    if (!this.env.DB) {
+      throw new Error("DB binding missing in MatchDO env.");
+    }
+    const matchId = await this.ctx.storage.get<string>("matchId");
     if (!matchId) {
       console.warn("Match id unavailable for finalization");
       return;
@@ -213,6 +231,25 @@ export class MatchDO extends DurableObject<MatchEnv> {
         "UPDATE leaderboard SET rating=?, losses=losses+1, updated_at=datetime('now') WHERE agent_id=?",
       ).bind(loserNext, state.loserAgentId),
     ]);
+
+    await this.ctx.storage.put("finalized", true);
+  }
+
+  private async ensureFinalized(state: MatchState) {
+    const finalized = await this.ctx.storage.get<boolean>("finalized");
+    if (finalized) return;
+    await this.persistFinalization(state);
+  }
+
+  private async ensureMatchId(request: Request) {
+    const existing = await this.ctx.storage.get<string>("matchId");
+    if (existing) return existing;
+    const fromHeader = request.headers.get("x-match-id");
+    if (fromHeader) {
+      await this.ctx.storage.put("matchId", fromHeader);
+      return fromHeader;
+    }
+    return null;
   }
 }
 

@@ -13,10 +13,12 @@ const db = await D1Database("database", {
 
 const matchmaker = DurableObjectNamespace("matchmaker", {
   className: "MatchmakerDO",
+  sqlite: true,
 });
 
 const match = DurableObjectNamespace("match", {
   className: "MatchDO",
+  sqlite: true,
 });
 
 export const server = await Worker("server", {

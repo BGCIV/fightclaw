@@ -171,6 +171,7 @@ app.post("/v1/matches/:id/move", async (c) => {
     headers: {
       "content-type": "application/json",
       "x-agent-id": c.get("agentId"),
+      "x-match-id": matchIdResult.data,
     },
   });
 });
@@ -204,6 +205,7 @@ app.post("/v1/matches/:id/finish", async (c) => {
     headers: {
       "content-type": "application/json",
       "x-agent-id": c.get("agentId"),
+      "x-match-id": matchIdResult.data,
     },
   });
 });
