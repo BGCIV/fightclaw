@@ -15,7 +15,7 @@ export default defineWorkersConfig(async () => {
 
 	return {
 		test: {
-			exclude: ["**/*.durable.test.ts"],
+			include: ["test/**/*.durable.test.ts"],
 			setupFiles: ["./test/setup.ts"],
 			poolOptions: {
 				workers: {

@@ -17,10 +17,10 @@ This project was created with [Better-T-Stack](https://github.com/AmanVarshney01
 
 ## Getting Started
 
-First, install the dependencies:
+First, install the dependencies (pnpm is the canonical path):
 
 ```bash
-bun install
+pnpm install
 ```
 
 ## Database Setup
@@ -35,13 +35,13 @@ This project uses SQLite with Drizzle ORM.
 3. Apply the schema to your database:
 
 ```bash
-bun run db:push
+pnpm run db:push
 ```
 
 Then, run the development server:
 
 ```bash
-bun run dev
+pnpm run dev
 ```
 
 Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
@@ -49,9 +49,9 @@ The API is running at [http://localhost:3000](http://localhost:3000).
 
 ## Deployment (Cloudflare via Alchemy)
 
-- Dev: cd apps/server && bun run dev
-- Deploy: cd apps/server && bun run deploy
-- Destroy: cd apps/server && bun run destroy
+- Dev: cd apps/server && pnpm run dev
+- Deploy: cd apps/server && pnpm run deploy
+- Destroy: cd apps/server && pnpm run destroy
 
 For more details, see the guide on [Deploying to Cloudflare with Alchemy](https://www.better-t-stack.dev/docs/guides/cloudflare-alchemy).
 
@@ -67,12 +67,12 @@ cp .env.example .env
 # edit .env with real values
 
 export $(cat .env | xargs)
-bun run deploy
+pnpm run deploy
 ```
 
 ## Git Hooks and Formatting
 
-- Format and lint fix: `bun run check`
+- Format and lint fix: `pnpm run check`
 
 ## Project Structure
 
@@ -87,11 +87,27 @@ fightclaw/
 
 ## Available Scripts
 
-- `bun run dev`: Start all applications in development mode
-- `bun run build`: Build all applications
-- `bun run dev:web`: Start only the web application
-- `bun run dev:server`: Start only the server
-- `bun run check-types`: Check TypeScript types across all apps
-- `bun run db:push`: Push schema changes to database
-- `bun run db:studio`: Open database studio UI
-- `bun run check`: Run Biome formatting and linting
+- `pnpm run dev`: Start all applications in development mode
+- `pnpm run build`: Build all applications
+- `pnpm run dev:web`: Start only the web application
+- `pnpm run dev:server`: Start only the server
+- `pnpm run check-types`: Check TypeScript types across all apps
+- `pnpm run db:push`: Push schema changes to database
+- `pnpm run db:studio`: Open database studio UI
+- `pnpm run check`: Run Biome formatting and linting
+- `pnpm run test`: Run the fast server test suite (Node-based)
+- `pnpm run test:durable`: Run the Durable Objects / SSE test suite (Node-based)
+- `pnpm run test:unit`: Run unit tests (Bun required for bunx)
+
+## Testing Notes
+
+Workers/Miniflare tests must run under Node (not Bun) due to module resolution in workerd. Use:
+- `pnpm run test` (fast suite, Node-based)
+- `pnpm run test:durable` (Durable Objects/SSE)
+
+If you want quick checks in Bun only, use `pnpm run test:unit`.
+
+Durable test notes:
+- The `test:durable` lane is expected to occasionally fail with "isolated storage stack frame" errors from the Workers test runner. This is a known limitation; keep the suite runnable, but don’t gate default CI on it.
+- To run the durable suite: `pnpm run test:durable`
+- Expected current failure signature: "Failed to pop isolated storage stack frame" / "Isolated storage failed" coming from `@cloudflare/vitest-pool-workers` (not app assertions).

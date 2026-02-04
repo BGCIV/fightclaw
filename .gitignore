@@ -1,5 +1,8 @@
 # Dependencies
 node_modules
+.pnpm-store
+.pnpm-store/
+node_modules/.pnpm
 .pnp
 .pnp.js
 
@@ -48,8 +51,10 @@ coverage
 .cache
 tmp
 temp
+pnpm-workspace.yaml
 
 # Local notes/scratch
 CLAUDE.md
 FUTURE_FIXES.md
 index.ts
+project docs/
