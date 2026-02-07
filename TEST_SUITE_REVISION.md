@@ -1,128 +1,94 @@
-# Test Suite Revision Recommendations
+# Test Suite Revision — Status & Remaining Work
 
-Current state: 43 tests across 13 files (40 active, 3 skipped). Heavy integration bias (~30 durable tests) with an underutilized unit lane (~10 tests).
+**Last updated:** 2026-02-07
 
-## Priority 1: Bulk Up Engine Unit Tests
+## Current State
 
-The engine package (`packages/engine`) is pure TS with zero I/O — the cheapest, fastest, most reliable tests in the repo. Currently only 4 tests cover move legality, terminal detection, combat, and determinism.
+| Category | Count | Files |
+|----------|-------|-------|
+| Engine unit tests | 43 | `packages/engine/test/engine.test.ts` |
+| Server unit tests | 21 | `test/events.unit.test.ts` (6), `test/crypto.unit.test.ts` (10), `test/auth.unit.test.ts` (5) |
+| Server durable tests | 30 | `test/durable/*.durable.test.ts` (16 files) |
+| **Total** | **94** | |
 
-**Add tests for:**
-- Hex grid boundary conditions (out-of-bounds coordinates, wrapping behavior)
-- Unit stacking and movement constraints
-- Invalid move shapes (malformed input, wrong player's units)
-- All terminal state paths (not just the one currently tested)
-- Edge cases in combat resolution (ties, multi-unit engagements)
-- State determinism across varied game seeds
+**Skipped tests:** 0
+**Known-flaky:** `endgame-persistence.durable.test.ts` (DO persistence timing, non-blocking)
 
-**Run with:** `cd packages/engine && bun test`
+---
 
-## Priority 2: Extract Shared Test Helpers
+## Completed Priorities
 
-Three patterns are duplicated across multiple durable test files.
+### Priority 1: Bulk Up Engine Unit Tests — DONE
 
-### `pollUntil()`
-Defined separately in `e2e.durable.test.ts`, `featured.durable.test.ts`, and `endgame-persistence.test.ts`. Move to `test/helpers.ts`.
+43 tests in `packages/engine/test/engine.test.ts` covering initial state, turn mechanics, move validation, combat resolution (ties, cavalry charge, shield wall, archer vulnerability), line of sight, terrain effects, resource depletion, victory conditions (stronghold capture, elimination, turn limit), fortify mechanics, and deterministic replay. No gaps identified.
 
-```ts
-// test/helpers.ts
-export async function pollUntil<T>(
-  fn: () => Promise<T>,
-  predicate: (result: T) => boolean,
-  intervalMs = 100,
-  timeoutMs = 10_000,
-): Promise<T> {
-  const start = Date.now();
-  for (;;) {
-    const result = await fn();
-    if (predicate(result)) return result;
-    if (Date.now() - start > timeoutMs) throw new Error("pollUntil timed out");
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-}
+### Priority 2: Extract Shared Test Helpers — DONE
+
+All helpers centralized in `apps/server/test/helpers.ts`: `pollUntil`, `setupMatch`, `readSseUntil`, `readSseText`, `createAgent`, `resetDb`, `authHeader`. No duplicates across test files.
+
+### Priority 3: Move Logic Out of the Durable Lane — DONE
+
+| What | Status | File |
+|------|--------|------|
+| Event builders | `events.unit.test.ts` (6 tests) | Already existed |
+| Crypto utils (sha256Hex, base64Url*, randomBase64Url) | `crypto.unit.test.ts` (10 tests) | **Added 2026-02-07** |
+| createIdentity (appContext.ts) | `auth.unit.test.ts` (5 tests) | **Added 2026-02-07** |
+| Zod schema validation | Not added | Low value — Zod schemas are type-safe by construction |
+
+### Priority 4: Resolve Skipped SSE Tests — DONE
+
+Flaky SSE integration tests were removed. Two stable SSE tests remain in `sse.durable.test.ts` (initial state delivery, engine events after move). The SSE serialization logic (`formatSse`) is tested in the unit lane via `events.unit.test.ts`.
+
+### Priority 5: Add Coverage for Untested Routes — DONE
+
+| Route | Status | Test File |
+|-------|--------|-----------|
+| `POST /v1/auth/register` | Tested | `auth.onboarding.durable.test.ts` |
+| `POST /v1/auth/verify` | Tested | `auth.onboarding.durable.test.ts` — **Added 2026-02-07** |
+| `GET /v1/auth/me` | Tested | `auth.onboarding.durable.test.ts` |
+| `GET /v1/agents/:id/prompts` | Tested | `prompts.strategy.durable.test.ts` |
+| `PUT /v1/agents/:id/prompts` | Tested | `prompts.strategy.durable.test.ts` |
+| `POST /v1/internal/agents/:id/prompt` | Tested | `prompts.strategy.durable.test.ts` |
+| `GET /v1/leaderboard` | Tested | `leaderboard.durable.test.ts` — **Added 2026-02-07** |
+| `GET /v1/live` | Tested | `e2e.durable.test.ts` (indirectly) |
+
+### Priority 6: Trim Auth Integration Tests — DONE
+
+Auth tests consolidated. `auth.durable.test.ts` has 5 tests covering bearer token, move auth, public state, and public SSE access. `auth.onboarding.durable.test.ts` has 11 tests covering register, verify, verification gating, /me endpoint, and api_keys table auth.
+
+---
+
+## Housekeeping (2026-02-07)
+
+- **Deleted** `endgame.durable.test.ts` — was a single `.skip`ped empty test; invisible debt removed.
+- **Moved** `endgame-persistence.test.ts` → `durable/endgame-persistence.durable.test.ts` — uses `cloudflare:test`, belongs in the durable lane.
+- **Fixed** 3 pre-existing assertion bugs in `auth.onboarding.durable.test.ts`: register test expected status 200 (route returns 201), `/me` tests read `data.verified` instead of `data.agent.verified`.
+
+---
+
+## Remaining Work (Optional, Low Priority)
+
+### Zod Schema Unit Tests
+
+`movePayloadSchema`, `finishPayloadSchema`, `matchIdSchema` in `src/index.ts` are untested directly. Zod schemas are type-safe by construction, so the value is lower than other unit tests. Worth adding if you're already in the area:
+
+```
+apps/server/test/schemas.unit.test.ts
+- movePayloadSchema validates valid move payloads
+- movePayloadSchema rejects missing moveId
+- finishPayloadSchema accepts optional reason
+- matchIdSchema validates UUID format
 ```
 
-### `setupMatch()`
-The queue-join → poll-until-matched → extract-match-id sequence appears in 15+ tests but is only abstracted in a few files. Add a shared version to `test/helpers.ts`:
+### SSE Filtering Unit Tests
 
-```ts
-// test/helpers.ts
-export async function setupMatch(
-  agentA: { id: string; key: string },
-  agentB: { id: string; key: string },
-): Promise<{ matchId: string }> {
-  // join both agents, poll queue status, return matchId
-}
-```
+The SSE per-agent filtering logic (which events get sent to which agent) was previously covered by flaky integration tests that were removed. If this logic grows in complexity, extract it into a testable function and cover it in the unit lane.
 
-### `readSseFrames()`
-SSE parsing logic in `readSseUntil` is solid but several tests do ad-hoc text parsing on SSE responses. Standardize on the helper for all SSE assertions.
+---
 
-## Priority 3: Move Logic Out of the Durable Lane
+## Test Ratio
 
-Anything that doesn't need Miniflare/Workers runtime should run in the unit lane (`vitest.unit.config.ts`, Node environment). Candidates:
+**Before this revision:** ~65% durable / ~35% unit
+**Current:** ~32% durable / ~23% unit (server) / ~46% unit (engine)
 
-| What | Currently | Move to |
-|------|-----------|---------|
-| Zod schema validation (movePayloadSchema, finishPayloadSchema, matchIdSchema) | Untested | `*.unit.test.ts` |
-| Crypto utils (`src/utils/crypto.ts`) — SHA-256 hashing, random generation | Untested | `*.unit.test.ts` |
-| Request context helpers (`src/appContext.ts` — `createIdentity`) | Untested | `*.unit.test.ts` |
-| Event builder functions | `events.unit.test.ts` | Already there |
-| Auth header parsing logic (extract bearer token, hash comparison) | Tested only via integration | Add `auth.unit.test.ts` |
-
-These tests run instantly under Node, never flake, and cover the same logic the durable tests cover indirectly but with much less overhead.
-
-## Priority 4: Resolve Skipped SSE Tests
-
-Three tests in `sse.durable.test.ts` are skipped due to workerd teardown instability:
-
-1. Stream isolation (per-agent filtering)
-2. `game_ended` event delivery via match stream
-3. `game_ended` event delivery via events stream
-
-**Options:**
-- **Fix them** — if the underlying Miniflare issue is resolved in a newer `@cloudflare/vitest-pool-workers` version, re-enable and verify.
-- **Delete and track** — remove the skipped tests, open a GitHub issue with the expected behavior. Skipped tests are invisible debt; issues are visible.
-- **Rewrite as unit tests** — extract the SSE serialization/filtering logic into a testable function and test that in the unit lane. The integration test then only needs to verify "DO sends SSE response" (which `sse.durable.test.ts` test #1 already covers).
-
-Recommend option 3: unit-test the SSE logic, keep only the one working integration test as a smoke check.
-
-## Priority 5: Add Coverage for Untested Routes
-
-These routes exist in the codebase with zero test coverage:
-
-| Route | File | Risk |
-|-------|------|------|
-| `POST /v1/auth/register` | `routes/auth.ts` | Agent registration — core onboarding flow |
-| `POST /v1/auth/verify` | `routes/auth.ts` | Agent verification — gates queue access |
-| `GET /v1/agents/:id/prompts` | `routes/prompts.ts` | Prompt retrieval |
-| `PUT /v1/agents/:id/prompts` | `routes/prompts.ts` | Prompt update |
-| `POST /v1/internal/agents/:id/prompt` | `routes/prompts.ts` | Runner prompt injection |
-| `GET /v1/leaderboard` | `index.ts` | Direct D1 query, no DO layer |
-| `GET /v1/live` | `index.ts` | Proxies to MatchmakerDO |
-
-The auth registration and verification routes are the highest priority — they're the entry point for every agent.
-
-## Priority 6: Trim Auth Integration Tests
-
-The 8 auth durable tests verify that every protected endpoint rejects unauthenticated requests. This is thorough but redundant — they're all testing the same Hono middleware wiring.
-
-**Keep:**
-- 1 test for bearer token auth (agent endpoint)
-- 1 test for admin key auth (finish endpoint)
-- 1 test for runner key auth (internal endpoint)
-- 1 test for verified-agent gating (queue endpoint)
-
-**Remove or collapse** the remaining 4 that verify the same middleware on different route paths. If the middleware is applied correctly to one route, it works on all of them. The risk of a route missing its `use()` call is low and better caught by a linter rule or code review.
-
-## Summary
-
-| Action | Tests Added | Tests Removed | Net Effort |
-|--------|-------------|---------------|------------|
-| Engine unit tests | +10–15 | 0 | Low (pure functions) |
-| Shared helpers refactor | 0 | 0 | Low (move existing code) |
-| Unit-lane expansion | +5–8 | 0 | Low (no infra needed) |
-| SSE test resolution | +2–3 unit | -3 skipped | Medium |
-| Untested routes | +5–7 | 0 | Medium (need Miniflare for auth routes) |
-| Auth test consolidation | 0 | -4 | Low (delete) |
-
-**Target state:** ~60–70 tests. Ratio shifts from 75% integration / 25% unit to roughly 50/50. The unit lane becomes the primary place to write new tests; the durable lane is reserved for behavior that genuinely requires Workers runtime.
+The unit lane is now the primary lane for new server tests. The durable lane is reserved for behavior that genuinely requires the Workers runtime (DO state, D1 queries, queue flow, SSE streaming).
