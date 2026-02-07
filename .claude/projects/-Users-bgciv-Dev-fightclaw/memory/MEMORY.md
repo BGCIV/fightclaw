@@ -1,5 +1,11 @@
 # Fightclaw Project Memory
 
+## Current State (2026-02-06)
+- Full v2 migration complete: engine, server, AND web all use v2 types (HexId, 21x9, War of Attrition)
+- Monorepo type-checks clean: `pnpm -w run check-types` passes all packages
+- Engine tests: 43 passing
+- Work on `dev` branch, pending PR to `main`
+
 ## Local Dev Setup Gotchas
 
 - **CORS**: `apps/server/.env` must include `http://localhost:3001` in `CORS_ORIGIN` for the web dev server to talk to the API server
