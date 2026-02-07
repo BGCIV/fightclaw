@@ -26,6 +26,7 @@ function clearUnits(state: MatchState): MatchState {
 	s.players.B.units = [];
 	for (let i = 0; i < s.board.length; i++) {
 		if (s.board[i]?.unitId) {
+			// biome-ignore lint/style/noNonNullAssertion: index checked on prior line
 			s.board[i] = { ...s.board[i]!, unitId: null };
 		}
 	}
@@ -57,6 +58,7 @@ function addUnitToState(
 	s.players[owner].units.push(unit);
 	const idx = hexIndex(position);
 	if (s.board[idx]) {
+		// biome-ignore lint/style/noNonNullAssertion: index checked on prior line
 		s.board[idx] = { ...s.board[idx]!, unitId: id };
 	}
 	return s;
@@ -307,12 +309,15 @@ describe("v2 engine - War of Attrition", () => {
 		state.players.A.gold = 100;
 		// Clear the stronghold B2 so we can recruit there
 		// Move A-1 off B2
+		// biome-ignore lint/style/noNonNullAssertion: unit known to exist in initial state
 		const a1 = state.players.A.units.find((u) => u.id === "A-1")!;
 		const oldIdx = hexIndex(a1.position);
+		// biome-ignore lint/style/noNonNullAssertion: valid board index
 		state.board[oldIdx] = { ...state.board[oldIdx]!, unitId: null };
 		// Move A-1 to B4 (plains, should be empty)
 		a1.position = "B4";
 		const b4Idx = hexIndex("B4");
+		// biome-ignore lint/style/noNonNullAssertion: valid board index
 		state.board[b4Idx] = { ...state.board[b4Idx]!, unitId: "A-1" };
 
 		// Recruit at B2
@@ -350,13 +355,16 @@ describe("v2 engine - War of Attrition", () => {
 		state = structuredClone(state);
 		state.players.A.gold = 100;
 		// Clear B2 of the infantry
+		// biome-ignore lint/style/noNonNullAssertion: unit known to exist in initial state
 		const a1 = state.players.A.units.find((u) => u.id === "A-1")!;
 		state.board[hexIndex(a1.position)] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[hexIndex(a1.position)]!,
 			unitId: null,
 		};
 		a1.position = "B4";
 		state.board[hexIndex("B4")] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[hexIndex("B4")]!,
 			unitId: "A-1",
 		};
@@ -481,6 +489,7 @@ describe("v2 engine - War of Attrition", () => {
 		state = addUnitToState(state, "A-1", "infantry", "A", "E2");
 		state = addUnitToState(state, "B-1", "cavalry", "B", "E3");
 		state.board[hexIndex("E3")] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[hexIndex("E3")]!,
 			unitId: "B-1",
 			controlledBy: "B",
@@ -593,7 +602,9 @@ describe("v2 engine - War of Attrition", () => {
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
 		// Place adjacent friendly infantry
 		const d10Neighbors = neighborsOf("D10");
+		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		const friendlyPos1 = d10Neighbors[0]!;
+		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		const friendlyPos2 = d10Neighbors[1]!;
 		state = addUnitToState(state, "B-2", "infantry", "B", friendlyPos1);
 		state = addUnitToState(state, "B-3", "infantry", "B", friendlyPos2);
@@ -638,13 +649,16 @@ describe("v2 engine - War of Attrition", () => {
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
 		const d10Neighbors = neighborsOf("D10");
-		// Place 3 adjacent infantry
+		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		state = addUnitToState(state, "B-2", "infantry", "B", d10Neighbors[0]!);
+		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		state = addUnitToState(state, "B-3", "infantry", "B", d10Neighbors[1]!);
+		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		state = addUnitToState(state, "B-4", "infantry", "B", d10Neighbors[2]!);
 
 		let attackerPos: HexId | null = null;
 		for (let i = 3; i < d10Neighbors.length; i++) {
+			// biome-ignore lint/style/noNonNullAssertion: loop bounded by array length
 			const n = d10Neighbors[i]!;
 			if (!state.board[hexIndex(n)]?.unitId) {
 				attackerPos = n;
@@ -786,11 +800,13 @@ describe("v2 engine - War of Attrition", () => {
 		// Give A control of a gold mine
 		const b9Idx = hexIndex("B9");
 		state.board[b9Idx] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[b9Idx]!,
 			controlledBy: "A",
 		};
 
 		const startingGold = state.players.A.gold;
+		// biome-ignore lint/style/noNonNullAssertion: gold_mine always has reserve
 		const startingReserve = state.board[b9Idx]!.reserve!;
 
 		// Player A passes (turn ends → B's turn starts, no gold mine for B)
@@ -809,6 +825,7 @@ describe("v2 engine - War of Attrition", () => {
 		// Plus strongholds: +4
 		expect(state.players.A.gold).toBe(startingGold + 4 + 3);
 		// Reserve decremented
+		// biome-ignore lint/style/noNonNullAssertion: valid board index
 		expect(state.board[b9Idx]!.reserve).toBe(startingReserve - 3);
 	});
 
@@ -818,6 +835,7 @@ describe("v2 engine - War of Attrition", () => {
 		// Give A control of a lumber camp
 		const c8Idx = hexIndex("C8");
 		state.board[c8Idx] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[c8Idx]!,
 			controlledBy: "A",
 		};
@@ -832,6 +850,7 @@ describe("v2 engine - War of Attrition", () => {
 
 		// A got wood from lumber camp: min(2, 15) = 2
 		expect(result.state.players.A.wood).toBe(2);
+		// biome-ignore lint/style/noNonNullAssertion: valid board index
 		expect(result.state.board[c8Idx]!.reserve).toBe(15 - 2);
 	});
 
@@ -843,6 +862,7 @@ describe("v2 engine - War of Attrition", () => {
 		// Give A control of crown (E11)
 		const e11Idx = hexIndex("E11");
 		state.board[e11Idx] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[e11Idx]!,
 			controlledBy: "A",
 		};
@@ -879,6 +899,7 @@ describe("v2 engine - War of Attrition", () => {
 		// Set a hex to controlled by A
 		const e10Idx = hexIndex("E10");
 		state.board[e10Idx] = {
+			// biome-ignore lint/style/noNonNullAssertion: valid board index
 			...state.board[e10Idx]!,
 			controlledBy: "A",
 		};
@@ -981,6 +1002,7 @@ describe("v2 engine - War of Attrition", () => {
 		state.players.B.vp = 0;
 		// Clear all control so hex counts are equal
 		for (let i = 0; i < state.board.length; i++) {
+			// biome-ignore lint/style/noNonNullAssertion: loop bounded by array length
 			state.board[i] = { ...state.board[i]!, controlledBy: null };
 		}
 

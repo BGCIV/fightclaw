@@ -14,15 +14,17 @@ describe("auth onboarding", () => {
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ name: "TestAgent" }),
 			});
-			expect(res.status).toBe(200);
+			expect(res.status).toBe(201);
 			const data = (await res.json()) as {
+				ok: boolean;
+				agent?: { id: string };
 				apiKey?: string;
 				claimCode?: string;
-				agentId?: string;
 			};
+			expect(data.ok).toBe(true);
 			expect(data.apiKey).toBeDefined();
 			expect(data.claimCode).toBeDefined();
-			expect(data.agentId).toBeDefined();
+			expect(data.agent?.id).toBeDefined();
 		});
 
 		it("requires name on register", async () => {
@@ -79,8 +81,11 @@ describe("auth onboarding", () => {
 				headers: authHeader(agent.key),
 			});
 			expect(res.status).toBe(200);
-			const data = (await res.json()) as { verified?: boolean };
-			expect(data.verified).toBe(true);
+			const data = (await res.json()) as {
+				ok: boolean;
+				agent?: { verified: boolean };
+			};
+			expect(data.agent?.verified).toBe(true);
 		});
 
 		it("returns unverified status for unverified agent", async () => {
@@ -96,8 +101,67 @@ describe("auth onboarding", () => {
 				headers: authHeader(agent.key),
 			});
 			expect(res.status).toBe(200);
-			const data = (await res.json()) as { verified?: boolean };
-			expect(data.verified).toBe(false);
+			const data = (await res.json()) as {
+				ok: boolean;
+				agent?: { verified: boolean };
+			};
+			expect(data.agent?.verified).toBe(false);
+		});
+	});
+
+	describe("verify", () => {
+		it("verifies agent with valid claim code", async () => {
+			// Register a new agent to get a claim code
+			const regRes = await SELF.fetch("https://example.com/v1/auth/register", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ name: "VerifyMe" }),
+			});
+			const regData = (await regRes.json()) as {
+				agent?: { id: string };
+				claimCode?: string;
+			};
+			expect(regData.claimCode).toBeDefined();
+
+			// Verify using admin key + claim code
+			const verifyRes = await SELF.fetch("https://example.com/v1/auth/verify", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-admin-key": env.ADMIN_KEY,
+				},
+				body: JSON.stringify({ claimCode: regData.claimCode }),
+			});
+			expect(verifyRes.status).toBe(200);
+			const verifyData = (await verifyRes.json()) as {
+				ok: boolean;
+				agentId?: string;
+				verifiedAt?: string | null;
+			};
+			expect(verifyData.ok).toBe(true);
+			expect(verifyData.agentId).toBe(regData.agent?.id);
+			expect(verifyData.verifiedAt).not.toBeNull();
+		});
+
+		it("rejects invalid claim code", async () => {
+			const res = await SELF.fetch("https://example.com/v1/auth/verify", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"x-admin-key": env.ADMIN_KEY,
+				},
+				body: JSON.stringify({ claimCode: "fc_claim_bogus" }),
+			});
+			expect(res.status).toBe(404);
+		});
+
+		it("rejects verify without admin key", async () => {
+			const res = await SELF.fetch("https://example.com/v1/auth/verify", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ claimCode: "fc_claim_bogus" }),
+			});
+			expect(res.status).toBe(403);
 		});
 	});
 

@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
-import { authHeader, pollUntil, resetDb, setupMatch } from "./helpers";
+import { authHeader, pollUntil, resetDb, setupMatch } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
