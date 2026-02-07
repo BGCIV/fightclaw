@@ -17,10 +17,6 @@ export default defineConfig({
 			authToken: process.env.SENTRY_AUTH_TOKEN,
 			silent: !process.env.SENTRY_AUTH_TOKEN,
 		}),
-		sentryVitePlugin({
-			org: "bgciv",
-			project: "fightclaw-server",
-		}),
 	],
 	resolve: {
 		alias: {

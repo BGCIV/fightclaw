@@ -329,9 +329,6 @@ importers:
 
   packages/infra:
     dependencies:
-      '@sentry/vite-plugin':
-        specifier: ^3.0.0
-        version: 3.6.1
       dotenv:
         specifier: 'catalog:'
         version: 17.2.3
