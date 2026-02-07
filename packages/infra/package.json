@@ -8,6 +8,7 @@
 		"destroy": "alchemy destroy"
 	},
 	"dependencies": {
+		"@sentry/vite-plugin": "^3.0.0",
 		"dotenv": "catalog:",
 		"zod": "catalog:"
 	},
