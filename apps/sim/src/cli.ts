@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import minimist from "minimist";
-import { StatisticalAnalyzer } from "./analysis/statisticalAnomalyDetector";
 import { makeAggressiveBot } from "./bots/aggressiveBot";
 import { makeGreedyBot } from "./bots/greedyBot";
 import { makeMockLlmBot } from "./bots/mockLlmBot";
@@ -173,11 +172,6 @@ async function main() {
 			readFileSync(summaryPath, "utf-8"),
 		);
 
-		const analyzer = new StatisticalAnalyzer();
-		const lengthStats = analyzer.computeLengthStats(
-			stats.matchLengths.outliers,
-		);
-
 		if (!quiet) {
 			console.log("=== SIMULATION ANALYSIS ===\n");
 			console.log(`Total Games: ${stats.totalGames}`);
@@ -189,6 +183,9 @@ async function main() {
 			console.log(
 				`  Min: ${stats.matchLengths.min}, Max: ${stats.matchLengths.max}`,
 			);
+			console.log(
+				`  StdDev: ${stats.matchLengths.stdDev.toFixed(1)}, P95: ${stats.matchLengths.p95}`,
+			);
 			console.log("\nWin Rates:");
 			for (const [player, winRate] of Object.entries(stats.winRates)) {
 				console.log(
@@ -196,13 +193,15 @@ async function main() {
 				);
 			}
 			console.log(`\nAnomalies: ${stats.totalAnomalies}`);
-			if (lengthStats.outliers.length > 0) {
-				console.log(`  Match length outliers: ${lengthStats.outliers.length}`);
+			if (stats.matchLengths.outliers.length > 0) {
+				console.log(
+					`  Match length outliers: ${stats.matchLengths.outliers.length}`,
+				);
 			}
 		}
 
 		if (json) {
-			console.log(JSON.stringify({ stats, lengthStats }, null, 2));
+			console.log(JSON.stringify(stats, null, 2));
 		}
 		return;
 	}
