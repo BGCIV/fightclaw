@@ -1241,11 +1241,14 @@ function computeCombat(
 	defenders: Unit[],
 	state: MatchState,
 	dist: number,
+	initiatingAttackerId: string,
 ): CombatResult {
 	const config = resolveConfig();
 	const abilities: string[] = [];
 
-	const leadAttacker = attackers[0]!;
+	const leadAttacker =
+		attackers.find((attacker) => attacker.id === initiatingAttackerId) ??
+		attackers[0]!;
 	const leadDefender = defenders[0]!;
 
 	// Attack power: base ATK + attacker bonus + stack bonus + cavalry charge
@@ -2131,7 +2134,13 @@ export function applyMove(state: MatchState, move: Move): ApplyMoveResult {
 				hexDistance(leadAttacker.position, defenders[0]!.position) ?? 0;
 			const ranged = dist > 1;
 
-			const combat = computeCombat(attackers, defenders, nextState, dist);
+			const combat = computeCombat(
+				attackers,
+				defenders,
+				nextState,
+				dist,
+				leadAttacker.id,
+			);
 
 			// Apply damage to defenders
 			const defResult = applyDamageToStack(defenders, combat.damageToDefenders);

@@ -731,6 +731,44 @@ describe("v2 engine - War of Attrition", () => {
 		expect(movedUnit?.chargeEligible).toBeFalsy();
 	});
 
+	test("stacked cavalry uses initiating attacker charge eligibility", () => {
+		let state = createInitialState(0, undefined, [...players]);
+		state = clearUnits(state);
+		// Intentionally create stack order [A-2, A-1]
+		state = addUnitToState(state, "A-2", "cavalry", "A", "B4");
+		state = addUnitToState(state, "A-1", "cavalry", "A", "B4");
+		state = addUnitToState(state, "B-1", "infantry", "B", "B7");
+
+		const r1 = applyMove(state, {
+			action: "move",
+			unitId: "A-1",
+			to: "B6",
+		});
+		expect(r1.ok).toBe(true);
+		if (!r1.ok) return;
+
+		expect(r1.state.board[hexIndex("B6")]?.unitIds).toEqual(["A-2", "A-1"]);
+		expect(
+			r1.state.players.A.units.find((u) => u.id === "A-1")?.chargeEligible,
+		).toBe(true);
+
+		const r2 = applyMove(r1.state, {
+			action: "attack",
+			unitId: "A-1",
+			target: "B7",
+		});
+		expect(r2.ok).toBe(true);
+		if (!r2.ok) return;
+
+		const attackEvent = r2.engineEvents.find((e) => e.type === "attack") as
+			| AttackEvent
+			| undefined;
+		expect(attackEvent).toBeTruthy();
+		// base 4 + attacker bonus 1 + stack bonus 1 + charge 2
+		expect(attackEvent?.attackPower).toBe(8);
+		expect(attackEvent?.abilities).toContain("cavalry_charge");
+	});
+
 	// ---- Shield Wall ----
 
 	test("shield wall +1 per adjacent hex with friendly infantry, max +2", () => {
