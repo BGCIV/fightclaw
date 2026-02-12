@@ -1,4 +1,4 @@
-export type {
+import type {
 	AgentId,
 	EngineEvent,
 	GameState,
@@ -6,6 +6,15 @@ export type {
 	Move,
 	TerminalState,
 } from "@fightclaw/engine";
+
+export type {
+	AgentId,
+	EngineEvent,
+	GameState,
+	MatchState,
+	Move,
+	TerminalState,
+};
 
 export type MatchResult = {
 	seed: number;
