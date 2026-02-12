@@ -3,6 +3,7 @@ import * as path from "node:path";
 import minimist from "minimist";
 import { makeAggressiveBot } from "./bots/aggressiveBot";
 import { makeGreedyBot } from "./bots/greedyBot";
+import { makeLlmBot } from "./bots/llmBot";
 import { makeMockLlmBot } from "./bots/mockLlmBot";
 import { makeRandomLegalBot } from "./bots/randomBot";
 import { playMatch, replayMatch } from "./match";
@@ -16,25 +17,55 @@ import type { Bot } from "./types";
 
 type Args = ReturnType<typeof minimist>;
 
-type BotType = "random" | "greedy" | "aggressive" | "mockllm";
+type BotType = "random" | "greedy" | "aggressive" | "mockllm" | "llm";
 
 function makeBot(
 	id: string,
 	type: BotType,
-	prompt?: string,
-	strategy?: string,
+	opts?: {
+		prompt?: string;
+		strategy?: string;
+		model?: string;
+		apiKey?: string;
+		baseUrl?: string;
+		llmDelayMs?: number;
+		openrouterReferrer?: string;
+		openrouterTitle?: string;
+	},
 ): Bot {
 	switch (type) {
 		case "greedy":
 			return makeGreedyBot(id);
 		case "aggressive":
 			return makeAggressiveBot(id);
+		case "llm": {
+			if (!opts?.model) {
+				throw new Error(`Missing --model for ${id} (required for llm bot)`);
+			}
+			if (!opts.apiKey) {
+				throw new Error(
+					"Missing --apiKey (or set LLM_API_KEY env var) (required for llm bot)",
+				);
+			}
+			return makeLlmBot(id, {
+				model: opts.model,
+				apiKey: opts.apiKey,
+				baseUrl: opts.baseUrl,
+				openRouterReferer: opts.openrouterReferrer,
+				openRouterTitle: opts.openrouterTitle,
+				systemPrompt: opts.prompt,
+				delayMs: opts.llmDelayMs ?? 0,
+			});
+		}
 		case "mockllm":
 			return makeMockLlmBot(id, {
 				strategy:
-					(strategy as "aggressive" | "defensive" | "random" | "strategic") ??
-					"strategic",
-				inline: prompt,
+					(opts?.strategy as
+						| "aggressive"
+						| "defensive"
+						| "random"
+						| "strategic") ?? "strategic",
+				inline: opts?.prompt,
 			});
 		default:
 			return makeRandomLegalBot(id);
@@ -68,8 +99,56 @@ async function main() {
 	const strategy2 =
 		typeof argv.strategy2 === "string" ? argv.strategy2 : undefined;
 
-	const p1 = makeBot("P1", bot1Type, prompt1, strategy1);
-	const p2 = makeBot("P2", bot2Type, prompt2, strategy2);
+	const apiKey =
+		typeof argv.apiKey === "string"
+			? argv.apiKey
+			: (process.env.LLM_API_KEY ?? process.env.OPENROUTER_API_KEY);
+	const baseUrl = typeof argv.baseUrl === "string" ? argv.baseUrl : undefined;
+	const llmDelayMs = num(argv.llmDelay, 0);
+	const openrouterReferrer =
+		typeof argv.openrouterReferrer === "string"
+			? argv.openrouterReferrer
+			: typeof argv.openRouterReferrer === "string"
+				? argv.openRouterReferrer
+				: process.env.OPENROUTER_REFERRER;
+	const openrouterTitle =
+		typeof argv.openrouterTitle === "string"
+			? argv.openrouterTitle
+			: typeof argv.openRouterTitle === "string"
+				? argv.openRouterTitle
+				: process.env.OPENROUTER_TITLE;
+
+	const model =
+		typeof argv.model === "string"
+			? argv.model
+			: typeof argv.modelName === "string"
+				? argv.modelName
+				: undefined;
+	const model1 =
+		typeof argv.model1 === "string" ? argv.model1 : (model ?? undefined);
+	const model2 =
+		typeof argv.model2 === "string" ? argv.model2 : (model ?? undefined);
+
+	const p1 = makeBot("P1", bot1Type, {
+		prompt: prompt1,
+		strategy: strategy1,
+		model: model1,
+		apiKey,
+		baseUrl,
+		llmDelayMs,
+		openrouterReferrer,
+		openrouterTitle,
+	});
+	const p2 = makeBot("P2", bot2Type, {
+		prompt: prompt2,
+		strategy: strategy2,
+		model: model2,
+		apiKey,
+		baseUrl,
+		llmDelayMs,
+		openrouterReferrer,
+		openrouterTitle,
+	});
 
 	if (cmd === "single") {
 		const result = await playMatch({
@@ -121,6 +200,13 @@ async function main() {
 	if (cmd === "mass") {
 		const games = num(argv.games, 10000);
 		const parallel = num(argv.parallel, 4);
+
+		if ((bot1Type === "llm" || bot2Type === "llm") && parallel > 1) {
+			console.error(
+				"LLM bots are only supported with --parallel 1 (API keys are not forwarded to fork workers).",
+			);
+			process.exit(1);
+		}
 
 		const options = createSimulationOptions({
 			games,
@@ -269,22 +355,44 @@ async function main() {
 	console.error("");
 	console.error("Bot options (for single, tourney, mass):");
 	console.error(
-		"  --bot1 TYPE    P1 bot type: random, greedy, aggressive, mockllm (default: greedy)",
+		"  --bot1 TYPE    P1 bot type: random, greedy, aggressive, mockllm, llm (default: greedy)",
 	);
 	console.error(
-		"  --bot2 TYPE    P2 bot type: random, greedy, aggressive, mockllm (default: random)",
+		"  --bot2 TYPE    P2 bot type: random, greedy, aggressive, mockllm, llm (default: random)",
 	);
 	console.error(
-		'  --prompt1 TXT  Inline prompt for P1 mockllm bot (e.g., "Always attack first")',
+		'  --prompt1 TXT  Inline prompt for P1 mockllm/llm bot (e.g., "Always attack first")',
 	);
 	console.error(
-		'  --prompt2 TXT  Inline prompt for P2 mockllm bot (e.g., "Defend and recruit")',
+		'  --prompt2 TXT  Inline prompt for P2 mockllm/llm bot (e.g., "Defend and recruit")',
 	);
 	console.error(
 		"  --strategy1 S  MockLLM strategy: aggressive, defensive, random, strategic",
 	);
 	console.error(
 		"  --strategy2 S  MockLLM strategy: aggressive, defensive, random, strategic",
+	);
+	console.error("");
+	console.error("LLM options:");
+	console.error(
+		"  --model MODEL   Model id (alias: applies to both players if --model1/--model2 omitted)",
+	);
+	console.error("  --model1 MODEL  Model id for P1 (required when --bot1 llm)");
+	console.error("  --model2 MODEL  Model id for P2 (required when --bot2 llm)");
+	console.error(
+		"  --apiKey KEY    API key for provider (or set LLM_API_KEY env var)",
+	);
+	console.error(
+		"  --baseUrl URL   OpenAI-compatible base URL (default: OpenRouter)",
+	);
+	console.error(
+		"  --openrouterReferrer URL  Sets OpenRouter HTTP-Referer header (or OPENROUTER_REFERRER env var)",
+	);
+	console.error(
+		"  --openrouterTitle TXT     Sets OpenRouter X-Title header (or OPENROUTER_TITLE env var)",
+	);
+	console.error(
+		"  --llmDelay MS   Delay between LLM calls per bot (default: 0)",
 	);
 	process.exit(1);
 }
