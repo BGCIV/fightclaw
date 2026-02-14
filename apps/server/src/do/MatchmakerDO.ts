@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { AppBindings } from "../appTypes";
+import { ELO_START } from "../constants/rating";
 import { emitMetric } from "../obs/metrics";
 import {
 	buildMatchFoundEvent,
@@ -7,6 +8,8 @@ import {
 	type MatchFoundEvent,
 	type NoEventsEvent,
 } from "../protocol/events";
+import { doFetchWithRetry } from "../utils/durable";
+import { isRecord } from "../utils/typeGuards";
 
 const FEATURED_MATCH_KEY = "featuredMatchId";
 const FEATURED_QUEUE_KEY = "featuredQueue";
@@ -14,15 +17,11 @@ const FEATURED_CACHE_KEY = "featuredCache";
 const FEATURED_CACHE_TTL_MS = 10_000;
 const EVENT_BUFFER_PREFIX = "events:";
 const EVENT_BUFFER_MAX = 25;
-const ELO_START = 1500;
 const ELO_RANGE_DEFAULT = 200;
 const QUEUE_KEY = "queue";
 const ACTIVE_MATCH_PREFIX = "activeMatch:";
 const RECENT_PREFIX = "recent:";
 const QUEUE_TTL_MS = 10 * 60 * 1000;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 type MatchmakerEnv = {
 	DB: D1Database;
@@ -63,34 +62,6 @@ type FeaturedCache = FeaturedSnapshot & { checkedAt: number };
 
 export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	private waiters = new Map<string, Set<(event: MatchmakerEvent) => void>>();
-
-	private isDurableObjectResetError(error: unknown) {
-		if (!error || typeof error !== "object") return false;
-		const anyErr = error as { message?: unknown; durableObjectReset?: unknown };
-		if (anyErr.durableObjectReset === true) return true;
-		const message = typeof anyErr.message === "string" ? anyErr.message : "";
-		return message.includes("invalidating this Durable Object");
-	}
-
-	private async doFetchWithRetry(
-		stub: { fetch: (input: string, init?: RequestInit) => Promise<Response> },
-		input: string,
-		init?: RequestInit,
-		retries = 2,
-	) {
-		let attempt = 0;
-		for (;;) {
-			try {
-				return await stub.fetch(input, init);
-			} catch (error) {
-				if (attempt >= retries || !this.isDurableObjectResetError(error)) {
-					throw error;
-				}
-				attempt += 1;
-				await new Promise((resolve) => setTimeout(resolve, 10 * attempt));
-			}
-		}
-	}
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
@@ -212,7 +183,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 			const id = this.env.MATCH.idFromName(snapshot.matchId);
 			const stub = this.env.MATCH.get(id);
-			const resp = await this.doFetchWithRetry(stub, "https://do/state");
+			const resp = await doFetchWithRetry(stub, "https://do/state");
 			if (!resp.ok) {
 				return Response.json({ matchId: snapshot.matchId, state: null });
 			}
@@ -409,7 +380,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 				const id = this.env.MATCH.idFromName(matchId);
 				const stub = this.env.MATCH.get(id);
-				const initResp = await this.doFetchWithRetry(stub, "https://do/init", {
+				const initResp = await doFetchWithRetry(stub, "https://do/init", {
 					method: "POST",
 					body: JSON.stringify({
 						players,
@@ -863,7 +834,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		try {
 			const id = this.env.MATCH.idFromName(matchId);
 			const stub = this.env.MATCH.get(id);
-			const resp = await this.doFetchWithRetry(stub, "https://do/state");
+			const resp = await doFetchWithRetry(stub, "https://do/state");
 			if (!resp.ok) return false;
 			const payload = (await resp.json()) as { state?: unknown };
 			return Boolean(payload?.state);

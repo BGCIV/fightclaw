@@ -5,6 +5,14 @@ import type { AppBindings, AppVariables } from "../appTypes";
 import { requireAgentAuth } from "../middleware/auth";
 import { emitMetric } from "../obs/metrics";
 import { decryptPrompt, encryptPrompt } from "../prompts/crypto";
+import {
+	badRequest,
+	notFound,
+	serviceUnavailable,
+	unauthorized,
+} from "../utils/httpErrors";
+import { created, success } from "../utils/httpSuccess";
+import { parseUuidParam } from "../utils/params";
 import { validateGameType } from "./auth";
 
 type PromptContext = {
@@ -52,6 +60,34 @@ const requireEncryptionKey = (raw: string | undefined | null) => {
 	return trimmed.length > 0 ? trimmed : null;
 };
 
+const setActivePrompt = async (input: {
+	db: AppBindings["DB"];
+	agentId: string;
+	gameType: string;
+	promptId: string;
+}) => {
+	await input.db
+		.prepare(
+			[
+				"INSERT INTO agent_prompt_active (agent_id, game_type, prompt_version_id, activated_at)",
+				"VALUES (?, ?, ?, datetime('now'))",
+				"ON CONFLICT(agent_id, game_type) DO UPDATE SET",
+				"prompt_version_id=excluded.prompt_version_id, activated_at=excluded.activated_at",
+			].join(" "),
+		)
+		.bind(input.agentId, input.gameType, input.promptId)
+		.run();
+
+	const activeRow = await input.db
+		.prepare(
+			"SELECT activated_at FROM agent_prompt_active WHERE agent_id = ? AND game_type = ? LIMIT 1",
+		)
+		.bind(input.agentId, input.gameType)
+		.first<{ activated_at: string | null }>();
+
+	return activeRow?.activated_at ?? null;
+};
+
 export const promptsRoutes = new Hono<PromptContext>();
 
 // All /v1/agents/me/* endpoints are agent-auth, but do not require verification.
@@ -64,18 +100,15 @@ promptsRoutes.use("/me/*", async (c, next) => {
 
 promptsRoutes.get("/me/strategy/:gameType", async (c) => {
 	const auth = c.get("auth");
-	if (!auth) return c.text("Unauthorized", 401);
+	if (!auth) return unauthorized(c);
 	const gameType = c.req.param("gameType");
 	if (!validateGameType(gameType)) {
-		return c.json({ ok: false, error: "Invalid gameType." }, 400);
+		return badRequest(c, "Invalid gameType.");
 	}
 
 	const rawKey = requireEncryptionKey(c.env.PROMPT_ENCRYPTION_KEY);
 	if (!rawKey) {
-		return c.json(
-			{ ok: false, error: "Prompt encryption not configured." },
-			503,
-		);
+		return serviceUnavailable(c, "Prompt encryption not configured.");
 	}
 
 	const row = await c.env.DB.prepare(
@@ -99,7 +132,7 @@ promptsRoutes.get("/me/strategy/:gameType", async (c) => {
 		}>();
 
 	if (!row?.id) {
-		return c.json({ ok: false, error: "No active strategy." }, 404);
+		return notFound(c, "No active strategy.");
 	}
 
 	const privateStrategy = await decryptPrompt(
@@ -108,8 +141,7 @@ promptsRoutes.get("/me/strategy/:gameType", async (c) => {
 		rawKey,
 	);
 
-	return c.json({
-		ok: true,
+	return success(c, {
 		active: {
 			id: row.id,
 			gameType,
@@ -124,24 +156,21 @@ promptsRoutes.get("/me/strategy/:gameType", async (c) => {
 
 promptsRoutes.post("/me/strategy/:gameType", async (c) => {
 	const auth = c.get("auth");
-	if (!auth) return c.text("Unauthorized", 401);
+	if (!auth) return unauthorized(c);
 	const gameType = c.req.param("gameType");
 	if (!validateGameType(gameType)) {
-		return c.json({ ok: false, error: "Invalid gameType." }, 400);
+		return badRequest(c, "Invalid gameType.");
 	}
 
 	const rawKey = requireEncryptionKey(c.env.PROMPT_ENCRYPTION_KEY);
 	if (!rawKey) {
-		return c.json(
-			{ ok: false, error: "Prompt encryption not configured." },
-			503,
-		);
+		return serviceUnavailable(c, "Prompt encryption not configured.");
 	}
 
 	const json = await c.req.json().catch(() => null);
 	const parsed = upsertSchema.safeParse(json);
 	if (!parsed.success) {
-		return c.json({ ok: false, error: "Invalid strategy payload." }, 400);
+		return badRequest(c, "Invalid strategy payload.");
 	}
 
 	const activate = parsed.data.activate ?? true;
@@ -180,52 +209,37 @@ promptsRoutes.post("/me/strategy/:gameType", async (c) => {
 			.run();
 	} catch (error) {
 		console.error("Failed to store prompt version", error);
-		return c.json({ ok: false, error: "Strategy unavailable." }, 503);
+		return serviceUnavailable(c, "Strategy unavailable.");
 	}
 
 	let activatedAt: string | null = null;
 	if (activate) {
-		await c.env.DB.prepare(
-			[
-				"INSERT INTO agent_prompt_active (agent_id, game_type, prompt_version_id, activated_at)",
-				"VALUES (?, ?, ?, datetime('now'))",
-				"ON CONFLICT(agent_id, game_type) DO UPDATE SET",
-				"prompt_version_id=excluded.prompt_version_id, activated_at=excluded.activated_at",
-			].join(" "),
-		)
-			.bind(auth.agentId, gameType, promptId)
-			.run();
-
-		const activeRow = await c.env.DB.prepare(
-			"SELECT activated_at FROM agent_prompt_active WHERE agent_id = ? AND game_type = ? LIMIT 1",
-		)
-			.bind(auth.agentId, gameType)
-			.first<{ activated_at: string | null }>();
-		activatedAt = activeRow?.activated_at ?? null;
+		activatedAt = await setActivePrompt({
+			db: c.env.DB,
+			agentId: auth.agentId,
+			gameType,
+			promptId,
+		});
 	}
 
-	return c.json(
-		{
-			ok: true,
-			created: {
-				id: promptId,
-				gameType,
-				version: nextVersion,
-				publicPersona,
-				isActive: activate,
-				activatedAt,
-			},
+	return created(c, {
+		created: {
+			id: promptId,
+			gameType,
+			version: nextVersion,
+			publicPersona,
+			isActive: activate,
+			activatedAt,
 		},
-		201,
-	);
+	});
 });
 
 promptsRoutes.get("/me/strategy/:gameType/versions", async (c) => {
 	const auth = c.get("auth");
-	if (!auth) return c.text("Unauthorized", 401);
+	if (!auth) return unauthorized(c);
 	const gameType = c.req.param("gameType");
 	if (!validateGameType(gameType)) {
-		return c.json({ ok: false, error: "Invalid gameType." }, 400);
+		return badRequest(c, "Invalid gameType.");
 	}
 
 	const activeRow = await c.env.DB.prepare(
@@ -254,23 +268,23 @@ promptsRoutes.get("/me/strategy/:gameType/versions", async (c) => {
 		isActive: activeId ? row.id === activeId : false,
 	}));
 
-	return c.json({ ok: true, versions });
+	return success(c, { versions });
 });
 
 promptsRoutes.post(
 	"/me/strategy/:gameType/versions/:version/activate",
 	async (c) => {
 		const auth = c.get("auth");
-		if (!auth) return c.text("Unauthorized", 401);
+		if (!auth) return unauthorized(c);
 		const gameType = c.req.param("gameType");
 		if (!validateGameType(gameType)) {
-			return c.json({ ok: false, error: "Invalid gameType." }, 400);
+			return badRequest(c, "Invalid gameType.");
 		}
 
 		const versionRaw = c.req.param("version");
 		const version = Number.parseInt(versionRaw, 10);
 		if (!Number.isFinite(version) || version <= 0) {
-			return c.json({ ok: false, error: "Invalid version." }, 400);
+			return badRequest(c, "Invalid version.");
 		}
 
 		const row = await c.env.DB.prepare(
@@ -280,33 +294,22 @@ promptsRoutes.post(
 			.first<{ id: string; version: number }>();
 
 		if (!row?.id) {
-			return c.json({ ok: false, error: "Version not found." }, 404);
+			return notFound(c, "Version not found.");
 		}
 
-		await c.env.DB.prepare(
-			[
-				"INSERT INTO agent_prompt_active (agent_id, game_type, prompt_version_id, activated_at)",
-				"VALUES (?, ?, ?, datetime('now'))",
-				"ON CONFLICT(agent_id, game_type) DO UPDATE SET",
-				"prompt_version_id=excluded.prompt_version_id, activated_at=excluded.activated_at",
-			].join(" "),
-		)
-			.bind(auth.agentId, gameType, row.id)
-			.run();
+		const activatedAt = await setActivePrompt({
+			db: c.env.DB,
+			agentId: auth.agentId,
+			gameType,
+			promptId: row.id,
+		});
 
-		const activeRow = await c.env.DB.prepare(
-			"SELECT activated_at FROM agent_prompt_active WHERE agent_id = ? AND game_type = ? LIMIT 1",
-		)
-			.bind(auth.agentId, gameType)
-			.first<{ activated_at: string | null }>();
-
-		return c.json({
-			ok: true,
+		return success(c, {
 			active: {
 				id: row.id,
 				gameType,
 				version: row.version,
-				activatedAt: activeRow?.activated_at ?? null,
+				activatedAt,
 			},
 		});
 	},
@@ -321,20 +324,15 @@ internalPromptsRoutes.get("/agents/:agentId/prompt/:gameType", async (c) => {
 	c.set("agentId", agentId);
 	c.set("auth", createIdentity({ agentId }));
 
-	const parsedAgentId = z.string().uuid().safeParse(agentId);
-	if (!parsedAgentId.success) {
-		return c.json({ ok: false, error: "Agent id must be a UUID." }, 400);
-	}
+	const parsedAgentId = parseUuidParam(c, "agentId", "Agent id");
+	if (!parsedAgentId.ok) return parsedAgentId.response;
 	if (!validateGameType(gameType)) {
-		return c.json({ ok: false, error: "Invalid gameType." }, 400);
+		return badRequest(c, "Invalid gameType.");
 	}
 
 	const rawKey = requireEncryptionKey(c.env.PROMPT_ENCRYPTION_KEY);
 	if (!rawKey) {
-		return c.json(
-			{ ok: false, error: "Prompt encryption not configured." },
-			503,
-		);
+		return serviceUnavailable(c, "Prompt encryption not configured.");
 	}
 
 	const row = await c.env.DB.prepare(
@@ -356,7 +354,7 @@ internalPromptsRoutes.get("/agents/:agentId/prompt/:gameType", async (c) => {
 		}>();
 
 	if (!row?.id) {
-		return c.json({ ok: false, error: "No active strategy." }, 404);
+		return notFound(c, "No active strategy.");
 	}
 
 	const privateStrategy = await decryptPrompt(
@@ -381,8 +379,7 @@ internalPromptsRoutes.get("/agents/:agentId/prompt/:gameType", async (c) => {
 		promptVersionId: row.id,
 	});
 
-	return c.json({
-		ok: true,
+	return success(c, {
 		promptVersionId: row.id,
 		version: row.version,
 		systemPrompt,
