@@ -9,9 +9,6 @@ catalogs:
     '@cloudflare/workers-types':
       specifier: ^4.20251213.0
       version: 4.20260203.0
-    '@libsql/client':
-      specifier: 0.15.15
-      version: 0.15.15
     '@types/node':
       specifier: ^22.13.14
       version: 22.19.8
@@ -21,9 +18,6 @@ catalogs:
     dotenv:
       specifier: ^17.2.2
       version: 17.2.3
-    libsql:
-      specifier: 0.5.22
-      version: 0.5.22
     typescript:
       specifier: ^5
       version: 5.9.3
@@ -40,7 +34,7 @@ importers:
         version: link:packages/env
       alchemy:
         specifier: ^0.83.1
-        version: 0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
+        version: 0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
       dotenv:
         specifier: 'catalog:'
         version: 17.2.3
@@ -59,7 +53,7 @@ importers:
         version: link:packages/config
       '@types/bun':
         specifier: latest
-        version: 1.3.8
+        version: 1.3.9
       '@types/node':
         specifier: 'catalog:'
         version: 22.19.8
@@ -111,7 +105,7 @@ importers:
         version: 22.19.8
       alchemy:
         specifier: 'catalog:'
-        version: 0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@5.4.21(@types/node@22.19.8)(lightningcss@1.30.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
+        version: 0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@5.4.21(@types/node@22.19.8)(lightningcss@1.30.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
       tsdown:
         specifier: ^0.16.5
         version: 0.16.8(typescript@5.9.3)
@@ -164,21 +158,12 @@ importers:
       '@fightclaw/env':
         specifier: workspace:*
         version: link:../../packages/env
-      '@hookform/resolvers':
-        specifier: ^5.1.1
-        version: 5.2.2(react-hook-form@7.71.1(react@19.2.3))
-      '@libsql/client':
-        specifier: 'catalog:'
-        version: 0.15.15
       '@sentry/react':
         specifier: ^8.0.0
         version: 8.55.0(react@19.2.3)
       '@tailwindcss/vite':
         specifier: ^4.0.15
         version: 4.1.18(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
-      '@tanstack/react-form':
-        specifier: ^1.12.3
-        version: 1.28.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@tanstack/react-router':
         specifier: ^1.141.1
         version: 1.158.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -188,15 +173,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.2.3
       framer-motion:
         specifier: ^12.33.0
         version: 12.33.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      libsql:
-        specifier: 'catalog:'
-        version: 0.5.22
       lucide-react:
         specifier: ^0.473.0
         version: 0.473.0(react@19.2.3)
@@ -269,25 +248,16 @@ importers:
       '@fightclaw/env':
         specifier: workspace:*
         version: link:../env
-      '@libsql/client':
-        specifier: 'catalog:'
-        version: 0.15.15
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.2.3
       drizzle-orm:
         specifier: ^0.45.1
-        version: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)
-      libsql:
-        specifier: 'catalog:'
-        version: 0.5.22
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
+        version: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)
     devDependencies:
       '@fightclaw/config':
         specifier: workspace:*
         version: link:../config
+      dotenv:
+        specifier: 'catalog:'
+        version: 17.2.3
       drizzle-kit:
         specifier: ^0.31.8
         version: 0.31.8
@@ -313,9 +283,6 @@ importers:
       '@t3-oss/env-core':
         specifier: ^0.13.1
         version: 0.13.10(typescript@5.9.3)(zod@4.3.6)
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.2.3
       zod:
         specifier: 'catalog:'
         version: 4.3.6
@@ -338,16 +305,13 @@ importers:
       dotenv:
         specifier: 'catalog:'
         version: 17.2.3
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
     devDependencies:
       '@fightclaw/config':
         specifier: workspace:*
         version: link:../config
       alchemy:
         specifier: 'catalog:'
-        version: 0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
+        version: 0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -1758,11 +1722,6 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hookform/resolvers@5.2.2':
-    resolution: {integrity: sha512-A/IxlMLShx3KjV/HeTcTfaMxdwy690+L/ZADoeaTltLx+CVuzkeVIPuybK3jrRfw7YZnmdKsVVHAlEPIAEUNlA==}
-    peerDependencies:
-      react-hook-form: ^7.55.0
-
   '@iarna/toml@2.2.5':
     resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
 
@@ -2859,9 +2818,6 @@ packages:
   '@speed-highlight/core@1.2.14':
     resolution: {integrity: sha512-G4ewlBNhUtlLvrJTb88d2mdy2KRijzs4UhnlrOSRT4bmjh/IqNElZa3zkrZ+TC47TwtlDWzVLFADljF1Ijp5hA==}
 
-  '@standard-schema/utils@0.3.0':
-    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
-
   '@t3-oss/env-core@0.13.10':
     resolution: {integrity: sha512-NNFfdlJ+HmPHkLi2HKy7nwuat9SIYOxei9K10lO2YlcSObDILY7mHZNSHsieIM3A0/5OOzw/P/b+yLvPdaG52g==}
     peerDependencies:
@@ -2969,29 +2925,9 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
-  '@tanstack/devtools-event-client@0.4.0':
-    resolution: {integrity: sha512-RPfGuk2bDZgcu9bAJodvO2lnZeHuz4/71HjZ0bGb/SPg8+lyTA+RLSKQvo7fSmPSi8/vcH3aKQ8EM9ywf1olaw==}
-    engines: {node: '>=18'}
-
-  '@tanstack/form-core@1.28.0':
-    resolution: {integrity: sha512-MX3YveB6SKHAJ2yUwp+Ca/PCguub8bVEnLcLUbFLwdkSRMkP0lMGdaZl+F0JuEgZw56c6iFoRyfILhS7OQpydA==}
-
   '@tanstack/history@1.154.14':
     resolution: {integrity: sha512-xyIfof8eHBuub1CkBnbKNKQXeRZC4dClhmzePHVOEel4G7lk/dW+TQ16da7CFdeNLv6u6Owf5VoBQxoo6DFTSA==}
     engines: {node: '>=12'}
-
-  '@tanstack/pacer-lite@0.1.1':
-    resolution: {integrity: sha512-y/xtNPNt/YeyoVxE/JCx+T7yjEzpezmbb+toK8DDD1P4m7Kzs5YR956+7OKexG3f8aXgC3rLZl7b1V+yNUSy5w==}
-    engines: {node: '>=18'}
-
-  '@tanstack/react-form@1.28.0':
-    resolution: {integrity: sha512-ibLcf5QkTogV0Ly944CuqGxWTpHyreNA4Cy8Wtky7zE9wtE3HVapQt4/hUuXo51zihfTkv5URiXpoTSKF5Xosg==}
-    peerDependencies:
-      '@tanstack/react-start': '*'
-      react: ^17.0.0 || ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      '@tanstack/react-start':
-        optional: true
 
   '@tanstack/react-router-devtools@1.158.0':
     resolution: {integrity: sha512-uhciBlsPW67xbDCFyc2RQS00OergfNXYxendGUO2HGy4uTr79aQSCb4l6v+sdlPwUTlzwkAtM6e1illIexF15Q==}
@@ -3061,9 +2997,6 @@ packages:
     resolution: {integrity: sha512-qZ76eaLKU6Ae9iI/mc5zizBX149DXXZkBVVO3/QRIll79uKLJZHQlMKR++2ba7JsciBWz1pgpIBcCJPE9S0LVg==}
     engines: {node: '>=12'}
 
-  '@tanstack/store@0.7.7':
-    resolution: {integrity: sha512-xa6pTan1bcaqYDS9BDpSiS63qa6EoDkPN9RsRaxHuDdVDNntzq3xNwR5YKTU/V3SkSyC9T4YVOPh2zRQN0nhIQ==}
-
   '@tanstack/store@0.8.0':
     resolution: {integrity: sha512-Om+BO0YfMZe//X2z0uLF2j+75nQga6TpTJgLJQBiq85aOyZNIhkCgleNcud2KQg4k4v9Y9l+Uhru3qWMPGTOzQ==}
 
@@ -3089,8 +3022,8 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
-  '@types/bun@1.3.8':
-    resolution: {integrity: sha512-3LvWJ2q5GerAXYxO2mffLTqOzEu5qnhEAlh48Vnu8WQfnmSwbgagjGZV6BoHKJztENYEDn6QmVd949W4uESRJA==}
+  '@types/bun@1.3.9':
+    resolution: {integrity: sha512-KQ571yULOdWJiMH+RIWIOZ7B2RXQGpL1YQrBtLIV3FqDcCu6FsbFUBwhdKUlCKUpS3PJDsHlJ1QKlpxoVR+xtw==}
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -3396,8 +3329,8 @@ packages:
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
 
-  bun-types@1.3.8:
-    resolution: {integrity: sha512-fL99nxdOWvV4LqjmC+8Q9kW3M4QTtTR1eePs94v5ctGqU8OeceWrSUaRw3JYb7tU3FkMIAjkueehrHPPPGKi5Q==}
+  bun-types@1.3.9:
+    resolution: {integrity: sha512-+UBWWOakIP4Tswh0Bt0QD0alpTY8cb5hvgiYeWCMet9YukHbzuruIEeXC2D7nMJPB12kbh8C7XJykSexEqGKJg==}
 
   bundle-name@4.1.0:
     resolution: {integrity: sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q==}
@@ -4829,12 +4762,6 @@ packages:
     resolution: {integrity: sha512-yELu4WmLPw5Mr/lmeEpox5rw3RETacE++JgHqQzd2dg+YbJuat3jH4ingc+WPZhxaoFzdv9y33G+F7Nl5O0GBg==}
     peerDependencies:
       react: ^19.2.3
-
-  react-hook-form@7.71.1:
-    resolution: {integrity: sha512-9SUJKCGKo8HUSsCO+y0CtqkqI5nNuaDqTxyqPsZPqIwudpj4rCrAz/jZV+jn57bx5gtZKOh3neQu94DXMc+w5w==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      react: ^16.8.0 || ^17 || ^18 || ^19
 
   react-is@16.13.1:
     resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
@@ -6943,11 +6870,6 @@ snapshots:
     dependencies:
       hono: 4.11.7
 
-  '@hookform/resolvers@5.2.2(react-hook-form@7.71.1(react@19.2.3))':
-    dependencies:
-      '@standard-schema/utils': 0.3.0
-      react-hook-form: 7.71.1(react@19.2.3)
-
   '@iarna/toml@2.2.5': {}
 
   '@img/colour@1.0.0': {}
@@ -7198,10 +7120,12 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   '@libsql/core@0.15.15':
     dependencies:
       js-base64: 3.7.8
+    optional: true
 
   '@libsql/darwin-arm64@0.5.22':
     optional: true
@@ -7218,8 +7142,10 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
-  '@libsql/isomorphic-fetch@0.3.1': {}
+  '@libsql/isomorphic-fetch@0.3.1':
+    optional: true
 
   '@libsql/isomorphic-ws@0.1.5':
     dependencies:
@@ -7228,6 +7154,7 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   '@libsql/linux-arm-gnueabihf@0.5.22':
     optional: true
@@ -7288,7 +7215,8 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@neon-rs/load@0.0.4': {}
+  '@neon-rs/load@0.0.4':
+    optional: true
 
   '@noble/ciphers@1.3.0': {}
 
@@ -7972,8 +7900,6 @@ snapshots:
 
   '@speed-highlight/core@1.2.14': {}
 
-  '@standard-schema/utils@0.3.0': {}
-
   '@t3-oss/env-core@0.13.10(typescript@5.9.3)(zod@4.3.6)':
     optionalDependencies:
       typescript: 5.9.3
@@ -8047,25 +7973,7 @@ snapshots:
       tailwindcss: 4.1.18
       vite: 6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
-  '@tanstack/devtools-event-client@0.4.0': {}
-
-  '@tanstack/form-core@1.28.0':
-    dependencies:
-      '@tanstack/devtools-event-client': 0.4.0
-      '@tanstack/pacer-lite': 0.1.1
-      '@tanstack/store': 0.7.7
-
   '@tanstack/history@1.154.14': {}
-
-  '@tanstack/pacer-lite@0.1.1': {}
-
-  '@tanstack/react-form@1.28.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@tanstack/form-core': 1.28.0
-      '@tanstack/react-store': 0.8.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      react: 19.2.3
-    transitivePeerDependencies:
-      - react-dom
 
   '@tanstack/react-router-devtools@1.158.0(@tanstack/react-router@1.158.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(@tanstack/router-core@1.158.0)(csstype@3.2.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
@@ -8163,8 +8071,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@tanstack/store@0.7.7': {}
-
   '@tanstack/store@0.8.0': {}
 
   '@tanstack/virtual-file-routes@1.154.7': {}
@@ -8201,9 +8107,9 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.0
 
-  '@types/bun@1.3.8':
+  '@types/bun@1.3.9':
     dependencies:
-      bun-types: 1.3.8
+      bun-types: 1.3.9
 
   '@types/estree@1.0.8': {}
 
@@ -8228,6 +8134,7 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 22.19.8
+    optional: true
 
   '@vitejs/plugin-react@4.7.0(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))':
     dependencies:
@@ -8312,7 +8219,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@5.4.21(@types/node@22.19.8)(lightningcss@1.30.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
+  alchemy@0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@5.4.21(@types/node@22.19.8)(lightningcss@1.30.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
     dependencies:
       '@aws-sdk/credential-providers': 3.982.0
       '@cloudflare/unenv-preset': 2.7.7(unenv@2.0.0-rc.21)(workerd@1.20260131.0)
@@ -8322,7 +8229,7 @@ snapshots:
       '@smithy/node-config-provider': 4.3.8
       '@smithy/types': 4.12.0
       aws4fetch: 1.0.20
-      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)
+      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)
       env-paths: 3.0.0
       esbuild: 0.25.12
       execa: 9.6.1
@@ -8380,7 +8287,7 @@ snapshots:
       - utf-8-validate
       - workerd
 
-  alchemy@0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
+  alchemy@0.82.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
     dependencies:
       '@aws-sdk/credential-providers': 3.982.0
       '@cloudflare/unenv-preset': 2.7.7(unenv@2.0.0-rc.21)(workerd@1.20260131.0)
@@ -8390,7 +8297,7 @@ snapshots:
       '@smithy/node-config-provider': 4.3.8
       '@smithy/types': 4.12.0
       aws4fetch: 1.0.20
-      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)
+      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)
       env-paths: 3.0.0
       esbuild: 0.25.12
       execa: 9.6.1
@@ -8448,7 +8355,7 @@ snapshots:
       - utf-8-validate
       - workerd
 
-  alchemy@0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
+  alchemy@0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
     dependencies:
       '@aws-sdk/credential-providers': 3.982.0
       '@cloudflare/unenv-preset': 2.7.7(unenv@2.0.0-rc.21)(workerd@1.20260131.0)
@@ -8458,7 +8365,7 @@ snapshots:
       '@smithy/node-config-provider': 4.3.8
       '@smithy/types': 4.12.0
       aws4fetch: 1.0.20
-      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8)
+      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)
       env-paths: 3.0.0
       esbuild: 0.25.12
       execa: 9.6.1
@@ -8605,7 +8512,7 @@ snapshots:
 
   buffer-from@1.1.2: {}
 
-  bun-types@1.3.8:
+  bun-types@1.3.9:
     dependencies:
       '@types/node': 22.19.8
 
@@ -8775,7 +8682,8 @@ snapshots:
 
   depd@2.0.0: {}
 
-  detect-libc@2.0.2: {}
+  detect-libc@2.0.2:
+    optional: true
 
   detect-libc@2.1.2: {}
 
@@ -8796,12 +8704,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.8):
+  drizzle-orm@0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260203.0
       '@libsql/client': 0.15.15
       '@opentelemetry/api': 1.9.0
-      bun-types: 1.3.8
+      bun-types: 1.3.9
 
   dts-resolver@2.1.3: {}
 
@@ -9420,7 +9328,8 @@ snapshots:
 
   jose@6.1.3: {}
 
-  js-base64@3.7.8: {}
+  js-base64@3.7.8:
+    optional: true
 
   js-tokens@4.0.0: {}
 
@@ -9524,6 +9433,7 @@ snapshots:
       '@libsql/linux-x64-gnu': 0.5.22
       '@libsql/linux-x64-musl': 0.5.22
       '@libsql/win32-x64-msvc': 0.5.22
+    optional: true
 
   lie@3.3.0:
     dependencies:
@@ -9905,7 +9815,8 @@ snapshots:
 
   progress@2.0.3: {}
 
-  promise-limit@2.7.0: {}
+  promise-limit@2.7.0:
+    optional: true
 
   prompts@2.4.2:
     dependencies:
@@ -9946,10 +9857,6 @@ snapshots:
     dependencies:
       react: 19.2.3
       scheduler: 0.27.0
-
-  react-hook-form@7.71.1(react@19.2.3):
-    dependencies:
-      react: 19.2.3
 
   react-is@16.13.1: {}
 

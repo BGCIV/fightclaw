@@ -2,6 +2,12 @@ import type { Context, Next } from "hono";
 import { createIdentity } from "../appContext";
 import type { AppBindings, AppVariables } from "../appTypes";
 import { sha256Hex } from "../utils/crypto";
+import {
+	forbidden,
+	internalServerError,
+	serviceUnavailable,
+	unauthorized,
+} from "../utils/httpErrors";
 
 type AppContext = Context<{ Bindings: AppBindings; Variables: AppVariables }>;
 
@@ -15,7 +21,7 @@ const getBearerToken = (authorization?: string) => {
 export const requireAdminKey = async (c: AppContext, next: Next) => {
 	const provided = c.req.header("x-admin-key");
 	if (!provided || provided !== c.env.ADMIN_KEY) {
-		return c.text("Forbidden", 403);
+		return forbidden(c);
 	}
 
 	// Provide a stable identity object for admin-authenticated requests.
@@ -34,17 +40,13 @@ export const requireAdminKey = async (c: AppContext, next: Next) => {
 export const requireRunnerKey = async (c: AppContext, next: Next) => {
 	const expected = c.env.INTERNAL_RUNNER_KEY;
 	if (!expected) {
-		return c.json(
-			{
-				error: "Internal auth not configured.",
-				code: "internal_auth_not_configured",
-			},
-			503,
-		);
+		return serviceUnavailable(c, "Internal auth not configured.", {
+			code: "internal_auth_not_configured",
+		});
 	}
 	const provided = c.req.header("x-runner-key");
 	if (!provided || provided !== expected) {
-		return c.text("Forbidden", 403);
+		return forbidden(c);
 	}
 
 	// Internal runner endpoints may override this with an acting-agent identity.
@@ -67,9 +69,9 @@ export const requireAgentAuth = async (
 	// biome-ignore lint/suspicious/noConfusingVoidType: Matches Hono middleware signature
 ): Promise<Response | void> => {
 	const token = getBearerToken(c.req.header("authorization"));
-	if (!token) return c.text("Unauthorized", 401);
+	if (!token) return unauthorized(c);
 	const pepper = c.env.API_KEY_PEPPER;
-	if (!pepper) return c.text("Auth not configured", 500);
+	if (!pepper) return internalServerError(c, "Auth not configured");
 
 	const hash = await sha256Hex(`${pepper}${token}`);
 	const row = await c.env.DB.prepare(
@@ -88,7 +90,7 @@ export const requireAgentAuth = async (
 			verified_at: string | null;
 		}>();
 
-	if (!row?.agent_id) return c.text("Unauthorized", 401);
+	if (!row?.agent_id) return unauthorized(c);
 
 	const isAdmin = Boolean(
 		c.req.header("x-admin-key") &&
@@ -113,10 +115,11 @@ export const requireAgentAuth = async (
 
 export const requireVerifiedAgent = async (c: AppContext, next: Next) => {
 	const auth = c.get("auth");
-	if (!auth) return c.text("Unauthorized", 401);
+	if (!auth) return unauthorized(c);
 	if (!auth.agentVerified) {
 		return c.json(
 			{
+				ok: false,
 				error: "Agent not verified.",
 				code: "agent_not_verified",
 				requestId: c.get("requestId"),

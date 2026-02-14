@@ -12,6 +12,7 @@ import {
 } from "@fightclaw/engine";
 import { z } from "zod";
 import type { AppBindings } from "../appTypes";
+import { ELO_START } from "../constants/rating";
 import { log } from "../obs/log";
 import { emitMetric } from "../obs/metrics";
 import {
@@ -21,6 +22,7 @@ import {
 	buildYourTurnEvent,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
+import { isRecord } from "../utils/typeGuards";
 
 type MatchEnv = Pick<
 	AppBindings,
@@ -93,7 +95,6 @@ const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const ELO_K = 32;
-const ELO_START = 1500;
 
 const initPayloadSchema = z
 	.object({
@@ -1293,9 +1294,6 @@ const getActiveAgentId = (game: GameState) => {
 	const player = game.players[side];
 	return player?.id ?? null;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isMovePayload = (value: unknown): value is MovePayload => {
 	if (!isRecord(value)) return false;

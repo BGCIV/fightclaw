@@ -3,6 +3,15 @@ import { z } from "zod";
 import type { AppBindings, AppVariables } from "../appTypes";
 import { requireAdminKey, requireAgentAuth } from "../middleware/auth";
 import { randomBase64Url, sha256Hex } from "../utils/crypto";
+import {
+	badRequest,
+	conflict,
+	internalServerError,
+	notFound,
+	serviceUnavailable,
+	unauthorized,
+} from "../utils/httpErrors";
+import { created, success } from "../utils/httpSuccess";
 
 const namePattern = /^[A-Za-z0-9_-]{1,64}$/;
 const gameTypePattern = /^[a-z0-9_]{1,50}$/;
@@ -28,18 +37,14 @@ authRoutes.post("/register", async (c) => {
 	const json = await c.req.json().catch(() => null);
 	const parsed = registerSchema.safeParse(json);
 	if (!parsed.success) {
-		return c.json({ ok: false, error: "Invalid register payload." }, 400);
+		return badRequest(c, "Invalid register payload.");
 	}
 
 	const trimmedName = parsed.data.name.trim();
 	if (!namePattern.test(trimmedName)) {
-		return c.json(
-			{
-				ok: false,
-				error:
-					"Agent name must be 1-64 characters: letters, numbers, _ or - only.",
-			},
-			400,
+		return badRequest(
+			c,
+			"Agent name must be 1-64 characters: letters, numbers, _ or - only.",
 		);
 	}
 
@@ -49,11 +54,11 @@ authRoutes.post("/register", async (c) => {
 		.bind(trimmedName)
 		.first<{ ok: number }>();
 	if (existing?.ok) {
-		return c.json({ ok: false, error: "Agent name already in use." }, 409);
+		return conflict(c, "Agent name already in use.");
 	}
 
 	const pepper = c.env.API_KEY_PEPPER;
-	if (!pepper) return c.json({ ok: false, error: "Auth not configured." }, 500);
+	if (!pepper) return internalServerError(c, "Auth not configured.");
 
 	const agentId = crypto.randomUUID();
 	const apiKeyId = crypto.randomUUID();
@@ -75,31 +80,27 @@ authRoutes.post("/register", async (c) => {
 		]);
 	} catch (error) {
 		console.error("Failed to register agent", error);
-		return c.json({ ok: false, error: "Registration unavailable." }, 503);
+		return serviceUnavailable(c, "Registration unavailable.");
 	}
 
-	return c.json(
-		{
-			ok: true,
-			agent: { id: agentId, name: trimmedName, verified: false },
-			apiKeyId,
-			apiKey,
-			apiKeyPrefix,
-			claimCode,
-		},
-		201,
-	);
+	return created(c, {
+		agent: { id: agentId, name: trimmedName, verified: false },
+		apiKeyId,
+		apiKey,
+		apiKeyPrefix,
+		claimCode,
+	});
 });
 
 authRoutes.post("/verify", requireAdminKey, async (c) => {
 	const json = await c.req.json().catch(() => null);
 	const parsed = verifySchema.safeParse(json);
 	if (!parsed.success) {
-		return c.json({ ok: false, error: "Invalid verify payload." }, 400);
+		return badRequest(c, "Invalid verify payload.");
 	}
 
 	const pepper = c.env.API_KEY_PEPPER;
-	if (!pepper) return c.json({ ok: false, error: "Auth not configured." }, 500);
+	if (!pepper) return internalServerError(c, "Auth not configured.");
 
 	const claimCode = parsed.data.claimCode.trim();
 	const claimHash = await sha256Hex(`${pepper}${claimCode}`);
@@ -111,10 +112,10 @@ authRoutes.post("/verify", requireAdminKey, async (c) => {
 		.first<{ id: string; verified_at: string | null }>();
 
 	if (!row?.id) {
-		return c.json({ ok: false, error: "Claim code not found." }, 404);
+		return notFound(c, "Claim code not found.");
 	}
 	if (row.verified_at) {
-		return c.json({ ok: false, error: "Agent already verified." }, 409);
+		return conflict(c, "Agent already verified.");
 	}
 
 	await c.env.DB.prepare(
@@ -129,8 +130,7 @@ authRoutes.post("/verify", requireAdminKey, async (c) => {
 		.bind(row.id)
 		.first<{ verified_at: string | null }>();
 
-	return c.json({
-		ok: true,
+	return success(c, {
 		agentId: row.id,
 		verifiedAt: verified?.verified_at ?? null,
 	});
@@ -138,7 +138,7 @@ authRoutes.post("/verify", requireAdminKey, async (c) => {
 
 authRoutes.get("/me", requireAgentAuth, async (c) => {
 	const auth = c.get("auth");
-	if (!auth) return c.text("Unauthorized", 401);
+	if (!auth) return unauthorized(c);
 
 	const row = await c.env.DB.prepare(
 		"SELECT id, name, created_at, verified_at FROM agents WHERE id = ? LIMIT 1",
@@ -151,10 +151,9 @@ authRoutes.get("/me", requireAgentAuth, async (c) => {
 			verified_at: string | null;
 		}>();
 
-	if (!row?.id) return c.text("Unauthorized", 401);
+	if (!row?.id) return unauthorized(c);
 
-	return c.json({
-		ok: true,
+	return success(c, {
 		agent: {
 			id: row.id,
 			name: row.name,
