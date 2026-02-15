@@ -3,8 +3,7 @@ import { Engine } from "./src/engineAdapter";
 
 const bot = makeLlmBot("P1", {
 	model: "arcee-ai/trinity-large-preview:free",
-	apiKey:
-		"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",
+	apiKey: process.env.OPENROUTER_API_KEY || "",
 	systemPrompt: "Prioritize aggressive attacks",
 	delayMs: 0,
 });

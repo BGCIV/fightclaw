@@ -1,8 +1,7 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({
-	apiKey:
-		"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",
+	apiKey: process.env.OPENROUTER_API_KEY || "",
 	baseURL: "https://openrouter.ai/api/v1",
 });
 
