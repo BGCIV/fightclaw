@@ -6,8 +6,8 @@ function makeBatchBot(id: string): Bot {
 	return {
 		id,
 		name: "BatchTestBot",
-		chooseMove: async ({ legalMoves }) => legalMoves[0]!,
-		chooseTurn: async ({ state, legalMoves }) => {
+		chooseMove: async ({ legalMoves }) => legalMoves[0] as Move,
+		chooseTurn: async () => {
 			return [{ action: "end_turn" }];
 		},
 	};
@@ -36,7 +36,8 @@ describe("batch turn", () => {
 			chooseMove: async ({ legalMoves }) => {
 				// Just end turn
 				return (
-					legalMoves.find((m) => m.action === "end_turn") ?? legalMoves[0]!
+					legalMoves.find((m) => m.action === "end_turn") ??
+					(legalMoves[0] as Move)
 				);
 			},
 		};
