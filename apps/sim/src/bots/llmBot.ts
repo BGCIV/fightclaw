@@ -77,7 +77,7 @@ async function chooseTurn(
 	},
 	turnCount: number,
 ): Promise<Move[]> {
-	const { state, legalMoves, turn, rng } = ctx;
+	const { state, legalMoves, turn } = ctx;
 
 	if (config.delayMs && config.delayMs > 0) await sleep(config.delayMs);
 
