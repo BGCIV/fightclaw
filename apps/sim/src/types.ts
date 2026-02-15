@@ -1,5 +1,6 @@
 import type {
 	AgentId,
+	EngineConfigInput,
 	EngineEvent,
 	GameState,
 	MatchState,
@@ -9,6 +10,7 @@ import type {
 
 export type {
 	AgentId,
+	EngineConfigInput,
 	EngineEvent,
 	GameState,
 	MatchState,
