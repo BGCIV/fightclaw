@@ -13,7 +13,7 @@ import { runMassSimulation } from "./runner/massRunner";
 import type { SimulationStats } from "./simulation/config";
 import { createSimulationOptions } from "./simulation/config";
 import { runTournament } from "./tournament";
-import type { Bot } from "./types";
+import type { Bot, EngineConfigInput } from "./types";
 
 type Args = ReturnType<typeof minimist>;
 
@@ -86,6 +86,14 @@ async function main() {
 	const quiet = !!argv.quiet;
 	const json = !!argv.json;
 
+	const turnLimit = num(argv.turnLimit, 40);
+	const actionsPerTurn = num(argv.actionsPerTurn, 7);
+
+	const engineConfig: EngineConfigInput = {
+		turnLimit,
+		actionsPerTurn,
+	};
+
 	const bot1Type = (
 		typeof argv.bot1 === "string" ? argv.bot1 : "greedy"
 	) as BotType;
@@ -150,6 +158,8 @@ async function main() {
 		openrouterTitle,
 	});
 
+	const enableDiagnostics = !!argv.diagnostics;
+
 	if (cmd === "single") {
 		const result = await playMatch({
 			seed,
@@ -158,6 +168,8 @@ async function main() {
 			verbose,
 			record: log || !!logFile,
 			autofixIllegal: autofix,
+			enableDiagnostics,
+			engineConfig,
 		});
 		if (logFile && result.log) {
 			writeFileSync(logFile, JSON.stringify(result.log));
@@ -189,6 +201,7 @@ async function main() {
 			maxTurns,
 			players: [p1, p2],
 			autofixIllegal: autofix,
+			engineConfig,
 		});
 		console.log(JSON.stringify(summary, null, 2));
 		console.log(
@@ -223,7 +236,7 @@ async function main() {
 		}
 
 		const startTime = Date.now();
-		const stats = await runMassSimulation(options, [p1, p2]);
+		const stats = await runMassSimulation(options, [p1, p2], engineConfig);
 		const duration = (Date.now() - startTime) / 1000;
 
 		if (!quiet) {
@@ -352,6 +365,10 @@ async function main() {
 	console.error(
 		"  tsx src/cli.ts dashboard --input ./results --output ./dashboard.html",
 	);
+	console.error("");
+	console.error("Engine options:");
+	console.error("  --turnLimit N       Engine turn limit (default: 40)");
+	console.error("  --actionsPerTurn N  Actions per turn (default: 7)");
 	console.error("");
 	console.error("Bot options (for single, tourney, mass):");
 	console.error(

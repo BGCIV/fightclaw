@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SimulationOptions, SimulationStats } from "../simulation/config";
-import type { Bot, MatchResult } from "../types";
+import type { Bot, EngineConfigInput, MatchResult } from "../types";
 import type { BotConfig } from "./forkWorker";
 
 interface Checkpoint {
@@ -225,6 +225,7 @@ function runWorkerBatch(
 	seeds: number[],
 	maxTurns: number,
 	botConfigs: BotConfig[],
+	engineConfig?: EngineConfigInput,
 ): Promise<MatchResult[]> {
 	return new Promise((resolve, reject) => {
 		const timeout = setTimeout(() => {
@@ -255,6 +256,7 @@ function runWorkerBatch(
 			seeds,
 			maxTurns,
 			botConfigs,
+			engineConfig,
 		});
 	});
 }
@@ -262,6 +264,7 @@ function runWorkerBatch(
 export async function runMassSimulation(
 	options: SimulationOptions,
 	players: [Bot, Bot],
+	engineConfig?: EngineConfigInput,
 ): Promise<SimulationStats> {
 	const totalGames = options.games;
 	const playerIds = players.map((p) => String(p.id));
@@ -341,6 +344,7 @@ export async function runMassSimulation(
 					verbose: false,
 					record: false,
 					autofixIllegal: true,
+					engineConfig,
 				});
 				batchResults.push(result);
 				completedSeedSet.add(seed);
@@ -404,6 +408,7 @@ export async function runMassSimulation(
 								seeds,
 								options.maxTurns,
 								botConfigs,
+								engineConfig,
 							);
 
 							for (const result of results) {

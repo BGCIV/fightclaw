@@ -1,5 +1,5 @@
 import { playMatch } from "./match";
-import type { Bot } from "./types";
+import type { Bot, EngineConfigInput } from "./types";
 
 export async function runTournament(opts: {
 	games: number;
@@ -7,6 +7,7 @@ export async function runTournament(opts: {
 	maxTurns: number;
 	players: [Bot, Bot];
 	autofixIllegal?: boolean;
+	engineConfig?: EngineConfigInput;
 }) {
 	const results = [];
 	for (let i = 0; i < opts.games; i++) {
@@ -17,6 +18,7 @@ export async function runTournament(opts: {
 			maxTurns: opts.maxTurns,
 			verbose: false,
 			autofixIllegal: opts.autofixIllegal,
+			engineConfig: opts.engineConfig,
 		});
 		results.push(r);
 	}

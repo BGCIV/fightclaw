@@ -9,7 +9,7 @@ import type { MockLlmConfig } from "../bots/mockLlmBot";
 import { makeMockLlmBot } from "../bots/mockLlmBot";
 import { makeRandomLegalBot } from "../bots/randomBot";
 import { playMatch } from "../match";
-import type { Bot, MatchResult } from "../types";
+import type { Bot, EngineConfigInput, MatchResult } from "../types";
 
 export interface BotConfig {
 	id: string;
@@ -24,6 +24,7 @@ interface BatchRequest {
 	seeds: number[];
 	maxTurns: number;
 	botConfigs: BotConfig[];
+	engineConfig?: EngineConfigInput;
 }
 
 interface BatchResponse {
@@ -73,6 +74,7 @@ process.on("message", async (msg: WorkerMessage) => {
 					verbose: false,
 					record: false,
 					autofixIllegal: true,
+					engineConfig: msg.engineConfig,
 				});
 				results.push(result);
 			}
