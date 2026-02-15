@@ -44,4 +44,10 @@ export type Bot = {
 		turn: number;
 		rng: () => number;
 	}) => Promise<Move> | Move;
+	chooseTurn?: (ctx: {
+		state: MatchState;
+		legalMoves: Move[];
+		turn: number;
+		rng: () => number;
+	}) => Promise<Move[]>;
 };

@@ -92,6 +92,83 @@ export async function playMatch(opts: {
 			);
 		}
 
+		/* ── batch turn path: bot.chooseTurn returns all moves for the turn ── */
+		if (bot.chooseTurn) {
+			let turnMoves: Move[];
+			try {
+				turnMoves = await bot.chooseTurn({ state, legalMoves, turn, rng });
+			} catch (e) {
+				illegalMoves++;
+				if (!opts.autofixIllegal) {
+					if (opts.verbose)
+						console.error(`[turn ${turn}] bot ${bot.name} crashed (batch)`, e);
+					const result: MatchResult = {
+						seed: opts.seed,
+						turns: turn - 1,
+						winner: null,
+						illegalMoves,
+						reason: "illegal",
+						log: logIfNeeded(),
+					};
+					if (opts.enableDiagnostics) {
+						getDiagnosticsCollector().endGame(result.winner, result.reason);
+					}
+					return result;
+				}
+				turnMoves = [{ action: "end_turn" }];
+			}
+
+			for (const batchMove of turnMoves) {
+				const midTerminal = Engine.isTerminal(state);
+				if (midTerminal.ended) break;
+				if (Engine.currentPlayer(state) !== bot.id) break;
+
+				const currentLegal = Engine.listLegalMoves(state);
+				if (currentLegal.length === 0) break;
+
+				const isLegal = currentLegal.some(
+					(m) =>
+						safeJson(stripReasoning(m)) === safeJson(stripReasoning(batchMove)),
+				);
+
+				if (!isLegal) {
+					illegalMoves++;
+					if (opts.verbose)
+						console.warn(
+							`[turn ${turn}] batch move skipped: ${short(batchMove)}`,
+						);
+					continue; // skip this move
+				}
+
+				const result = Engine.applyMove(state, batchMove);
+				engineEvents.push(...result.engineEvents);
+				moves.push(batchMove);
+				if (result.ok) {
+					state = result.state;
+				}
+
+				if (opts.verbose) {
+					console.log(`[turn ${turn}] ${bot.name} -> ${short(batchMove)}`);
+				}
+
+				if (opts.enableDiagnostics) {
+					getDiagnosticsCollector().logTurn(
+						turn,
+						bot.name,
+						batchMove.action,
+						state as unknown as {
+							players: {
+								A: { units: unknown[]; vp: number };
+								B: { units: unknown[]; vp: number };
+							};
+						},
+					);
+				}
+			}
+			continue; // back to outer loop to re-check active player
+		}
+
+		/* ── single-move path: bot.chooseMove (unchanged) ── */
 		let move: Move;
 		try {
 			move = await bot.chooseMove({ state, legalMoves, turn, rng });
