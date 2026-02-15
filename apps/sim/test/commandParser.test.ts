@@ -46,8 +46,8 @@ describe("parseCommands", () => {
 	test("is case-insensitive for action names", () => {
 		const input = "MOVE A-1 E10\nATTACK A-2 F11";
 		const cmds = parseCommands(input);
-		expect(cmds[0]!.action).toBe("move");
-		expect(cmds[1]!.action).toBe("attack");
+		expect(cmds[0]?.action).toBe("move");
+		expect(cmds[1]?.action).toBe("attack");
 	});
 
 	test("strips markdown code fences", () => {
