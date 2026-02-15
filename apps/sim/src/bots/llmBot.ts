@@ -1,12 +1,16 @@
-import { renderAscii } from "@fightclaw/engine";
 import OpenAI from "openai";
 import {
 	createOpenRouterClient,
 	isOpenRouterBaseUrl,
 	OPENROUTER_DEFAULT_BASE_URL,
 } from "../llm/openrouter";
-import { pickOne } from "../rng";
 import type { Bot, MatchState, Move } from "../types";
+import {
+	matchCommand,
+	type ParsedCommand,
+	parseCommandsWithReasoning,
+} from "./commandParser";
+import { encodeLegalMoves, encodeState } from "./stateEncoder";
 
 export interface LlmBotConfig {
 	// e.g. "anthropic/claude-3.5-haiku", "openai/gpt-4o-mini"
@@ -44,22 +48,23 @@ export function makeLlmBot(
 				baseURL: config.baseUrl,
 			});
 
-	// Serialize calls even if the runner ever calls chooseMove concurrently.
-	let chain: Promise<Move> = Promise.resolve({ action: "pass" });
+	let turnCount = 0;
 
 	return {
 		id,
 		name: `LlmBot_${config.model}`,
-		chooseMove: (ctx) => {
-			chain = chain
-				.catch(() => ({ action: "pass" }) as Move)
-				.then(async () => chooseMove(client, id, config, ctx));
-			return chain;
+		chooseMove: ({ legalMoves, rng }) => {
+			return legalMoves[Math.floor(rng() * legalMoves.length)] as Move;
+		},
+		chooseTurn: async (ctx) => {
+			const result = await chooseTurn(client, id, config, ctx, turnCount);
+			turnCount++;
+			return result;
 		},
 	};
 }
 
-async function chooseMove(
+async function chooseTurn(
 	client: OpenAI,
 	botId: string,
 	config: LlmBotConfig & { delayMs?: number },
@@ -69,142 +74,140 @@ async function chooseMove(
 		turn: number;
 		rng: () => number;
 	},
-): Promise<Move> {
+	turnCount: number,
+): Promise<Move[]> {
 	const { state, legalMoves, turn, rng } = ctx;
 
-	if (config.delayMs && config.delayMs > 0) {
-		await sleep(config.delayMs);
-	}
+	if (config.delayMs && config.delayMs > 0) await sleep(config.delayMs);
 
 	const side = inferSide(state, botId);
-	const stronghold = findStrongholdHex(state, side);
 
-	const system = buildSystemPrompt({
-		side,
-		stronghold,
-		systemPrompt: config.systemPrompt,
-	});
-	const user = buildUserMessage({ state, legalMoves, turn });
+	// Build compact prompt
+	const system =
+		turnCount === 0
+			? buildFullSystemPrompt(side, state, config.systemPrompt)
+			: buildShortSystemPrompt(side);
+	const user = buildCompactUserMessage(state, side, legalMoves);
 
 	let content = "";
+
 	try {
 		const completion = await withRetryOnce(async () => {
-			return client.chat.completions.create({
-				model: config.model,
-				temperature: config.temperature ?? 0.3,
-				messages: [
-					{ role: "system", content: system },
-					{ role: "user", content: user },
-				],
-				// Keep responses short to reduce cost and minimize formatting drift.
-				max_tokens: 300,
-			});
+			return Promise.race([
+				client.chat.completions.create({
+					model: config.model,
+					temperature: config.temperature ?? 0.3,
+					messages: [
+						{ role: "system", content: system },
+						{ role: "user", content: user },
+					],
+					max_tokens: 400,
+				}),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error("API timeout after 10s")), 10000),
+				),
+			]);
 		});
-
 		content = completion.choices?.[0]?.message?.content ?? "";
-	} catch (e) {
-		// If the provider is down, still make progress.
-		return pickOne(legalMoves, rng);
+	} catch {
+		return [{ action: "end_turn" }];
 	}
 
-	const parsed = parseLlmJsonish(content);
-	const moveIndex =
-		typeof parsed.moveIndex === "number" ? parsed.moveIndex : undefined;
-	const reasoning =
-		typeof parsed.reasoning === "string" ? parsed.reasoning : undefined;
+	// Parse response
+	const parsed = parseLlmResponse(content);
 
-	const chosen =
-		typeof moveIndex === "number" &&
-		Number.isInteger(moveIndex) &&
-		moveIndex >= 0 &&
-		moveIndex < legalMoves.length
-			? legalMoves[moveIndex]
-			: undefined;
+	// Match commands to legal moves
+	const moves: Move[] = [];
 
-	const move = chosen ?? pickOne(legalMoves, rng);
+	for (const cmd of parsed.commands) {
+		const matched = matchCommand(cmd, legalMoves);
+		if (matched) {
+			if (moves.length === 0 && parsed.reasoning) {
+				moves.push({ ...matched, reasoning: parsed.reasoning } as Move);
+			} else {
+				moves.push(matched);
+			}
+		}
+	}
 
-	// Attach reasoning if present; engine accepts optional reasoning on all moves.
-	return reasoning ? ({ ...move, reasoning } as Move) : move;
+	// If no valid commands parsed, fall back to end_turn
+	if (moves.length === 0) {
+		moves.push({ action: "end_turn" });
+	}
+
+	return moves;
 }
 
-function buildSystemPrompt(opts: {
-	side: "A" | "B";
-	stronghold: string;
-	systemPrompt?: string;
-}): string {
-	const strategy = opts.systemPrompt?.trim()
-		? opts.systemPrompt.trim()
-		: "Try to win.";
+// ---------------------------------------------------------------------------
+// System prompt builders
+// ---------------------------------------------------------------------------
+
+function buildFullSystemPrompt(
+	side: "A" | "B",
+	state: MatchState,
+	userStrategy?: string,
+): string {
+	const ownStrongholdHex = findStrongholdHex(state, side);
+	const enemySide = side === "A" ? "B" : "A";
+	const enemyStrongholdHex = findStrongholdHex(state, enemySide);
+
+	const strategy =
+		userStrategy?.trim() ||
+		"Be aggressive. Prioritize attacks, then advance toward the enemy stronghold.";
 
 	return [
-		"You are an AI agent playing Fightclaw, a hex-based strategy game.",
+		`You are Player ${side} in Fightclaw, a hex strategy game.`,
 		"",
-		"RULES:",
-		`- 21x9 hex grid. You are Player ${opts.side} (stronghold at ${opts.stronghold}).`,
-		"- Units: infantry (ATK 2, DEF 4, HP 3, range 1, move 2), cavalry (ATK 4, DEF 2, HP 2, range 1, move 4), archer (ATK 3, DEF 1, HP 2, range 2, move 3).",
-		"- 5 actions per turn. Actions: move, attack, recruit, fortify, end_turn.",
-		"- Same-type units can stack on one hex (max 5). Stacks move together.",
-		"- Combat: ATK = base + 1 (attacker bonus) + stack bonus. Damage = max(1, ATK - DEF).",
-		"- Win by: capturing ANY enemy stronghold, eliminating all enemy units, or having more VP at turn 20.",
+		"COMMAND FORMAT (one per line):",
+		"  move <unitId> <hexId>       - Move unit/stack to hex",
+		"  attack <unitId> <hexId>     - Attack target hex",
+		"  recruit <unitType> <hexId>  - Recruit at your stronghold (infantry/cavalry/archer)",
+		"  fortify <unitId>            - Fortify unit in place",
+		"  end_turn                    - End your turn",
 		"",
-		"YOUR STRATEGY:",
+		"UNITS: infantry (ATK=2 DEF=4 HP=3 range=1 move=2), cavalry (ATK=4 DEF=2 HP=2 range=1 move=4), archer (ATK=3 DEF=1 HP=2 range=2 move=3)",
+		"COMBAT: damage = max(1, ATK+1+stackBonus - DEF). Cavalry charge: +2 ATK if moved 2+ hexes.",
+		"WIN: capture ANY enemy stronghold, eliminate all enemies, or highest VP at turn limit.",
+		`Your stronghold: ${ownStrongholdHex}. Enemy stronghold: ${enemyStrongholdHex}.`,
+		"",
 		strategy,
 		"",
-		"RESPOND with JSON only:",
-		'{ "moveIndex": <number from legal moves list>, "reasoning": "brief explanation" }',
+		"Respond with commands only. Optional reasoning after --- separator.",
 	].join("\n");
 }
 
-function buildUserMessage(opts: {
-	state: MatchState;
-	legalMoves: Move[];
-	turn: number;
-}): string {
-	const { state, legalMoves, turn } = opts;
-
-	const pA = state.players.A;
-	const pB = state.players.B;
-
-	const unitsA = pA.units.map((u) => ({
-		id: u.id,
-		type: u.type,
-		pos: u.position,
-		hp: u.hp,
-		fortified: u.isFortified,
-	}));
-	const unitsB = pB.units.map((u) => ({
-		id: u.id,
-		type: u.type,
-		pos: u.position,
-		hp: u.hp,
-		fortified: u.isFortified,
-	}));
-
-	return [
-		`TURN: ${turn}`,
-		`ACTIVE_PLAYER: ${state.activePlayer}`,
-		`ACTIONS_REMAINING: ${state.actionsRemaining}`,
-		"",
-		"BOARD (ASCII):",
-		renderAscii(state),
-		"",
-		"PLAYER_RESOURCES:",
-		JSON.stringify(
-			{
-				A: { id: pA.id, gold: pA.gold, wood: pA.wood, vp: pA.vp },
-				B: { id: pB.id, gold: pB.gold, wood: pB.wood, vp: pB.vp },
-			},
-			null,
-			2,
-		),
-		"",
-		"UNITS:",
-		JSON.stringify({ A: unitsA, B: unitsB }, null, 2),
-		"",
-		"LEGAL_MOVES (JSON array, index is moveIndex):",
-		JSON.stringify(legalMoves, null, 2),
-	].join("\n");
+function buildShortSystemPrompt(side: "A" | "B"): string {
+	return `Player ${side}. Commands only. Optional reasoning after ---.`;
 }
+
+// ---------------------------------------------------------------------------
+// User message builder
+// ---------------------------------------------------------------------------
+
+function buildCompactUserMessage(
+	state: MatchState,
+	side: "A" | "B",
+	legalMoves: Move[],
+): string {
+	const stateBlock = encodeState(state, side);
+	const movesBlock = encodeLegalMoves(legalMoves, state);
+	return `${stateBlock}\n${movesBlock}`;
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing (exported for testing)
+// ---------------------------------------------------------------------------
+
+export function parseLlmResponse(text: string): {
+	commands: ParsedCommand[];
+	reasoning: string | undefined;
+} {
+	return parseCommandsWithReasoning(text);
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function inferSide(state: MatchState, botId: string): "A" | "B" {
 	return state.players.A.id === botId ? "A" : "B";
@@ -233,63 +236,4 @@ async function withRetryOnce<T>(fn: () => Promise<T>): Promise<T> {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
-}
-
-export function parseLlmJsonish(text: string): {
-	moveIndex?: number;
-	reasoning?: string;
-} {
-	// 1) Regex extract moveIndex number (preferred per plan)
-	let moveIndexFromRegex: number | undefined;
-	const moveIndexMatch =
-		text.match(/"moveIndex"\s*:\s*(-?\d+)/) ??
-		text.match(/\bmoveIndex\b[^0-9-]*(-?\d+)/i);
-	if (moveIndexMatch?.[1]) {
-		const n = Number(moveIndexMatch[1]);
-		if (Number.isFinite(n)) moveIndexFromRegex = n;
-	}
-
-	// 2) First valid JSON object in the response
-	const obj = extractFirstJsonObject(text);
-	if (obj) {
-		try {
-			const parsed = JSON.parse(obj) as unknown;
-			if (parsed && typeof parsed === "object") {
-				const moveIndex = (parsed as { moveIndex?: unknown }).moveIndex;
-				const reasoning = (parsed as { reasoning?: unknown }).reasoning;
-				return {
-					moveIndex:
-						moveIndexFromRegex ??
-						(typeof moveIndex === "number"
-							? moveIndex
-							: typeof moveIndex === "string"
-								? Number(moveIndex)
-								: undefined),
-					reasoning: typeof reasoning === "string" ? reasoning : undefined,
-				};
-			}
-		} catch {
-			// ignore
-		}
-	}
-
-	// 3) Give up; caller will random-pick.
-	return moveIndexFromRegex !== undefined
-		? { moveIndex: moveIndexFromRegex }
-		: {};
-}
-
-function extractFirstJsonObject(text: string): string | null {
-	const start = text.indexOf("{");
-	if (start < 0) return null;
-	let depth = 0;
-	for (let i = start; i < text.length; i++) {
-		const ch = text[i];
-		if (ch === "{") depth++;
-		else if (ch === "}") {
-			depth--;
-			if (depth === 0) return text.slice(start, i + 1);
-		}
-	}
-	return null;
 }

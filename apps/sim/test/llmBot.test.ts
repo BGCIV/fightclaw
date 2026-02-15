@@ -1,22 +1,37 @@
 import { describe, expect, test } from "bun:test";
-import { parseLlmJsonish } from "../src/bots/llmBot";
+import { parseLlmResponse } from "../src/bots/llmBot";
 
 describe("llmBot", () => {
-	test("parses JSON-only response", () => {
-		const res = parseLlmJsonish('{"moveIndex": 12, "reasoning": "foo"}');
-		expect(res.moveIndex).toBe(12);
-		expect(res.reasoning).toBe("foo");
+	test("parseLlmResponse extracts commands and reasoning", () => {
+		const text =
+			"move A-1 E10\nattack A-4 F11\nend_turn\n---\nPushing forward.";
+		const result = parseLlmResponse(text);
+		expect(result.commands).toHaveLength(3);
+		expect(result.commands[0]?.action).toBe("move");
+		expect(result.reasoning).toBe("Pushing forward.");
 	});
 
-	test("parses moveIndex from mixed text", () => {
-		const res = parseLlmJsonish(
-			'Here you go: { "moveIndex": 3, "reasoning": "bar" } thanks',
-		);
-		expect(res.moveIndex).toBe(3);
+	test("parseLlmResponse handles commands only (no reasoning)", () => {
+		const text = "recruit infantry B2\nend_turn";
+		const result = parseLlmResponse(text);
+		expect(result.commands).toHaveLength(2);
+		expect(result.reasoning).toBeUndefined();
 	});
 
-	test("parses moveIndex from moveIndex token even without JSON", () => {
-		const res = parseLlmJsonish("moveIndex=7\nreasoning: because");
-		expect(res.moveIndex).toBe(7);
+	test("parseLlmResponse handles markdown code blocks", () => {
+		const text = "```\nmove A-1 E10\nend_turn\n```\n---\nReason.";
+		const result = parseLlmResponse(text);
+		expect(result.commands).toHaveLength(2);
+	});
+
+	test("parseLlmResponse handles empty response", () => {
+		const result = parseLlmResponse("");
+		expect(result.commands).toHaveLength(0);
+	});
+
+	test("parseLlmResponse handles pass as end_turn", () => {
+		const result = parseLlmResponse("pass");
+		expect(result.commands).toHaveLength(1);
+		expect(result.commands[0]?.action).toBe("end_turn");
 	});
 });
