@@ -8,6 +8,7 @@ import type {
 	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
+	ScenarioName,
 } from "../boardgameio/types";
 import { makeAggressiveBot } from "../bots/aggressiveBot";
 import { makeGreedyBot } from "../bots/greedyBot";
@@ -33,6 +34,7 @@ interface BatchRequest {
 	engineConfig?: EngineConfigInput;
 	harnessOptions?: {
 		harness?: HarnessMode;
+		scenario?: ScenarioName;
 		invalidPolicy?: InvalidPolicy;
 		moveValidationMode?: MoveValidationMode;
 		strict?: boolean;
@@ -90,6 +92,7 @@ process.on("message", async (msg: WorkerMessage) => {
 					record: false,
 					autofixIllegal: true,
 					engineConfig: msg.engineConfig,
+					scenario: msg.harnessOptions?.scenario,
 					harness: msg.harnessOptions?.harness,
 					invalidPolicy: msg.harnessOptions?.invalidPolicy,
 					moveValidationMode: msg.harnessOptions?.moveValidationMode,

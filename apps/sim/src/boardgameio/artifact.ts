@@ -5,6 +5,7 @@ import type {
 	HarnessConfig,
 	MatchArtifact,
 	TurnArtifact,
+	TurnMetricsV2,
 	TurnPlanMeta,
 } from "./types";
 
@@ -99,6 +100,16 @@ export class ArtifactBuilder {
 		attempt: TurnArtifact["commandAttempts"][0],
 	) {
 		this.artifact.turns[turnIdx]?.commandAttempts.push(attempt);
+	}
+
+	getTurnCommandAttempts(turnIdx: number): TurnArtifact["commandAttempts"] {
+		return this.artifact.turns[turnIdx]?.commandAttempts ?? [];
+	}
+
+	setTurnMetrics(turnIdx: number, metrics: TurnMetricsV2) {
+		const turn = this.artifact.turns[turnIdx];
+		if (!turn) return;
+		turn.metricsV2 = metrics;
 	}
 
 	recordAcceptedMove(entry: MatchArtifact["acceptedMoves"][0]) {

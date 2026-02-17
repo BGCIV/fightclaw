@@ -1,3 +1,4 @@
+import type { ScenarioName } from "../boardgameio/types";
 import { Engine } from "../engineAdapter";
 import type { AgentId, MatchState } from "../types";
 
@@ -8,7 +9,7 @@ import type { AgentId, MatchState } from "../types";
 export function createCombatScenario(
 	seed: number,
 	players: AgentId[],
-	scenario: "melee" | "ranged" | "stronghold_rush" | "midfield" = "melee",
+	scenario: ScenarioName = "melee",
 ): MatchState {
 	// Start with normal initial state
 	const state = Engine.createInitialState(seed, players);
@@ -65,6 +66,25 @@ export function createCombatScenario(
 			addUnitToState(state, "B-5", "cavalry", "B", "F12");
 			addUnitToState(state, "B-6", "archer", "B", "E12");
 			break;
+
+		case "all_infantry":
+			addCompositionFrontline(state, "infantry", "infantry");
+			break;
+		case "all_cavalry":
+			addCompositionFrontline(state, "cavalry", "cavalry");
+			break;
+		case "all_archer":
+			addCompositionFrontline(state, "archer", "archer");
+			break;
+		case "infantry_archer":
+			addCompositionFrontline(state, "infantry", "archer");
+			break;
+		case "cavalry_archer":
+			addCompositionFrontline(state, "cavalry", "archer");
+			break;
+		case "infantry_cavalry":
+			addCompositionFrontline(state, "infantry", "cavalry");
+			break;
 	}
 
 	return state;
@@ -113,4 +133,24 @@ interface Unit {
 	movedDistance: number;
 	attackedThisTurn: boolean;
 	canActThisTurn: boolean;
+}
+
+function addCompositionFrontline(
+	state: MatchState,
+	aType: "infantry" | "cavalry" | "archer",
+	bType: "infantry" | "cavalry" | "archer",
+) {
+	addUnitToState(state, "A-1", aType, "A", "D10");
+	addUnitToState(state, "A-2", aType, "A", "E10");
+	addUnitToState(state, "A-3", aType, "A", "F10");
+	addUnitToState(state, "A-4", aType, "A", "D9");
+	addUnitToState(state, "A-5", aType, "A", "E9");
+	addUnitToState(state, "A-6", aType, "A", "F9");
+
+	addUnitToState(state, "B-1", bType, "B", "D11");
+	addUnitToState(state, "B-2", bType, "B", "E11");
+	addUnitToState(state, "B-3", bType, "B", "F11");
+	addUnitToState(state, "B-4", bType, "B", "D12");
+	addUnitToState(state, "B-5", bType, "B", "E12");
+	addUnitToState(state, "B-6", bType, "B", "F12");
 }

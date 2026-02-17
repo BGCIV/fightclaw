@@ -1,6 +1,16 @@
 import type { AgentId, EngineConfigInput, MatchState, Move } from "../types";
 
-export type ScenarioName = "melee" | "ranged" | "stronghold_rush" | "midfield";
+export type ScenarioName =
+	| "melee"
+	| "ranged"
+	| "stronghold_rush"
+	| "midfield"
+	| "all_infantry"
+	| "all_cavalry"
+	| "all_archer"
+	| "infantry_archer"
+	| "cavalry_archer"
+	| "infantry_cavalry";
 
 export type HarnessMode = "legacy" | "boardgameio";
 
@@ -76,6 +86,40 @@ export interface TurnArtifact {
 	rawOutput?: string;
 	model?: string;
 	commandAttempts: CommandAttempt[];
+	metricsV2?: TurnMetricsV2;
+}
+
+export interface TurnMetricsV2 {
+	side: "A" | "B";
+	actions: {
+		accepted: number;
+		rejected: number;
+		byTypeAccepted: Record<string, number>;
+		byTypeRejected: Record<string, number>;
+	};
+	combat: {
+		attacksAccepted: number;
+		finisherOpportunities: number;
+		finisherSuccesses: number;
+		enemyHpDelta: number;
+		ownHpDelta: number;
+		enemyUnitsDelta: number;
+		ownUnitsDelta: number;
+		favorableTrade: boolean;
+	};
+	position: {
+		startAvgDistToEnemyStronghold: number | null;
+		endAvgDistToEnemyStronghold: number | null;
+		deltaAvgDistToEnemyStronghold: number | null;
+	};
+	resources: {
+		ownGoldDelta: number;
+		ownWoodDelta: number;
+		enemyGoldDelta: number;
+		enemyWoodDelta: number;
+		ownVpDelta: number;
+		enemyVpDelta: number;
+	};
 }
 
 export interface MatchArtifact {

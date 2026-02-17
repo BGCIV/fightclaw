@@ -55,6 +55,17 @@ describe("parseCommands", () => {
 		const cmds = parseCommands(input);
 		expect(cmds).toHaveLength(2);
 	});
+
+	test("parses numbered and bulleted commands", () => {
+		const input =
+			"1. attack A-1 E11 (target: B-2 inf hp=1/3)\n- move A-4 D10,\n3) end turn";
+		const cmds = parseCommands(input);
+		expect(cmds).toEqual([
+			{ action: "attack", unitId: "A-1", target: "E11" },
+			{ action: "move", unitId: "A-4", target: "D10" },
+			{ action: "end_turn" },
+		]);
+	});
 });
 
 describe("parseCommandsWithReasoning", () => {

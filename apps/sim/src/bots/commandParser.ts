@@ -137,7 +137,7 @@ function parseLines(text: string): ParsedCommand[] {
 	const lines = text.split("\n");
 
 	for (const raw of lines) {
-		const line = raw.trim();
+		const line = normalizeCommandLine(raw);
 		// Skip blank lines and comments
 		if (line === "" || line.startsWith("#")) continue;
 
@@ -146,33 +146,40 @@ function parseLines(text: string): ParsedCommand[] {
 
 		switch (action) {
 			case "move": {
-				const unitId = parts[1];
-				const target = parts[2];
+				const unitId = cleanToken(parts[1]);
+				const target = cleanToken(parts[2]);
 				if (unitId && target) {
 					results.push({ action: "move", unitId, target });
 				}
 				break;
 			}
 			case "attack": {
-				const unitId = parts[1];
-				const target = parts[2];
+				const unitId = cleanToken(parts[1]);
+				const target = cleanToken(parts[2]);
 				if (unitId && target) {
 					results.push({ action: "attack", unitId, target });
 				}
 				break;
 			}
 			case "recruit": {
-				const unitType = parts[1];
-				const target = parts[2];
+				const unitType = cleanToken(parts[1]);
+				const target = cleanToken(parts[2]);
 				if (unitType && target) {
 					results.push({ action: "recruit", unitType, target });
 				}
 				break;
 			}
 			case "fortify": {
-				const unitId = parts[1];
+				const unitId = cleanToken(parts[1]);
 				if (unitId) {
 					results.push({ action: "fortify", unitId });
+				}
+				break;
+			}
+			case "end": {
+				const maybeTurn = (parts[1] ?? "").toLowerCase();
+				if (maybeTurn === "turn") {
+					results.push({ action: "end_turn" });
 				}
 				break;
 			}
@@ -186,4 +193,18 @@ function parseLines(text: string): ParsedCommand[] {
 	}
 
 	return results;
+}
+
+function normalizeCommandLine(raw: string): string {
+	return raw
+		.trim()
+		.replace(/^\d+[).:-]?\s+/, "")
+		.replace(/^[-*]\s+/, "")
+		.replace(/^`+|`+$/g, "");
+}
+
+function cleanToken(token: string | undefined): string | undefined {
+	if (!token) return undefined;
+	const cleaned = token.replace(/[^A-Za-z0-9_-]/g, "");
+	return cleaned.length > 0 ? cleaned : undefined;
 }

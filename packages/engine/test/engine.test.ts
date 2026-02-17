@@ -431,7 +431,7 @@ describe("v2 engine - War of Attrition", () => {
 
 	// ---- Fortify ----
 
-	test("fortify costs 1 wood and grants fortified status", () => {
+	test("fortify costs 2 wood and grants fortified status", () => {
 		let state = createInitialState(0, undefined, [...players]);
 		state = structuredClone(state);
 		state.players.A.wood = 3;
@@ -443,7 +443,7 @@ describe("v2 engine - War of Attrition", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 
-		expect(result.state.players.A.wood).toBe(2);
+		expect(result.state.players.A.wood).toBe(1);
 		const unit = result.state.players.A.units.find((u) => u.id === "A-1");
 		expect(unit?.isFortified).toBe(true);
 		expect(unit?.canActThisTurn).toBe(false);
@@ -503,7 +503,7 @@ describe("v2 engine - War of Attrition", () => {
 	test("HP-based combat: attacker advantage deals damage without dying", () => {
 		let state = createInitialState(0, undefined, [...players]);
 		state = clearUnits(state);
-		// Cavalry ATK 4 + attacker bonus 1 = 5 vs infantry DEF 4 + 0 terrain (plains) = 4
+		// Cavalry ATK 4 + attacker bonus 2 = 6 vs infantry DEF 4 + 0 terrain (plains) = 4
 		// ATK > DEF → damage to defenders = 1, damage to attackers = 0
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E5");
 		state = addUnitToState(state, "B-1", "infantry", "B", "E6");
@@ -520,9 +520,9 @@ describe("v2 engine - War of Attrition", () => {
 			| AttackEvent
 			| undefined;
 		expect(atkEvent).toBeTruthy();
-		expect(atkEvent!.attackPower).toBe(5); // 4 base + 1 attacker bonus
+		expect(atkEvent!.attackPower).toBe(6); // 4 base + 2 attacker bonus
 		expect(atkEvent!.defensePower).toBe(4); // 4 base + 0 terrain
-		expect(atkEvent!.outcome.damageDealt).toBe(1);
+		expect(atkEvent!.outcome.damageDealt).toBe(2);
 		expect(atkEvent!.outcome.damageTaken).toBe(0);
 		// Infantry has 3 HP, takes 1 → survives
 		expect(atkEvent!.outcome.defenderSurvivors.length).toBe(1);
@@ -591,8 +591,8 @@ describe("v2 engine - War of Attrition", () => {
 			| AttackEvent
 			| undefined;
 		expect(atkEvent).toBeTruthy();
-		// ATK = 2 + 1 = 3, DEF = 4 + 1 (hills) = 5
-		expect(atkEvent!.attackPower).toBe(3);
+		// ATK = 2 + 2 = 4, DEF = 4 + 1 (hills) = 5
+		expect(atkEvent!.attackPower).toBe(4);
 		expect(atkEvent!.defensePower).toBe(5);
 		// ATK < DEF: minimum 1 damage to defender, 1 counterattack to attacker
 		expect(atkEvent!.outcome.damageDealt).toBe(1);
@@ -603,7 +603,7 @@ describe("v2 engine - War of Attrition", () => {
 		let state = createInitialState(0, undefined, [...players]);
 		state = clearUnits(state);
 		// Need ATK == DEF.
-		// Infantry ATK 2 + 1 attacker = 3, cavalry DEF 2 + 1 (hills) = 3
+		// Infantry ATK 2 + 2 attacker = 4, cavalry DEF 2 + 1 (hills) = 3
 		state = addUnitToState(state, "A-1", "infantry", "A", "E6");
 		expect(state.board[hexIndex("E7")]?.type).toBe("hills");
 		state = addUnitToState(state, "B-1", "cavalry", "B", "E7");
@@ -619,7 +619,7 @@ describe("v2 engine - War of Attrition", () => {
 		const atkEvent = result.engineEvents.find((e) => e.type === "attack") as
 			| AttackEvent
 			| undefined;
-		expect(atkEvent!.attackPower).toBe(3);
+		expect(atkEvent!.attackPower).toBe(4);
 		expect(atkEvent!.defensePower).toBe(3);
 		expect(atkEvent!.outcome.damageDealt).toBe(1);
 		expect(atkEvent!.outcome.damageTaken).toBe(0);
@@ -705,8 +705,8 @@ describe("v2 engine - War of Attrition", () => {
 			| AttackEvent
 			| undefined;
 		expect(attackEvent).toBeTruthy();
-		// Cavalry base ATK 4 + attacker bonus 1 + charge 2 = 7
-		expect(attackEvent?.attackPower).toBe(7);
+		// Cavalry base ATK 4 + attacker bonus 2 + charge 2 = 8
+		expect(attackEvent?.attackPower).toBe(8);
 		expect(attackEvent?.abilities).toContain("cavalry_charge");
 	});
 
@@ -764,14 +764,14 @@ describe("v2 engine - War of Attrition", () => {
 			| AttackEvent
 			| undefined;
 		expect(attackEvent).toBeTruthy();
-		// base 4 + attacker bonus 1 + stack bonus 1 + charge 2
-		expect(attackEvent?.attackPower).toBe(8);
+		// base 4 + attacker bonus 2 + stack bonus 1 + charge 2
+		expect(attackEvent?.attackPower).toBe(9);
 		expect(attackEvent?.abilities).toContain("cavalry_charge");
 	});
 
 	// ---- Shield Wall ----
 
-	test("shield wall +1 per adjacent hex with friendly infantry, max +2", () => {
+	test("shield wall +1 per adjacent hex with friendly infantry, max +1", () => {
 		let state = createInitialState(0, undefined, [...players]);
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
@@ -811,12 +811,12 @@ describe("v2 engine - War of Attrition", () => {
 			| AttackEvent
 			| undefined;
 		expect(atkEvent).toBeTruthy();
-		// Infantry base DEF 4 + terrain 0 (plains) + shield wall +2 = 6
-		expect(atkEvent?.defensePower).toBe(6);
-		expect(atkEvent?.abilities).toContain("shield_wall_+2");
+		// Infantry base DEF 4 + terrain 0 (plains) + shield wall +1 = 5
+		expect(atkEvent?.defensePower).toBe(5);
+		expect(atkEvent?.abilities).toContain("shield_wall_+1");
 	});
 
-	test("shield wall caps at +2 even with 3+ adjacent infantry hexes", () => {
+	test("shield wall caps at +1 even with 3+ adjacent infantry hexes", () => {
 		let state = createInitialState(0, undefined, [...players]);
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
@@ -852,8 +852,8 @@ describe("v2 engine - War of Attrition", () => {
 		const atkEvent = result.engineEvents.find((e) => e.type === "attack") as
 			| AttackEvent
 			| undefined;
-		// Still capped at +2
-		expect(atkEvent?.defensePower).toBe(6);
+		// Still capped at +1
+		expect(atkEvent?.defensePower).toBe(5);
 	});
 
 	// ---- Archer melee vulnerability ----
@@ -1295,8 +1295,8 @@ describe("v2 engine - War of Attrition", () => {
 		const atkEvent = result.engineEvents.find((e) => e.type === "attack") as
 			| AttackEvent
 			| undefined;
-		// 2 infantry: base ATK 2 + 1 attacker bonus + 1 stack bonus = 4
-		expect(atkEvent!.attackPower).toBe(4);
+		// 2 infantry: base ATK 2 + 2 attacker bonus + 1 stack bonus = 5
+		expect(atkEvent!.attackPower).toBe(5);
 		expect(atkEvent!.abilities).toContain("stack_atk_+1");
 	});
 

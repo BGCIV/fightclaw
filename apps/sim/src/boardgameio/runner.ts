@@ -14,6 +14,7 @@ import type {
 	HarnessConfig,
 	MoveValidationMode,
 	ScenarioName,
+	TurnMetricsV2,
 	TurnPlanMeta,
 } from "./types";
 
@@ -146,6 +147,7 @@ export async function playMatchBoardgameIO(
 				},
 				actingPlayerID,
 			);
+			const turnStartState = state.G.matchState;
 
 			let turnComplete = false;
 			let commandIndex = 0;
@@ -253,6 +255,7 @@ export async function playMatchBoardgameIO(
 				turnComplete || afterTerminal.ended || engineChangedPlayer;
 
 			if (
+				!afterTerminal.ended &&
 				engineTurnComplete &&
 				afterBatch.ctx.currentPlayer === actingPlayerID
 			) {
@@ -268,6 +271,15 @@ export async function playMatchBoardgameIO(
 					console.warn(msg);
 				}
 			}
+
+			const turnEndState = requireState(client.getState()).G.matchState;
+			const turnMetrics = buildTurnMetricsV2(
+				turnStartState,
+				turnEndState,
+				actingPlayerID,
+				artifact.getTurnCommandAttempts(turnRecordIdx),
+			);
+			artifact.setTurnMetrics(turnRecordIdx, turnMetrics);
 
 			completedTurns = turnIndex;
 		}
@@ -335,6 +347,134 @@ function resultSummaryFromResult(result: MatchResult) {
 	};
 }
 
+function buildTurnMetricsV2(
+	before: Parameters<Bot["chooseMove"]>[0]["state"],
+	after: Parameters<Bot["chooseMove"]>[0]["state"],
+	playerID: string,
+	attempts: Array<{ accepted: boolean; move: Move }>,
+): TurnMetricsV2 {
+	const side = before.players.A.id === playerID ? "A" : "B";
+	const enemySide = side === "A" ? "B" : "A";
+	const accepted = attempts.filter((a) => a.accepted);
+	const rejected = attempts.filter((a) => !a.accepted);
+	const byTypeAccepted: Record<string, number> = {};
+	const byTypeRejected: Record<string, number> = {};
+	for (const a of accepted) {
+		byTypeAccepted[a.move.action] = (byTypeAccepted[a.move.action] ?? 0) + 1;
+	}
+	for (const a of rejected) {
+		byTypeRejected[a.move.action] = (byTypeRejected[a.move.action] ?? 0) + 1;
+	}
+
+	const beforeOwn = before.players[side];
+	const beforeEnemy = before.players[enemySide];
+	const afterOwn = after.players[side];
+	const afterEnemy = after.players[enemySide];
+
+	const beforeEnemyByPos = new Map(
+		beforeEnemy.units.map((u) => [u.position, u]),
+	);
+	const afterEnemyIds = new Set(afterEnemy.units.map((u) => u.id));
+	const acceptedAttacks = accepted.filter((a) => a.move.action === "attack");
+	let finisherOpportunities = 0;
+	let finisherSuccesses = 0;
+	for (const a of acceptedAttacks) {
+		if (a.move.action !== "attack") continue;
+		const target = beforeEnemyByPos.get(a.move.target);
+		if (!target) continue;
+		if (target.hp <= 1) {
+			finisherOpportunities++;
+			if (!afterEnemyIds.has(target.id)) {
+				finisherSuccesses++;
+			}
+		}
+	}
+
+	const beforeEnemyHp = sumHp(beforeEnemy.units);
+	const beforeOwnHp = sumHp(beforeOwn.units);
+	const afterEnemyHp = sumHp(afterEnemy.units);
+	const afterOwnHp = sumHp(afterOwn.units);
+	const enemyHpDelta = afterEnemyHp - beforeEnemyHp;
+	const ownHpDelta = afterOwnHp - beforeOwnHp;
+	const enemyUnitsDelta = afterEnemy.units.length - beforeEnemy.units.length;
+	const ownUnitsDelta = afterOwn.units.length - beforeOwn.units.length;
+	const enemyHpLoss = beforeEnemyHp - afterEnemyHp;
+	const ownHpLoss = beforeOwnHp - afterOwnHp;
+	const enemyUnitsLost = beforeEnemy.units.length - afterEnemy.units.length;
+	const ownUnitsLost = beforeOwn.units.length - afterOwn.units.length;
+	const favorableTrade =
+		enemyHpLoss > ownHpLoss || enemyUnitsLost > ownUnitsLost;
+
+	const startAvgDist = avgDistanceToEnemyStronghold(before, side);
+	const endAvgDist = avgDistanceToEnemyStronghold(after, side);
+
+	return {
+		side,
+		actions: {
+			accepted: accepted.length,
+			rejected: rejected.length,
+			byTypeAccepted,
+			byTypeRejected,
+		},
+		combat: {
+			attacksAccepted: acceptedAttacks.length,
+			finisherOpportunities,
+			finisherSuccesses,
+			enemyHpDelta,
+			ownHpDelta,
+			enemyUnitsDelta,
+			ownUnitsDelta,
+			favorableTrade,
+		},
+		position: {
+			startAvgDistToEnemyStronghold: startAvgDist,
+			endAvgDistToEnemyStronghold: endAvgDist,
+			deltaAvgDistToEnemyStronghold:
+				startAvgDist !== null && endAvgDist !== null
+					? endAvgDist - startAvgDist
+					: null,
+		},
+		resources: {
+			ownGoldDelta: afterOwn.gold - beforeOwn.gold,
+			ownWoodDelta: afterOwn.wood - beforeOwn.wood,
+			enemyGoldDelta: afterEnemy.gold - beforeEnemy.gold,
+			enemyWoodDelta: afterEnemy.wood - beforeEnemy.wood,
+			ownVpDelta: afterOwn.vp - beforeOwn.vp,
+			enemyVpDelta: afterEnemy.vp - beforeEnemy.vp,
+		},
+	};
+}
+
+function sumHp(units: Array<{ hp: number }>): number {
+	return units.reduce((s, u) => s + u.hp, 0);
+}
+
+function avgDistanceToEnemyStronghold(
+	state: Parameters<Bot["chooseMove"]>[0]["state"],
+	side: "A" | "B",
+): number | null {
+	const enemyStrongholdType = side === "A" ? "stronghold_b" : "stronghold_a";
+	const enemyStrongholdCols = state.board
+		.filter((h) => h.type === enemyStrongholdType)
+		.map((h) => parseCol(h.id))
+		.filter((v): v is number => v !== null);
+	if (enemyStrongholdCols.length === 0) return null;
+	const targetCol = Math.min(...enemyStrongholdCols);
+	const ownUnits = state.players[side].units;
+	if (ownUnits.length === 0) return null;
+	const dists = ownUnits
+		.map((u) => parseCol(u.position))
+		.filter((v): v is number => v !== null)
+		.map((col) => Math.abs(col - targetCol));
+	if (dists.length === 0) return null;
+	return dists.reduce((s, d) => s + d, 0) / dists.length;
+}
+
+function parseCol(hexId: string): number | null {
+	const n = Number.parseInt(hexId.replace(/^[A-Z]/i, ""), 10);
+	return Number.isFinite(n) ? n : null;
+}
+
 async function chooseTurnPlan(opts: {
 	bot: Bot;
 	state: BoardgameRunnerOptions["engineConfig"] extends never
@@ -395,12 +535,8 @@ async function chooseTurnPlan(opts: {
 		turn: opts.turnIndex,
 		rng: opts.rng,
 	});
-	const planMoves: Move[] =
-		move.action === "end_turn"
-			? [move]
-			: [move, { action: "end_turn" } as Move];
 	return {
-		moves: planMoves,
+		moves: [move],
 		meta: { turnIndex: opts.turnIndex },
 	};
 }

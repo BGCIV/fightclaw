@@ -197,6 +197,7 @@ const ROWS = 9;
 const COLS = 21;
 const ACTIONS_PER_TURN = 5;
 const TURN_LIMIT = 20;
+const FORTIFY_WOOD_COST = 2;
 const PLAYER_SIDES: PlayerSide[] = ["A", "B"];
 
 const ROW_LETTERS = "ABCDEFGHI";
@@ -606,10 +607,10 @@ export const DEFAULT_CONFIG: EngineConfig = {
 	},
 	abilities: {
 		cavalryChargeBonus: 2,
-		infantryAdjacencyBonusCap: 2,
+		infantryAdjacencyBonusCap: 1,
 		archerMeleeVulnerability: 1,
-		fortifyBonus: 1,
-		attackerBonus: 1,
+		fortifyBonus: 0,
+		attackerBonus: 2,
 		stackAttackBonus: 1,
 		maxStackSize: 5,
 		vpPerKill: 1,
@@ -1284,6 +1285,15 @@ function computeCombat(
 		defensePower += config.abilities.fortifyBonus;
 		abilities.push("fortify");
 	}
+	// Slight melee pressure against fortified infantry to reduce stall loops.
+	if (
+		dist === 1 &&
+		leadDefender.type === "infantry" &&
+		defenders.some((d) => d.isFortified)
+	) {
+		defensePower = Math.max(0, defensePower - 1);
+		abilities.push("fortify_breached");
+	}
 
 	// Shield Wall: +1 per adjacent hex with friendly infantry, max +2
 	if (leadDefender.type === "infantry") {
@@ -1699,7 +1709,7 @@ export function listLegalMoves(state: MatchState): Move[] {
 			if (!unit.canActThisTurn) continue;
 			if (unit.movedThisTurn || unit.attackedThisTurn) continue;
 			if (unit.isFortified) continue;
-			if (player.wood < 1) continue;
+			if (player.wood < FORTIFY_WOOD_COST) continue;
 			moves.push({ action: "fortify", unitId: unit.id });
 		}
 	}
@@ -1984,7 +1994,7 @@ export function validateMove(
 					error: "Unit is already fortified.",
 				};
 			}
-			if (player.wood < 1) {
+			if (player.wood < FORTIFY_WOOD_COST) {
 				return {
 					ok: false,
 					reason: "illegal_move",
@@ -2204,7 +2214,7 @@ export function applyMove(state: MatchState, move: Move): ApplyMoveResult {
 			if (!unit) {
 				return failMove(nextState, m, "invalid_move", "Unit not found.");
 			}
-			player.wood -= 1;
+			player.wood -= FORTIFY_WOOD_COST;
 			// Fortify all units on the hex
 			const stackUnits = getUnitsOnHex(nextState, unit.position);
 			for (const su of stackUnits) {

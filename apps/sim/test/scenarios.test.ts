@@ -30,4 +30,22 @@ describe("combat scenarios", () => {
 		const attacks = moves.filter((m) => m.action === "attack");
 		expect(attacks.length).toBeGreaterThan(0);
 	});
+
+	test("all_infantry scenario uses infantry-only armies", () => {
+		const state = createCombatScenario(1, ["a", "b"], "all_infantry");
+		expect(state.players.A.units).toHaveLength(6);
+		expect(state.players.B.units).toHaveLength(6);
+		expect(state.players.A.units.every((u) => u.type === "infantry")).toBe(
+			true,
+		);
+		expect(state.players.B.units.every((u) => u.type === "infantry")).toBe(
+			true,
+		);
+	});
+
+	test("cavalry_archer scenario applies asymmetrical composition", () => {
+		const state = createCombatScenario(1, ["a", "b"], "cavalry_archer");
+		expect(state.players.A.units.every((u) => u.type === "cavalry")).toBe(true);
+		expect(state.players.B.units.every((u) => u.type === "archer")).toBe(true);
+	});
 });

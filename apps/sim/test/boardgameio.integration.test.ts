@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { replayBoardgameArtifact } from "../src/boardgameio/replay";
+import { makeAggressiveBot } from "../src/bots/aggressiveBot";
 import { playMatch } from "../src/match";
 import type { Bot, Move } from "../src/types";
 
@@ -55,5 +56,19 @@ describe("boardgameio harness", () => {
 		expect(artifact.artifactVersion).toBe(1);
 		const replay = replayBoardgameArtifact(artifact);
 		expect(replay.ok).toBe(true);
+	});
+
+	test("strict harness handles terminal turns without divergence errors", async () => {
+		const result = await playMatch({
+			seed: 1,
+			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
+			maxTurns: 60,
+			harness: "boardgameio",
+			strict: true,
+			invalidPolicy: "skip",
+			scenario: "midfield",
+		});
+
+		expect(["terminal", "maxTurns"]).toContain(result.reason);
 	});
 });

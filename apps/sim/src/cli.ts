@@ -13,6 +13,7 @@ import { makeLlmBot } from "./bots/llmBot";
 import { makeMockLlmBot } from "./bots/mockLlmBot";
 import { makeRandomLegalBot } from "./bots/randomBot";
 import { playMatch, replayMatch } from "./match";
+import { analyzeBehaviorFromArtifacts } from "./reporting/behaviorMetrics";
 import type { DashboardData } from "./reporting/dashboardGenerator";
 import { generateDashboard } from "./reporting/dashboardGenerator";
 import { runMassSimulation } from "./runner/massRunner";
@@ -24,6 +25,12 @@ import type { Bot, EngineConfigInput } from "./types";
 type Args = ReturnType<typeof minimist>;
 
 type BotType = "random" | "greedy" | "aggressive" | "mockllm" | "llm";
+
+function inferApiKeyForBaseUrl(
+	_baseUrl: string | undefined,
+): string | undefined {
+	return process.env.LLM_API_KEY ?? process.env.OPENROUTER_API_KEY;
+}
 
 function makeBot(
 	id: string,
@@ -83,7 +90,6 @@ async function main() {
 	const cmd = argv._[0];
 
 	const seed = num(argv.seed, 1);
-	const maxTurns = num(argv.maxTurns, 200);
 	const verbose = !!argv.verbose;
 	const log = !!argv.log;
 	const logFile = typeof argv.logFile === "string" ? argv.logFile : undefined;
@@ -94,6 +100,11 @@ async function main() {
 
 	const turnLimit = num(argv.turnLimit, 40);
 	const actionsPerTurn = num(argv.actionsPerTurn, 7);
+	const minRecommendedMaxTurns = Math.max(200, turnLimit * actionsPerTurn * 2);
+	const maxTurns =
+		argv.maxTurns === undefined
+			? minRecommendedMaxTurns
+			: num(argv.maxTurns, minRecommendedMaxTurns);
 
 	const engineConfig: EngineConfigInput = {
 		turnLimit,
@@ -113,11 +124,18 @@ async function main() {
 	const strategy2 =
 		typeof argv.strategy2 === "string" ? argv.strategy2 : undefined;
 
-	const apiKey =
-		typeof argv.apiKey === "string"
-			? argv.apiKey
-			: (process.env.LLM_API_KEY ?? process.env.OPENROUTER_API_KEY);
 	const baseUrl = typeof argv.baseUrl === "string" ? argv.baseUrl : undefined;
+	const baseUrl1 = typeof argv.baseUrl1 === "string" ? argv.baseUrl1 : baseUrl;
+	const baseUrl2 = typeof argv.baseUrl2 === "string" ? argv.baseUrl2 : baseUrl;
+	const apiKey = typeof argv.apiKey === "string" ? argv.apiKey : undefined;
+	const apiKey1 =
+		typeof argv.apiKey1 === "string"
+			? argv.apiKey1
+			: (apiKey ?? inferApiKeyForBaseUrl(baseUrl1));
+	const apiKey2 =
+		typeof argv.apiKey2 === "string"
+			? argv.apiKey2
+			: (apiKey ?? inferApiKeyForBaseUrl(baseUrl2));
 	const llmDelayMs = num(argv.llmDelay, 0);
 	const openrouterReferrer =
 		typeof argv.openrouterReferrer === "string"
@@ -147,8 +165,8 @@ async function main() {
 		prompt: prompt1,
 		strategy: strategy1,
 		model: model1,
-		apiKey,
-		baseUrl,
+		apiKey: apiKey1,
+		baseUrl: baseUrl1,
 		llmDelayMs,
 		openrouterReferrer,
 		openrouterTitle,
@@ -157,8 +175,8 @@ async function main() {
 		prompt: prompt2,
 		strategy: strategy2,
 		model: model2,
-		apiKey,
-		baseUrl,
+		apiKey: apiKey2,
+		baseUrl: baseUrl2,
 		llmDelayMs,
 		openrouterReferrer,
 		openrouterTitle,
@@ -189,8 +207,28 @@ async function main() {
 
 	const scenario =
 		typeof argv.scenario === "string"
-			? (argv.scenario as "melee" | "ranged" | "stronghold_rush" | "midfield")
+			? (argv.scenario as
+					| "melee"
+					| "ranged"
+					| "stronghold_rush"
+					| "midfield"
+					| "all_infantry"
+					| "all_cavalry"
+					| "all_archer"
+					| "infantry_archer"
+					| "cavalry_archer"
+					| "infantry_cavalry")
 			: undefined;
+
+	if (
+		(cmd === "single" || cmd === "tourney" || cmd === "mass") &&
+		maxTurns < minRecommendedMaxTurns &&
+		!quiet
+	) {
+		console.warn(
+			`Warning: --maxTurns ${maxTurns} may truncate games early for turnLimit=${turnLimit} and actionsPerTurn=${actionsPerTurn}. Recommended >= ${minRecommendedMaxTurns}.`,
+		);
+	}
 
 	if (cmd === "single") {
 		const result = await playMatch({
@@ -288,6 +326,7 @@ async function main() {
 		const startTime = Date.now();
 		const stats = await runMassSimulation(options, [p1, p2], engineConfig, {
 			harness,
+			scenario,
 			invalidPolicy,
 			moveValidationMode,
 			strict,
@@ -407,6 +446,22 @@ async function main() {
 		return;
 	}
 
+	if (cmd === "behavior") {
+		const inputDir = typeof argv.input === "string" ? argv.input : "./results";
+		const outputPath =
+			typeof argv.output === "string"
+				? argv.output
+				: path.join(inputDir, "behavior-metrics.json");
+
+		const summary = analyzeBehaviorFromArtifacts(inputDir);
+		writeFileSync(outputPath, JSON.stringify(summary, null, 2));
+		console.log(JSON.stringify(summary, null, 2));
+		if (!quiet) {
+			console.log(`Behavior metrics written: ${outputPath}`);
+		}
+		return;
+	}
+
 	console.error("Usage:");
 	console.error(
 		"  tsx src/cli.ts single  --seed 1 --maxTurns 200 --verbose --log --logFile ./match.json",
@@ -423,12 +478,15 @@ async function main() {
 	console.error(
 		"  tsx src/cli.ts dashboard --input ./results --output ./dashboard.html",
 	);
+	console.error(
+		"  tsx src/cli.ts behavior --input ./results-or-artifacts --output ./behavior-metrics.json",
+	);
 	console.error("");
 	console.error("Engine options:");
 	console.error("  --turnLimit N       Engine turn limit (default: 40)");
 	console.error("  --actionsPerTurn N  Actions per turn (default: 7)");
 	console.error(
-		"  --scenario NAME     Combat scenario: melee, ranged, stronghold_rush, midfield",
+		"  --scenario NAME     Combat scenario: melee, ranged, stronghold_rush, midfield, all_infantry, all_cavalry, all_archer, infantry_archer, cavalry_archer, infantry_cavalry",
 	);
 	console.error(
 		"  --harness MODE      Runner harness: legacy, boardgameio (default: legacy)",
@@ -480,7 +538,19 @@ async function main() {
 		"  --apiKey KEY    API key for provider (or set LLM_API_KEY env var)",
 	);
 	console.error(
+		"  --apiKey1 KEY   API key for P1 llm bot (overrides --apiKey)",
+	);
+	console.error(
+		"  --apiKey2 KEY   API key for P2 llm bot (overrides --apiKey)",
+	);
+	console.error(
 		"  --baseUrl URL   OpenAI-compatible base URL (default: OpenRouter)",
+	);
+	console.error(
+		"  --baseUrl1 URL  Base URL for P1 llm bot (overrides --baseUrl)",
+	);
+	console.error(
+		"  --baseUrl2 URL  Base URL for P2 llm bot (overrides --baseUrl)",
 	);
 	console.error(
 		"  --openrouterReferrer URL  Sets OpenRouter HTTP-Referer header (or OPENROUTER_REFERRER env var)",
