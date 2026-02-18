@@ -6,7 +6,7 @@ import {
 	type Move,
 } from "@fightclaw/engine";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HexBoard } from "@/components/arena/hex-board";
 import { ThoughtPanel } from "@/components/arena/thought-panel";
@@ -18,6 +18,42 @@ import {
 export const Route = createFileRoute("/dev")({
 	component: DevConsole,
 });
+
+// ── Replay bundle types (matches export-web-replay.ts) ──────────────────
+
+type ReplayStep = {
+	ply: number;
+	playerID: string;
+	move: Move;
+	preHash: string;
+	postHash: string;
+};
+
+type ReplayMatch = {
+	id: string;
+	label: string;
+	scenario: string | null;
+	seed: number;
+	participants: [string, string];
+	result: { winner: string | null; reason: string };
+	initialState: MatchState;
+	steps: ReplayStep[];
+};
+
+type ReplayBundle = {
+	version: 1;
+	generatedAt: string;
+	runDir: string;
+	summaryPath: string | null;
+	matchCount: number;
+	matches: ReplayMatch[];
+};
+
+// ── Mode type ───────────────────────────────────────────────────────────
+
+type DevMode = "sandbox" | "replay";
+
+// ── Component ───────────────────────────────────────────────────────────
 
 function DevConsole() {
 	if (!import.meta.env.DEV) {
@@ -37,16 +73,12 @@ function DevConsole() {
 }
 
 function DevLayout() {
-	const [seed, setSeed] = useState(42);
-	const createPreviewState = useCallback(
-		(s: number) =>
-			createInitialState(s, { boardColumns: 17 }, ["dev-a", "dev-b"]),
-		[],
-	);
+	const [mode, setMode] = useState<DevMode>("sandbox");
+
+	// ── Shared board state ──────────────────────────────────────────────
 	const [boardState, setBoardState] = useState<MatchState>(() =>
-		createPreviewState(seed),
+		createInitialState(42, { boardColumns: 17 }, ["dev-a", "dev-b"]),
 	);
-	const [moveCount, setMoveCount] = useState(0);
 
 	const {
 		effects,
@@ -61,7 +93,17 @@ function DevLayout() {
 		onApplyBaseState: (state) => setBoardState(state),
 	});
 
-	const resetBoard = useCallback(
+	// ── Sandbox state ───────────────────────────────────────────────────
+	const [seed, setSeed] = useState(42);
+	const [moveCount, setMoveCount] = useState(0);
+
+	const createPreviewState = useCallback(
+		(s: number) =>
+			createInitialState(s, { boardColumns: 17 }, ["dev-a", "dev-b"]),
+		[],
+	);
+
+	const resetSandbox = useCallback(
 		(s: number) => {
 			resetAnimator();
 			setBoardState(createPreviewState(s));
@@ -70,7 +112,10 @@ function DevLayout() {
 		[createPreviewState, resetAnimator],
 	);
 
-	const legalMoves = useMemo(() => listLegalMoves(boardState), [boardState]);
+	const legalMoves = useMemo(
+		() => (mode === "sandbox" ? listLegalMoves(boardState) : []),
+		[boardState, mode],
+	);
 
 	const playRandomMove = useCallback(() => {
 		if (boardState.status !== "active" || legalMoves.length === 0) return;
@@ -127,6 +172,147 @@ function DevLayout() {
 		[boardState, moveCount, enqueue],
 	);
 
+	// ── Replay state ────────────────────────────────────────────────────
+	const [replayUrl, setReplayUrl] = useState("/dev-replay/latest.json");
+	const [bundle, setBundle] = useState<ReplayBundle | null>(null);
+	const [selectedMatchIdx, setSelectedMatchIdx] = useState(0);
+	const [replayPly, setReplayPly] = useState(0);
+	const [replayPlaying, setReplayPlaying] = useState(false);
+	const [stepMs, setStepMs] = useState(400);
+	const [actionLog, setActionLog] = useState<string[]>([]);
+	const [replayError, setReplayError] = useState<string | null>(null);
+	const playIntervalRef = useRef<number | null>(null);
+
+	const selectedMatch = bundle?.matches[selectedMatchIdx] ?? null;
+
+	const loadBundle = useCallback(
+		async (url: string) => {
+			setReplayError(null);
+			try {
+				const res = await fetch(url);
+				if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+				const data = (await res.json()) as ReplayBundle;
+				if (!data.matches || data.matches.length === 0) {
+					throw new Error("No matches in bundle");
+				}
+				setBundle(data);
+				setSelectedMatchIdx(0);
+				setReplayPly(0);
+				setReplayPlaying(false);
+				setActionLog([]);
+				resetAnimator();
+				const first = data.matches[0];
+				if (first) setBoardState(first.initialState);
+			} catch (err) {
+				setReplayError((err as Error).message);
+			}
+		},
+		[resetAnimator],
+	);
+
+	const selectMatch = useCallback(
+		(idx: number) => {
+			if (!bundle) return;
+			const match = bundle.matches[idx];
+			if (!match) return;
+			setSelectedMatchIdx(idx);
+			setReplayPly(0);
+			setReplayPlaying(false);
+			setActionLog([]);
+			resetAnimator();
+			setBoardState(match.initialState);
+		},
+		[bundle, resetAnimator],
+	);
+
+	const resetMatch = useCallback(() => {
+		if (!selectedMatch) return;
+		setReplayPly(0);
+		setReplayPlaying(false);
+		setActionLog([]);
+		resetAnimator();
+		setBoardState(selectedMatch.initialState);
+	}, [selectedMatch, resetAnimator]);
+
+	const stepReplay = useCallback(() => {
+		if (!selectedMatch) return;
+		if (replayPly >= selectedMatch.steps.length) return;
+
+		const step = selectedMatch.steps[replayPly];
+		if (!step) return;
+		const result = applyMove(boardState, step.move);
+		if (!result.ok) {
+			setActionLog((prev) =>
+				[`[${replayPly}] ERR: ${result.error}`, ...prev].slice(0, 200),
+			);
+			return;
+		}
+
+		const envelope: EngineEventsEnvelopeV1 = {
+			eventVersion: 1,
+			event: "engine_events",
+			matchId: selectedMatch.id,
+			stateVersion: replayPly + 1,
+			agentId: step.playerID,
+			moveId: `replay-${replayPly}`,
+			move: step.move,
+			engineEvents: result.engineEvents,
+			ts: new Date().toISOString(),
+		};
+		enqueue(envelope, { postState: result.state });
+
+		const moveText = `${step.move.action}${step.move.action === "move" || step.move.action === "attack" ? ` ${step.move.unitId}` : ""}`;
+		setActionLog((prev) =>
+			[`[${replayPly}] ${step.playerID}: ${moveText}`, ...prev].slice(0, 200),
+		);
+		setReplayPly((p) => p + 1);
+	}, [selectedMatch, replayPly, boardState, enqueue]);
+
+	// Auto-play interval
+	useEffect(() => {
+		if (
+			replayPlaying &&
+			selectedMatch &&
+			replayPly < selectedMatch.steps.length
+		) {
+			playIntervalRef.current = window.setInterval(() => {
+				stepReplay();
+			}, stepMs);
+			return () => {
+				if (playIntervalRef.current !== null) {
+					clearInterval(playIntervalRef.current);
+					playIntervalRef.current = null;
+				}
+			};
+		}
+		if (playIntervalRef.current !== null) {
+			clearInterval(playIntervalRef.current);
+			playIntervalRef.current = null;
+		}
+		if (selectedMatch && replayPly >= selectedMatch.steps.length) {
+			setReplayPlaying(false);
+		}
+	}, [replayPlaying, stepMs, selectedMatch, replayPly, stepReplay]);
+
+	// Switch mode resets
+	const switchMode = useCallback(
+		(m: DevMode) => {
+			setMode(m);
+			setReplayPlaying(false);
+			resetAnimator();
+			if (m === "sandbox") {
+				setBoardState(createPreviewState(seed));
+				setMoveCount(0);
+			} else if (m === "replay" && selectedMatch) {
+				setBoardState(selectedMatch.initialState);
+				setReplayPly(0);
+				setActionLog([]);
+			}
+		},
+		[createPreviewState, resetAnimator, seed, selectedMatch],
+	);
+
+	// ── Derived ─────────────────────────────────────────────────────────
 	const unitCountA = useMemo(
 		() => boardState.players.A.units.length,
 		[boardState.players.A.units.length],
@@ -136,9 +322,19 @@ function DevLayout() {
 		[boardState.players.B.units.length],
 	);
 
+	const topBarRight =
+		mode === "sandbox" ? (
+			<span className="muted">seed:{seed}</span>
+		) : selectedMatch ? (
+			<span className="muted">
+				{replayPly}/{selectedMatch.steps.length}
+			</span>
+		) : (
+			<span className="muted">no replay</span>
+		);
+
 	return (
 		<div className="spectator-landing">
-			{/* Game-info bar (mirrors spectator) */}
 			<div className="spectator-top-bar">
 				<span className="status-badge">DEV</span>
 				<span className="top-bar-center">
@@ -155,10 +351,9 @@ function DevLayout() {
 					| AP {boardState.actionsRemaining}
 					{hudFx.passPulse ? " | PASS" : ""}
 				</span>
-				<span className="muted">seed:{seed}</span>
+				{topBarRight}
 			</div>
 
-			{/* Three-column layout: thought panel | board | dev panel */}
 			<div className="spectator-main">
 				<ThoughtPanel player="A" thoughts={[]} isThinking={false} />
 
@@ -175,57 +370,213 @@ function DevLayout() {
 				</div>
 
 				<div className="dev-panel">
-					<div className="dev-panel-label">Dev Controls</div>
-
-					<div className="dev-panel-section">
-						<div className="dev-panel-stat-label">Seed</div>
-						<div className="dev-panel-row">
-							<input
-								type="number"
-								className="dev-panel-input"
-								value={seed}
-								onChange={(e) => setSeed(Number(e.target.value) || 0)}
-							/>
-						</div>
+					{/* Mode toggle */}
+					<div className="dev-panel-row">
 						<button
 							type="button"
-							className="dev-panel-btn"
-							onClick={() => resetBoard(seed)}
+							className={`dev-panel-btn ${mode === "sandbox" ? "dev-panel-btn-primary" : ""}`}
+							onClick={() => switchMode("sandbox")}
 						>
-							Reset
+							Sandbox
+						</button>
+						<button
+							type="button"
+							className={`dev-panel-btn ${mode === "replay" ? "dev-panel-btn-primary" : ""}`}
+							onClick={() => switchMode("replay")}
+						>
+							API Replay
 						</button>
 					</div>
 
-					<div className="dev-panel-section">
-						<div className="dev-panel-stat-label">Actions</div>
-						<button
-							type="button"
-							className="dev-panel-btn dev-panel-btn-primary"
-							onClick={playRandomMove}
-							disabled={boardState.status !== "active"}
-						>
-							Random Move
-						</button>
-						<div className="dev-panel-row">
-							<button
-								type="button"
-								className="dev-panel-btn"
-								onClick={() => playBurst(5)}
-								disabled={boardState.status !== "active"}
-							>
-								+5
-							</button>
-							<button
-								type="button"
-								className="dev-panel-btn"
-								onClick={() => playBurst(20)}
-								disabled={boardState.status !== "active"}
-							>
-								+20
-							</button>
-						</div>
-					</div>
+					{mode === "sandbox" ? (
+						<>
+							<div className="dev-panel-section">
+								<div className="dev-panel-stat-label">Seed</div>
+								<div className="dev-panel-row">
+									<input
+										type="number"
+										className="dev-panel-input"
+										value={seed}
+										onChange={(e) => setSeed(Number(e.target.value) || 0)}
+									/>
+								</div>
+								<button
+									type="button"
+									className="dev-panel-btn"
+									onClick={() => resetSandbox(seed)}
+								>
+									Reset
+								</button>
+							</div>
 
+							<div className="dev-panel-section">
+								<div className="dev-panel-stat-label">Actions</div>
+								<button
+									type="button"
+									className="dev-panel-btn dev-panel-btn-primary"
+									onClick={playRandomMove}
+									disabled={boardState.status !== "active"}
+								>
+									Random Move
+								</button>
+								<div className="dev-panel-row">
+									<button
+										type="button"
+										className="dev-panel-btn"
+										onClick={() => playBurst(5)}
+										disabled={boardState.status !== "active"}
+									>
+										+5
+									</button>
+									<button
+										type="button"
+										className="dev-panel-btn"
+										onClick={() => playBurst(20)}
+										disabled={boardState.status !== "active"}
+									>
+										+20
+									</button>
+								</div>
+							</div>
+						</>
+					) : (
+						<>
+							<div className="dev-panel-section">
+								<div className="dev-panel-stat-label">Replay URL</div>
+								<input
+									type="text"
+									className="dev-panel-input"
+									value={replayUrl}
+									onChange={(e) => setReplayUrl(e.target.value)}
+								/>
+								<div className="dev-panel-row">
+									<button
+										type="button"
+										className="dev-panel-btn dev-panel-btn-primary"
+										onClick={() => void loadBundle(replayUrl)}
+									>
+										Load Replay
+									</button>
+									<button
+										type="button"
+										className="dev-panel-btn"
+										onClick={() => void loadBundle("/dev-replay/latest.json")}
+									>
+										Load Latest
+									</button>
+								</div>
+								{replayError ? (
+									<div style={{ color: "#ff6b6b", fontSize: "0.65rem" }}>
+										{replayError}
+									</div>
+								) : null}
+							</div>
+
+							{bundle ? (
+								<>
+									<div className="dev-panel-section">
+										<div className="dev-panel-stat-label">
+											Match ({bundle.matchCount})
+										</div>
+										<select
+											className="dev-panel-input"
+											value={selectedMatchIdx}
+											onChange={(e) => selectMatch(Number(e.target.value))}
+										>
+											{bundle.matches.map((m, i) => (
+												<option key={m.id} value={i}>
+													{m.label}
+												</option>
+											))}
+										</select>
+									</div>
+
+									{selectedMatch ? (
+										<>
+											<div className="dev-panel-section">
+												<div className="dev-panel-stat-label">Playback</div>
+												<div className="dev-panel-row">
+													<button
+														type="button"
+														className="dev-panel-btn"
+														onClick={resetMatch}
+													>
+														Reset Match
+													</button>
+													<button
+														type="button"
+														className="dev-panel-btn"
+														onClick={stepReplay}
+														disabled={replayPly >= selectedMatch.steps.length}
+													>
+														Step
+													</button>
+												</div>
+												<div className="dev-panel-row">
+													<button
+														type="button"
+														className={`dev-panel-btn ${replayPlaying ? "dev-panel-btn-primary" : ""}`}
+														onClick={() => setReplayPlaying((p) => !p)}
+														disabled={replayPly >= selectedMatch.steps.length}
+													>
+														{replayPlaying ? "Pause" : "Play"}
+													</button>
+												</div>
+												<div className="dev-panel-row">
+													<span className="dev-panel-stat-label">Step ms</span>
+													<input
+														type="number"
+														className="dev-panel-input"
+														style={{ width: 64 }}
+														value={stepMs}
+														onChange={(e) =>
+															setStepMs(
+																Math.max(50, Number(e.target.value) || 400),
+															)
+														}
+													/>
+												</div>
+												<div className="dev-panel-stat">
+													<span className="dev-panel-stat-label">Result</span>
+													<span className="dev-panel-stat-accent">
+														{selectedMatch.result.winner ?? "draw"} (
+														{selectedMatch.result.reason})
+													</span>
+												</div>
+											</div>
+
+											<div
+												className="dev-panel-section"
+												style={{ flex: 1, minHeight: 0 }}
+											>
+												<div className="dev-panel-stat-label">
+													Action Log ({actionLog.length})
+												</div>
+												<div
+													style={{
+														flex: 1,
+														overflowY: "auto",
+														fontSize: "0.6rem",
+														lineHeight: 1.4,
+														color: "var(--spectator-muted)",
+														maxHeight: 200,
+													}}
+												>
+													{actionLog.map((line, i) => (
+														<div key={`log-${actionLog.length - i}`}>
+															{line}
+														</div>
+													))}
+												</div>
+											</div>
+										</>
+									) : null}
+								</>
+							) : null}
+						</>
+					)}
+
+					{/* State readout (always visible) */}
 					<div className="dev-panel-section">
 						<div className="dev-panel-label">State</div>
 						<div className="dev-panel-stat">
@@ -247,10 +598,6 @@ function DevLayout() {
 							<span className="dev-panel-stat-value">
 								{boardState.actionsRemaining}
 							</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Moves</span>
-							<span className="dev-panel-stat-value">{moveCount}</span>
 						</div>
 						<div className="dev-panel-stat">
 							<span className="dev-panel-stat-label">Units A</span>
