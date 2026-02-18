@@ -56,7 +56,12 @@ export const UnitToken = memo(function UnitToken({
 					: { x, y, scale: 1, opacity: 1 }
 			}
 			exit={{ scale: 0, opacity: 0, transition: { duration: 0.25 } }}
-			transition={{ type: "tween", duration: 0.3, ease: "easeInOut" }}
+			transition={{
+				x: { type: "spring", stiffness: 200, damping: 20 },
+				y: { type: "spring", stiffness: 200, damping: 20 },
+				scale: { type: "tween", duration: 0.3, ease: "easeInOut" },
+				opacity: { type: "tween", duration: 0.3, ease: "easeInOut" },
+			}}
 		>
 			{/* ASCII art unit */}
 			{lines.map((line, i) => (

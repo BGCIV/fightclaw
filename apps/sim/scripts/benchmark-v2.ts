@@ -24,6 +24,12 @@ interface Aggregate {
 	>;
 }
 
+interface RunPolicy {
+	timeoutMs?: number;
+	retries?: number;
+	continueOnError?: boolean;
+}
+
 const scenarios: Scenario[] = [
 	"midfield",
 	"melee",
@@ -51,11 +57,43 @@ function hasFlag(name: string): boolean {
 	return process.argv.includes(name);
 }
 
-function runCmd(cwd: string, args: string[], dryRun: boolean): void {
+function runCmd(
+	cwd: string,
+	args: string[],
+	dryRun: boolean,
+	policy?: RunPolicy,
+): boolean {
 	const pretty = `pnpm ${args.join(" ")}`;
 	console.log(pretty);
-	if (dryRun) return;
-	execFileSync("pnpm", args, { cwd, stdio: "inherit" });
+	if (dryRun) return true;
+
+	const retries = Math.max(0, policy?.retries ?? 0);
+	const timeoutMs = policy?.timeoutMs;
+
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			execFileSync("pnpm", args, {
+				cwd,
+				stdio: "inherit",
+				timeout: timeoutMs,
+				killSignal: "SIGKILL",
+			});
+			return true;
+		} catch (error) {
+			const lastAttempt = attempt >= retries;
+			const msg = error instanceof Error ? error.message : String(error);
+			console.warn(
+				`Command failed (attempt ${attempt + 1}/${retries + 1}): ${msg}`,
+			);
+			if (lastAttempt) {
+				if (policy?.continueOnError) {
+					return false;
+				}
+				throw error;
+			}
+		}
+	}
+	return false;
 }
 
 function collectMatchups(baseSeed: number): Matchup[] {
@@ -177,6 +215,15 @@ function main() {
 		parseArg("--apiLlmMaxTokens") ?? "280",
 		10,
 	);
+	const apiCommandTimeoutMs = Number.parseInt(
+		parseArg("--apiCommandTimeoutMs") ?? "240000",
+		10,
+	);
+	const apiCommandRetries = Number.parseInt(
+		parseArg("--apiCommandRetries") ?? "1",
+		10,
+	);
+	const apiContinueOnError = parseArg("--apiContinueOnError") !== "false";
 	const maxDrawRate = Number.parseFloat(parseArg("--maxDrawRate") ?? "0.02");
 	const minTempoSpread = Number.parseFloat(
 		parseArg("--minTempoSpread") ?? "10",
@@ -195,6 +242,7 @@ function main() {
 	console.log(`Benchmark output: ${outputBaseAbs}`);
 	console.log(`Matchups: ${matchups.length}`);
 	console.log(`Games per matchup: ${gamesPerMatchup}`);
+	const apiFailures: string[] = [];
 
 	const fastLaneDirInSim = path.join(outputBaseInSim, "fast_lane");
 	for (const matchup of matchups) {
@@ -265,7 +313,7 @@ function main() {
 					apiLaneDirInSim,
 					`${scenario}__${bot1}_vs_${bot2}`,
 				);
-				runCmd(
+				const ok = runCmd(
 					repoRoot,
 					[
 						"-C",
@@ -321,7 +369,15 @@ function main() {
 						"--quiet",
 					],
 					dryRun,
+					{
+						timeoutMs: Math.max(0, apiCommandTimeoutMs),
+						retries: Math.max(0, apiCommandRetries),
+						continueOnError: apiContinueOnError,
+					},
 				);
+				if (!ok) {
+					apiFailures.push(`${scenario}__${bot1}_vs_${bot2}`);
+				}
 				apiSeed += 1;
 			}
 		}
@@ -486,6 +542,14 @@ function main() {
 			actionProfileSeparation,
 			upgradeSummary,
 		},
+		apiReliability: withApi
+			? {
+					failedMatchups: apiFailures,
+					failedMatchupCount: apiFailures.length,
+					apiCommandTimeoutMs: Math.max(0, apiCommandTimeoutMs),
+					apiCommandRetries: Math.max(0, apiCommandRetries),
+				}
+			: null,
 		gates,
 	};
 

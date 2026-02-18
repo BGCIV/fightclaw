@@ -172,7 +172,7 @@ export function useArenaAnimator(options?: {
 						{ id: nextEffectId(), type: "move-from", hexId: ev.from },
 						{ id: nextEffectId(), type: "move-to", hexId: ev.to },
 					]);
-					await delay(scale(260));
+					await delay(scale(350));
 					if (runTokenRef.current !== token) return;
 
 					clearUnitAnim(ev.unitId);
