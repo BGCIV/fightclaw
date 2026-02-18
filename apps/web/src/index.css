@@ -325,23 +325,6 @@
   -moz-osx-font-smoothing: unset;
 }
 
-/* ── Dev route overrides ─────────────────────────────── */
-
-.dev-spectate-board .hex-board-container {
-  width: fit-content;
-  height: auto;
-  justify-content: flex-start;
-  overflow: visible;
-}
-
-.dev-spectate-board .hex-board-svg {
-  display: block;
-  width: auto;
-  height: min(78vh, 980px);
-  max-width: 100%;
-  max-height: none;
-}
-
 /* ── Leaderboard ─────────────────────────────────────── */
 
 .leaderboard-page {
@@ -424,4 +407,103 @@
 
 .leaderboard-error {
   color: #ff6b6b;
+}
+
+/* ── Dev controls panel ──────────────────────────────── */
+
+.dev-panel {
+  background: rgba(5, 11, 16, 0.85);
+  border-left: 1px dashed var(--spectator-border);
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.dev-panel-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--spectator-accent);
+  margin-bottom: 4px;
+}
+
+.dev-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dev-panel-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.dev-panel-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  background: rgba(11, 21, 28, 0.8);
+  border: 1px dashed var(--spectator-border);
+  color: var(--spectator-text);
+  outline: none;
+}
+
+.dev-panel-input:focus {
+  border-color: var(--spectator-accent);
+}
+
+.dev-panel-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: transparent;
+  border: 1px dashed var(--spectator-border);
+  color: var(--spectator-text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+  white-space: nowrap;
+}
+
+.dev-panel-btn:hover {
+  border-color: var(--spectator-accent);
+  color: var(--spectator-accent);
+}
+
+.dev-panel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dev-panel-btn-primary {
+  border-color: var(--spectator-accent);
+  color: var(--spectator-accent);
+}
+
+.dev-panel-stat {
+  display: flex;
+  justify-content: space-between;
+}
+
+.dev-panel-stat-label {
+  color: var(--spectator-muted);
+}
+
+.dev-panel-stat-value {
+  color: var(--spectator-text);
+}
+
+.dev-panel-stat-accent {
+  color: var(--spectator-accent);
 }

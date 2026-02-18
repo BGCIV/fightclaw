@@ -9,8 +9,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 
 import { HexBoard } from "@/components/arena/hex-board";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ThoughtPanel } from "@/components/arena/thought-panel";
 import {
 	type EngineEventsEnvelopeV1,
 	useArenaAnimator,
@@ -23,33 +22,21 @@ export const Route = createFileRoute("/dev")({
 function DevConsole() {
 	if (!import.meta.env.DEV) {
 		return (
-			<div className="container mx-auto max-w-3xl px-4 py-6">
-				<h1 className="font-semibold text-lg">Dev tools disabled</h1>
-				<p className="text-muted-foreground text-sm">
-					This route is only available in dev.
-				</p>
+			<div className="leaderboard-page">
+				<div className="leaderboard-inner">
+					<h1 className="leaderboard-title">Dev tools disabled</h1>
+					<p className="leaderboard-subtitle">
+						This route is only available in dev mode.
+					</p>
+				</div>
 			</div>
 		);
 	}
 
-	return (
-		<div className="mx-auto w-full max-w-[1700px] px-4 py-4 md:px-6 md:py-6">
-			<header className="mb-4 rounded-xl border border-border/70 bg-card/70 p-4 backdrop-blur">
-				<p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-					Spectate Sandbox
-				</p>
-				<h1 className="mt-1 font-semibold text-2xl">Live Spectate Preview</h1>
-				<p className="text-muted-foreground text-sm">
-					Board-first layout for testing spectator readability, scale, and HUD
-					density.
-				</p>
-			</header>
-			<BoardPreview />
-		</div>
-	);
+	return <DevLayout />;
 }
 
-function BoardPreview() {
+function DevLayout() {
 	const [seed, setSeed] = useState(42);
 	const createPreviewState = useCallback(
 		(s: number) =>
@@ -140,78 +127,42 @@ function BoardPreview() {
 		[boardState, moveCount, enqueue],
 	);
 
+	const unitCountA = useMemo(
+		() => boardState.players.A.units.length,
+		[boardState.players.A.units.length],
+	);
+	const unitCountB = useMemo(
+		() => boardState.players.B.units.length,
+		[boardState.players.B.units.length],
+	);
+
 	return (
-		<section className="mx-auto grid w-full max-w-[1500px] gap-3 rounded-xl border border-border/70 bg-card/70 p-4">
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<p className="text-[11px] text-muted-foreground uppercase tracking-[0.18em]">
-						Arena View
-					</p>
-					<h2 className="font-semibold text-lg">Board: 17x9</h2>
-					<p className="text-muted-foreground text-xs">
-						Turn {boardState.turn} | Active {boardState.activePlayer} | AP{" "}
-						{boardState.actionsRemaining} | Moves {moveCount} |{" "}
-						{boardState.status}
-						{hudFx.passPulse ? " | PASS" : ""}
-					</p>
-				</div>
-				<div className="grid gap-2 sm:grid-cols-[auto_auto_auto]">
-					<div className="grid gap-1">
-						<label
-							className="text-muted-foreground text-xs"
-							htmlFor="board-seed"
-						>
-							Seed
-						</label>
-						<Input
-							id="board-seed"
-							type="number"
-							className="h-8 w-24"
-							value={seed}
-							onChange={(e) => setSeed(Number(e.target.value) || 0)}
-						/>
-					</div>
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						className="self-end"
-						onClick={() => resetBoard(seed)}
+		<div className="spectator-landing">
+			{/* Game-info bar (mirrors spectator) */}
+			<div className="spectator-top-bar">
+				<span className="status-badge">DEV</span>
+				<span className="top-bar-center">
+					T{boardState.turn}{" "}
+					<span
+						className={
+							boardState.activePlayer === "A"
+								? "player-a-color"
+								: "player-b-color"
+						}
 					>
-						Reset
-					</Button>
-					<div className="flex flex-wrap gap-2 self-end">
-						<Button
-							type="button"
-							size="sm"
-							onClick={playRandomMove}
-							disabled={boardState.status !== "active"}
-						>
-							Random
-						</Button>
-						<Button
-							type="button"
-							variant="secondary"
-							size="sm"
-							onClick={() => playBurst(5)}
-							disabled={boardState.status !== "active"}
-						>
-							+5
-						</Button>
-						<Button
-							type="button"
-							variant="secondary"
-							size="sm"
-							onClick={() => playBurst(20)}
-							disabled={boardState.status !== "active"}
-						>
-							+20
-						</Button>
-					</div>
-				</div>
+						{boardState.activePlayer}
+					</span>{" "}
+					| AP {boardState.actionsRemaining}
+					{hudFx.passPulse ? " | PASS" : ""}
+				</span>
+				<span className="muted">seed:{seed}</span>
 			</div>
-			<div className="dev-spectate-board spectator-landing overflow-auto rounded-xl border border-border/60 p-2 sm:p-3">
-				<div className="mx-auto w-fit">
+
+			{/* Three-column layout: thought panel | board | dev panel */}
+			<div className="spectator-main">
+				<ThoughtPanel player="A" thoughts={[]} isThinking={false} />
+
+				<div className="hex-board-container">
 					<HexBoard
 						state={boardState}
 						effects={effects}
@@ -222,7 +173,96 @@ function BoardPreview() {
 						activePlayer={boardState.activePlayer}
 					/>
 				</div>
+
+				<div className="dev-panel">
+					<div className="dev-panel-label">Dev Controls</div>
+
+					<div className="dev-panel-section">
+						<div className="dev-panel-stat-label">Seed</div>
+						<div className="dev-panel-row">
+							<input
+								type="number"
+								className="dev-panel-input"
+								value={seed}
+								onChange={(e) => setSeed(Number(e.target.value) || 0)}
+							/>
+						</div>
+						<button
+							type="button"
+							className="dev-panel-btn"
+							onClick={() => resetBoard(seed)}
+						>
+							Reset
+						</button>
+					</div>
+
+					<div className="dev-panel-section">
+						<div className="dev-panel-stat-label">Actions</div>
+						<button
+							type="button"
+							className="dev-panel-btn dev-panel-btn-primary"
+							onClick={playRandomMove}
+							disabled={boardState.status !== "active"}
+						>
+							Random Move
+						</button>
+						<div className="dev-panel-row">
+							<button
+								type="button"
+								className="dev-panel-btn"
+								onClick={() => playBurst(5)}
+								disabled={boardState.status !== "active"}
+							>
+								+5
+							</button>
+							<button
+								type="button"
+								className="dev-panel-btn"
+								onClick={() => playBurst(20)}
+								disabled={boardState.status !== "active"}
+							>
+								+20
+							</button>
+						</div>
+					</div>
+
+					<div className="dev-panel-section">
+						<div className="dev-panel-label">State</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Status</span>
+							<span className="dev-panel-stat-accent">{boardState.status}</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Turn</span>
+							<span className="dev-panel-stat-value">{boardState.turn}</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Active</span>
+							<span className="dev-panel-stat-value">
+								{boardState.activePlayer}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">AP</span>
+							<span className="dev-panel-stat-value">
+								{boardState.actionsRemaining}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Moves</span>
+							<span className="dev-panel-stat-value">{moveCount}</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Units A</span>
+							<span className="player-a-color">{unitCountA}</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Units B</span>
+							<span className="player-b-color">{unitCountB}</span>
+						</div>
+					</div>
+				</div>
 			</div>
-		</section>
+		</div>
 	);
 }
