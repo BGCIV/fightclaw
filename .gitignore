@@ -61,8 +61,11 @@ FUTURE_FIXES.md
 project docs/*
 !project docs/war-of-attrition-rules.md
 
+docs/plans/
+
 # Test artifacts
 **/diagnostics/
 **/results_low_quality/
 **/results/
 **/test-artifacts/
+apps/web/public/dev-replay/
