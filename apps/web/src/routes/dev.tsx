@@ -53,7 +53,11 @@ type ReplayBundle = {
 
 type DevMode = "sandbox" | "replay";
 
-// ── Component ───────────────────────────────────────────────────────────
+/**
+ * Render the development tools UI when the app is running in a development environment; otherwise display a disabled message.
+ *
+ * @returns The DevLayout React element when in development mode, or a simple informational message indicating dev tools are disabled.
+ */
 
 function DevConsole() {
 	if (!import.meta.env.DEV) {
@@ -72,6 +76,17 @@ function DevConsole() {
 	return <DevLayout />;
 }
 
+/**
+ * Renders the developer console layout with sandbox and replay workflows, a live board preview, and interactive controls for testing game logic.
+ *
+ * The component:
+ * - Keeps a shared MatchState synchronized with the arena animator.
+ * - Provides Sandbox mode: seedable initial state, reset, single random move, and burst (multiple random moves).
+ * - Provides Replay mode: fetches and validates replay bundles, selects matches, steps through or auto-plays match steps with configurable interval, and records an action log with errors.
+ * - Exposes playback controls, match selection, and derived UI readouts (turn, active player, AP, unit counts, and replay progress).
+ *
+ * @returns The Dev console React element used at the /dev route.
+ */
 function DevLayout() {
 	const [mode, setMode] = useState<DevMode>("sandbox");
 

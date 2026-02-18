@@ -53,6 +53,18 @@ export interface LlmBotConfig {
 	maxTokens?: number;
 }
 
+/**
+ * Create a Bot backed by the configured LLM client that selects moves and manages per-match loop state.
+ *
+ * The returned Bot uses an OpenRouter or OpenAI client (based on config.baseUrl) to call into the LLM for turn selection,
+ * maintains turn counters and streaks (no-attack, no-progress, no-recruit), and exposes:
+ * - chooseMove: picks a random legal move using the provided RNG.
+ * - chooseTurn / chooseTurnWithMeta: invoke the LLM to produce moves, update internal streaks and turn count, and track the previous seen state.
+ *
+ * @param id - Unique identifier for the bot instance
+ * @param config - LLM configuration and runtime options; may include `delayMs` to pause before making a turn
+ * @returns A Bot that implements chooseMove, chooseTurn, and chooseTurnWithMeta using the configured LLM client and internal loop-state tracking
+ */
 export function makeLlmBot(
 	id: string,
 	config: LlmBotConfig & { delayMs?: number },
@@ -139,6 +151,29 @@ export function makeLlmBot(
 	};
 }
 
+/**
+ * Generate a single turn for an LLM-driven bot by querying the model, parsing its output into commands, validating those commands against a simulated game state, and applying anti-loop and fallback policies.
+ *
+ * Builds a system + user prompt (full or short depending on turn cadence), issues one or more LLM calls with timeout and retry semantics, parses the response into up to five candidate commands, simulates and filters those commands for legality and terminal/turn boundaries, applies loop-pressure adjustments, and falls back to a safe move if no valid commands are produced. Records detailed diagnostics for the call.
+ *
+ * @param client - OpenAI-compatible client used to perform the chat completion request.
+ * @param botId - The bot's player identifier present in `state`.
+ * @param config - Bot configuration and LLM tuning options (e.g., systemPrompt, timeoutMs, parallelCalls, maxRetries, retryBaseMs, maxTokens, and optional delayMs).
+ * @param ctx.state - Current match state to base decisions on.
+ * @param ctx.legalMoves - Legal moves available at the start of this turn.
+ * @param ctx.turn - Current turn number (for diagnostics and prompt selection).
+ * @param ctx.rng - Random number generator used for fallback selection when needed.
+ * @param turnCount - Number of turns the bot has taken so far (used to decide full vs. short system prompt cadence).
+ * @param previousSeenState - Optional previously observed state used to compute deltas for tactical summaries and progress detection.
+ * @param loopState - Optional loop-state counters that influence anti-loop policy hints and move adjustments.
+ * @returns An object containing:
+ *  - `moves`: The validated, possibly policy-adjusted sequence of moves to perform this turn.
+ *  - `prompt`: The full system + user prompt sent to the LLM.
+ *  - `rawOutput`: The raw text response returned by the LLM (empty string on API failure).
+ *  - `hadAttack`: `true` if any returned move is an `attack` action, `false` otherwise.
+ *  - `hadRecruit`: `true` if any returned move is a `recruit` action, `false` otherwise.
+ *  - `progressObserved`: `true` if a measurable delta (units, HP, or VP) was observed relative to `previousSeenState`, `false` otherwise.
+ */
 async function chooseTurnDetailed(
 	client: OpenAI,
 	botId: string,
@@ -346,6 +381,13 @@ async function chooseTurnDetailed(
 	};
 }
 
+/**
+ * Sends a chat completion request to the specified LLM and aborts the request if it exceeds the given timeout.
+ *
+ * @param timeoutMs - Maximum time in milliseconds to wait before aborting the request
+ * @returns The chat completion response from the model
+ * @throws Error when the request is aborted due to exceeding `timeoutMs` (error message: `API timeout after ${timeoutMs}ms`); other client errors are rethrown
+ */
 function requestWithTimeout(
 	client: OpenAI,
 	config: LlmBotConfig,
@@ -384,7 +426,17 @@ function requestWithTimeout(
 
 // ---------------------------------------------------------------------------
 // System prompt builders
-// ---------------------------------------------------------------------------
+/**
+ * Builds a comprehensive system prompt instructing the LLM how to play as the given player.
+ *
+ * The prompt defines the exact command syntax and execution rules, unit types and upgrades, combat mechanics, win conditions, the locations of both strongholds, the provided strategy guidance (or a default aggressive strategy), optional anti-loop policy hints, and strict output constraints including a maximum of five commands and requirement that output be commands-only with `end_turn` when actions remain.
+ *
+ * @param side - The bot's player side ("A" or "B")
+ * @param state - Current match state (used to locate strongholds)
+ * @param userStrategy - Optional one-line strategy to include in the prompt; if omitted a default aggressive strategy is used
+ * @param policyHints - Optional lines of anti-loop guidance to append under "ANTI_LOOP_RULES"
+ * @returns The assembled system prompt string to send as the system message to the LLM
+ */
 
 function buildFullSystemPrompt(
 	side: "A" | "B",
@@ -427,6 +479,14 @@ function buildFullSystemPrompt(
 	].join("\n");
 }
 
+/**
+ * Builds a concise system prompt that instructs the model to output only legal game commands for the specified player.
+ *
+ * @param side - The player side ("A" or "B") that the prompt should address
+ * @param userStrategy - Optional one-line strategy to include; if omitted a default aggressive strategy is used
+ * @param policyHints - Optional anti-loop guidance lines to include in the prompt
+ * @returns A single-line short system prompt that enforces command-only output, sequential command execution, a strategy line, optional anti-loop hints, and a limit of up to five commands ending with `end_turn`
+ */
 function buildShortSystemPrompt(
 	side: "A" | "B",
 	userStrategy?: string,
@@ -446,6 +506,14 @@ function buildShortSystemPrompt(
 	].join(" ");
 }
 
+/**
+ * Produce guidance lines that discourage repetitive low-impact behavior and encourage attacks or objective advances.
+ *
+ * Provides hints derived from recent streak counters (`noAttackStreak`, `noProgressStreak`, `noRecruitStreak`) and the current turn to steer the agent away from stall/loop patterns and toward combat or advancing the objective.
+ *
+ * @param loopState - Optional counters tracking recent behavior: `noAttackStreak`, `noProgressStreak`, and `noRecruitStreak`.
+ * @param turn - The current turn number; used to add stronger late-game guidance when appropriate.
+ * @returns An array of short policy hint strings intended to be injected into system prompts to reduce looped or low-impact turns.
 function buildLoopPolicyHints(loopState?: LoopState, turn = 0): string[] {
 	const hints: string[] = [];
 	const noAttack = loopState?.noAttackStreak ?? 0;
@@ -486,7 +554,15 @@ function buildLoopPolicyHints(loopState?: LoopState, turn = 0): string[] {
 
 // ---------------------------------------------------------------------------
 // User message builder
-// ---------------------------------------------------------------------------
+/**
+ * Builds a compact, machine-readable user message summarizing the current turn for the LLM.
+ *
+ * The message contains an encoded view of `state` from `side`'s perspective, an optional encoded
+ * turn `delta`, a bulleted tactical summary (if any), and an encoded list of `legalMoves`, in that order.
+ *
+ * @param tacticalSummary - Short human-readable strategy hints or observations to include as bullet points.
+ * @param delta - Optional turn delta describing recent state changes to include before the tactical summary.
+ * @returns A single string ready to append to the system prompt and send to the LLM.
 
 function buildCompactUserMessage(
 	state: MatchState,
@@ -516,6 +592,22 @@ type TurnDelta = {
 	enemyResDelta: { gold: number; wood: number };
 };
 
+/**
+ * Computes the change in units, hit points, victory points, and resources between two match states for a given side.
+ *
+ * @param prev - The previous match state to compare from
+ * @param current - The current match state to compare to
+ * @param side - The side to compute deltas for ("A" or "B"); deltas for the opposing side are included as `enemy*` fields
+ * @returns An object with the following deltas:
+ *  - `ownUnitDelta`: change in number of units for `side`
+ *  - `enemyUnitDelta`: change in number of units for the opposing side
+ *  - `ownHpDelta`: change in total HP across all units for `side`
+ *  - `enemyHpDelta`: change in total HP across all enemy units
+ *  - `ownVpDelta`: change in victory points for `side`
+ *  - `enemyVpDelta`: change in victory points for the opposing side
+ *  - `ownResDelta`: object with `gold` and `wood` changes for `side`
+ *  - `enemyResDelta`: object with `gold` and `wood` changes for the opposing side
+ */
 function buildTurnDelta(
 	prev: MatchState,
 	current: MatchState,
@@ -546,6 +638,12 @@ function buildTurnDelta(
 	};
 }
 
+/**
+ * Create a compact multi-line summary of changes in units, HP, victory points, and resources since the bot's last turn.
+ *
+ * @param delta - Object describing numeric deltas for own and enemy units, HP, victory points, and resources
+ * @returns A formatted `TURN_DELTA_SINCE_YOUR_LAST_TURN` block with `+` prefixed positive values and plain numbers for zero or negative values
+ */
 function encodeTurnDelta(delta: TurnDelta): string {
 	const line = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 	return [
@@ -556,6 +654,17 @@ function encodeTurnDelta(delta: TurnDelta): string {
 	].join("\n");
 }
 
+/**
+ * Builds a concise tactical summary highlighting high-value attack opportunities and fragile units.
+ *
+ * Produces up to three prioritized "high-value attack" lines (scored by target HP and finisher potential),
+ * and optionally adds lines for enemy units in kill range and friendly units with low HP.
+ *
+ * @param state - The current match state
+ * @param side - The focal player side (`"A"` or `"B"`)
+ * @param legalMoves - The set of legal moves available to the focal side
+ * @returns An array of human-readable summary lines (e.g., recommended attacks, enemies in kill range, fragile allies)
+ */
 function buildTacticalSummary(
 	state: MatchState,
 	side: "A" | "B",
@@ -601,6 +710,16 @@ function buildTacticalSummary(
 	return ranked;
 }
 
+/**
+ * Selects a sensible fallback move from the available legal moves when no higher-priority decision is provided.
+ *
+ * Prefers actions in this order (when applicable): a scored best attack, any attack, an objective-advancing move, a plain move, recruiting infantry, recruiting any unit, fortify, upgrade, end_turn. If no legal move matches, returns an `end_turn` action.
+ *
+ * @param legalMoves - The list of legal moves to choose from.
+ * @param state - Optional current match state used to score attacks and objective-advancing moves.
+ * @param side - Optional side (`"A"` or `"B"`) of the bot used for scoring decisions.
+ * @returns The selected fallback `Move`, or an `end_turn` move when no other option is applicable.
+ */
 function pickFallbackMove(
 	legalMoves: Move[],
 	state?: MatchState,
@@ -640,6 +759,19 @@ function pickFallbackMove(
 	return { action: "end_turn" };
 }
 
+/**
+ * Adjusts a proposed move sequence to break looping behaviour by preferring combat or objective advances when loop metrics indicate stagnation.
+ *
+ * Evaluates loop-related counters, turn stage, and available legal actions; may replace the original `moves` with a single forced attack followed by `end_turn`, or an objective-advancing move followed by `end_turn`, when doing so is judged beneficial for progress. If no policy-driven replacement is warranted, returns the original `moves`.
+ *
+ * @param moves - The bot's proposed sequence of moves for the turn.
+ * @param opts.state - Current match state used to evaluate move impact.
+ * @param opts.side - The bot's side, either `"A"` or `"B"`.
+ * @param opts.legalMoves - All legal moves available this turn.
+ * @param opts.turn - Current turn number.
+ * @param opts.loopState - Optional loop metrics (no-attack, no-progress, no-recruit streaks) used to compute loop pressure.
+ * @returns A move sequence to execute: either the original `moves`, or a policy-enforced sequence (attack or objective advance followed by `end_turn`) intended to break loops and encourage progress.
+ */
 export function applyLoopPressurePolicy(
 	moves: Move[],
 	opts: {
@@ -706,6 +838,20 @@ export function applyLoopPressurePolicy(
 	return moves;
 }
 
+/**
+ * Compute a numeric "loop pressure" score that increases when the bot has recently
+ * avoided attacking, making progress, or recruiting, and as the game enters late turns.
+ *
+ * @param loopState - Optional streak counters tracking recent behavior (`noAttackStreak`, `noProgressStreak`, `noRecruitStreak`)
+ * @param turn - Current turn number
+ * @returns A non-negative integer pressure score; higher values indicate stronger pressure to choose attack/progress/recruiting moves.
+ *          Pressure is increased by:
+ *          - `noAttackStreak` (>=2 and >=4 thresholds)
+ *          - `noProgressStreak` (>=2 and >=4 thresholds)
+ *          - `noRecruitStreak` (>=3 threshold)
+ *          - late-game turn thresholds (`LATE_MATCH_TURN`, `VERY_LATE_MATCH_TURN`)
+ *          - an additional increment when in late game and there has been at least one recent no-attack or no-progress streak
+ */
 function computeLoopPressure(
 	loopState: LoopState | undefined,
 	turn: number,
@@ -729,6 +875,17 @@ function computeLoopPressure(
 	return pressure;
 }
 
+/**
+ * Determine whether a sequence of moves is "low-impact" for loop-detection purposes.
+ *
+ * A low-impact turn contains at least one non-end_turn action but no attacks and no moves that
+ * advance toward the enemy stronghold. Recruit and fortify actions count as low-impact.
+ *
+ * @param moves - Proposed moves for the turn
+ * @param state - Current match state used to evaluate objective-advancing moves
+ * @param side - The acting side ("A" or "B")
+ * @returns `true` if the sequence has at least one non-end_turn action and contains no attacks or objective-advancing moves, `false` otherwise.
+ */
 function isLowImpactLoopTurn(
 	moves: Move[],
 	state: MatchState,
@@ -753,6 +910,14 @@ function isLowImpactLoopTurn(
 	return sawNonEndTurn;
 }
 
+/**
+ * Selects the legal move that best advances toward the enemy stronghold.
+ *
+ * @param legalMoves - The list of legal moves to evaluate.
+ * @param state - The current match state used to score moves.
+ * @param side - The bot's side, either `"A"` or `"B"`.
+ * @returns The highest-scoring `move` action that advances the objective, or `undefined` if no move actions are available.
+ */
 function pickBestObjectiveAdvanceMove(
 	legalMoves: Move[],
 	state: MatchState,
@@ -773,6 +938,18 @@ function pickBestObjectiveAdvanceMove(
 	return bestMove;
 }
 
+/**
+ * Scores how much a unit move advances objective progress toward the enemy stronghold.
+ *
+ * The score combines distance reduction toward the enemy stronghold, enemy control pressure
+ * on the destination, terrain/objective bonuses (crowns, gold mines, lumber camps), and a
+ * large bonus for capturing the enemy stronghold.
+ *
+ * @param move - A move action for a unit (destination hex id in `move.to`)
+ * @param state - The current match state
+ * @param side - The acting side, either `"A"` or `"B"`
+ * @returns A numeric desirability score for the move; larger is better. Returns `Number.NEGATIVE_INFINITY` for invalid moves (missing unit or unreachable hexs). 
+ */
 function scoreObjectiveAdvanceMove(
 	move: Extract<Move, { action: "move" }>,
 	state: MatchState,
@@ -812,6 +989,14 @@ function scoreObjectiveAdvanceMove(
 	);
 }
 
+/**
+ * Selects the highest-scoring attack move from a list.
+ *
+ * @param attacks - Candidate attack moves to evaluate
+ * @param state - Current match state used to score each attack
+ * @param side - The evaluating player's side ("A" or "B")
+ * @returns The attack move with the highest score and that score, or `undefined` if `attacks` is empty
+ */
 function pickBestAttackWithScore(
 	attacks: Extract<Move, { action: "attack" }>[],
 	state: MatchState,
@@ -831,6 +1016,20 @@ function pickBestAttackWithScore(
 	return best;
 }
 
+/**
+ * Scores a candidate attack move for the given side in the current match state.
+ *
+ * The score is a heuristic where higher values indicate more desirable attacks. Factors include:
+ * finishers (kills), damage inflicted to already-damaged units, number of targets hit (stacking),
+ * objective capture bonus for hitting the enemy stronghold, control bonus for attacking a hex controlled
+ * by the enemy, and penalties for fortified targets, low attacker HP, risky stacked exchanges, and
+ * attacking only fresh (full‑HP) targets.
+ *
+ * @param attack - The attack move to evaluate (must have `action: "attack"` and a `target` hex)
+ * @param state - The current match state used to evaluate targets, hex types, and control
+ * @param side - The side performing the attack, either `"A"` or `"B"`
+ * @returns A numeric heuristic score; higher scores indicate better attack choices
+ */
 function scoreAttackMove(
 	attack: Extract<Move, { action: "attack" }>,
 	state: MatchState,
@@ -878,6 +1077,12 @@ function scoreAttackMove(
 	);
 }
 
+/**
+ * Parse a hex identifier (e.g., "A12") into zero-based row and column indices.
+ *
+ * @param hexId - Hex identifier consisting of a single letter followed by one or more digits (example: "A1", "c10")
+ * @returns An object with zero-based `row` and `col` when `hexId` is valid, or `undefined` if the input is malformed or out of range
+ */
 function parseHexId(hexId: string): { row: number; col: number } | undefined {
 	const match = /^([A-Za-z])(\d+)$/.exec(hexId);
 	if (!match) return undefined;
@@ -887,6 +1092,13 @@ function parseHexId(hexId: string): { row: number; col: number } | undefined {
 	return { row, col };
 }
 
+/**
+ * Compute the minimum number of steps between two hex cells on the game grid.
+ *
+ * @param fromHex - Source hex identifier (e.g., "A12")
+ * @param toHex - Destination hex identifier (e.g., "B7")
+ * @returns The hex distance (minimum number of moves) between the two hexes, or `Number.POSITIVE_INFINITY` if either identifier is invalid.
+ */
 function hexDistance(fromHex: string, toHex: string): number {
 	const from = parseHexId(fromHex);
 	const to = parseHexId(toHex);
@@ -908,7 +1120,12 @@ function hexDistance(fromHex: string, toHex: string): number {
 
 // ---------------------------------------------------------------------------
 // Response parsing (exported for testing)
-// ---------------------------------------------------------------------------
+/**
+ * Parses raw LLM output into structured commands and optional reasoning.
+ *
+ * @param text - The raw text returned by the language model
+ * @returns An object with `commands`, an array of parsed commands, and `reasoning`, the optional textual justification or rationale extracted from the output
+ */
 
 export function parseLlmResponse(text: string): {
 	commands: ParsedCommand[];
@@ -919,22 +1136,50 @@ export function parseLlmResponse(text: string): {
 
 // ---------------------------------------------------------------------------
 // Utilities
-// ---------------------------------------------------------------------------
+/**
+ * Determine which player side corresponds to the given bot identifier.
+ *
+ * @param state - The current match state containing player information
+ * @param botId - The bot identifier to look up
+ * @returns `'A'` if `botId` matches player A, `'B'` otherwise
+ */
 
 function inferSide(state: MatchState, botId: string): "A" | "B" {
 	return state.players.A.id === botId ? "A" : "B";
 }
 
+/**
+ * Locate the hex ID of the specified player's stronghold on the board.
+ *
+ * @param state - Current match state containing the board hexes
+ * @param side - Player side, either `"A"` or `"B"`
+ * @returns The hex `id` where the side's stronghold is located, or `"unknown"` if not present
+ */
 function findStrongholdHex(state: MatchState, side: "A" | "B"): string {
 	const target = side === "A" ? "stronghold_a" : "stronghold_b";
 	const hex = state.board.find((h) => h.type === target);
 	return hex?.id ?? "unknown";
 }
 
+/**
+ * Pauses execution for the specified duration.
+ *
+ * @param ms - Delay duration in milliseconds
+ * @returns Nothing.
+ */
 function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Retries an asynchronous operation with exponential backoff and jitter until it succeeds, a non-retryable error occurs, or the retry limit is reached.
+ *
+ * @param fn - The operation to execute; invoked repeatedly until it resolves or fails permanently.
+ * @param opts.maxRetries - Maximum number of retry attempts after the initial call (0 means no retries).
+ * @param opts.baseDelayMs - Base delay in milliseconds used to compute exponential backoff with jitter between attempts.
+ * @returns The resolved value from `fn`.
+ * @throws The last error thrown by `fn` when a non-retryable error is encountered or when the retry limit is exhausted.
+ */
 async function withRetry<T>(
 	fn: () => Promise<T>,
 	opts: { maxRetries: number; baseDelayMs: number },
@@ -957,6 +1202,11 @@ async function withRetry<T>(
 	throw lastErr;
 }
 
+/**
+ * Determine whether an error should be treated as retryable based on HTTP status codes or common network/timeout messages.
+ *
+ * @returns `true` if the error has a retryable HTTP status (429, 500, 502, 503) or its message contains indicators like "timeout", "timed out", "econnreset", "fetch failed", or "network", `false` otherwise.
+ */
 function isRetryableError(err: unknown): boolean {
 	const status =
 		(err as { status?: number; statusCode?: number } | null)?.status ??
@@ -976,6 +1226,13 @@ function isRetryableError(err: unknown): boolean {
 	);
 }
 
+/**
+ * Calculate an exponential backoff delay in milliseconds and add randomized jitter.
+ *
+ * @param baseDelayMs - Base delay in milliseconds used as the backoff unit
+ * @param attempt - Retry attempt index (zero-based) used to determine the exponential multiplier
+ * @returns The computed delay in milliseconds: baseDelayMs multiplied by 2^exp plus a random jitter
+ */
 function computeBackoffWithJitter(
 	baseDelayMs: number,
 	attempt: number,
@@ -985,6 +1242,13 @@ function computeBackoffWithJitter(
 	return baseDelayMs * 2 ** exp + jitter;
 }
 
+/**
+ * Parse an environment-provided string into a positive integer, using a default when invalid.
+ *
+ * @param value - The string to parse (typically from an environment variable)
+ * @param fallback - The value to return if `value` is undefined, not an integer, or not greater than zero
+ * @returns The parsed integer when greater than zero, otherwise `fallback`
+ */
 function parseEnvInt(value: string | undefined, fallback: number): number {
 	if (!value) return fallback;
 	const parsed = Number.parseInt(value, 10);

@@ -163,6 +163,11 @@ export class DiagnosticsCollector {
 // Global collector instance
 let globalCollector: DiagnosticsCollector | null = null;
 
+/**
+ * Get the global DiagnosticsCollector singleton, creating it if one does not exist.
+ *
+ * @returns The global DiagnosticsCollector instance
+ */
 export function getDiagnosticsCollector(): DiagnosticsCollector {
 	if (!globalCollector) {
 		globalCollector = new DiagnosticsCollector();
@@ -170,6 +175,11 @@ export function getDiagnosticsCollector(): DiagnosticsCollector {
 	return globalCollector;
 }
 
+/**
+ * Reset the global diagnostics collector singleton to a new, empty DiagnosticsCollector instance.
+ *
+ * This replaces any existing collector and discards its in-memory diagnostics. 
+ */
 export function resetDiagnosticsCollector(): void {
 	globalCollector = new DiagnosticsCollector();
 }

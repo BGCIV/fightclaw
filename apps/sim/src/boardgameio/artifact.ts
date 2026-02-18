@@ -197,6 +197,13 @@ export class ArtifactBuilder {
 	}
 }
 
+/**
+ * Resolve the first existing path from a list of candidate paths.
+ *
+ * @param candidates - Candidate filesystem paths to test in order
+ * @returns The first candidate resolved to an absolute path that exists
+ * @throws Error if none of the candidate paths exist
+ */
 function resolvePackagePath(candidates: string[]): string {
 	for (const candidate of candidates) {
 		const absolute = path.resolve(candidate);
@@ -209,14 +216,34 @@ function resolvePackagePath(candidates: string[]): string {
 	);
 }
 
+/**
+ * Compute the SHA-256 hash of a string.
+ *
+ * @param value - The input string to hash
+ * @returns The lowercase hexadecimal SHA-256 digest of `value`
+ */
 export function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * Produce a deterministic JSON string of `value` with object keys sorted and stable ordering.
+ *
+ * @param spacing - Number of spaces to use for indentation in the output (defaults to 0)
+ * @returns A JSON-formatted string whose object keys are sorted deterministically; arrays preserve their order and `spacing` controls indentation
+ */
 export function stableStringify(value: unknown, spacing = 0): string {
 	return JSON.stringify(sortKeys(value), null, spacing);
 }
 
+/**
+ * Recursively returns a deep copy of the input with all object keys sorted alphabetically.
+ *
+ * Processes arrays element-wise and preserves their order; leaves primitives unchanged.
+ *
+ * @param value - The value to normalize; object keys will be sorted, arrays will have their elements processed recursively.
+ * @returns A new value structurally equal to `value` but with object keys sorted deterministically.
+ */
 function sortKeys(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map((item) => sortKeys(item));
@@ -232,6 +259,15 @@ function sortKeys(value: unknown): unknown {
 	return out;
 }
 
+/**
+ * Removes or masks common secrets and sensitive values from a text string.
+ *
+ * @param input - The text to sanitize, which may contain headers, API keys, or environment-derived secrets
+ * @returns The sanitized string with:
+ * - `Authorization: Bearer <token>` sequences replaced by `Authorization: Bearer [REDACTED]`
+ * - API keys matching `sk-...` or `arena_sk_...` replaced by `[REDACTED_KEY]`
+ * - Any occurrences of environment variable values listed in `SECRET_ENV_DENY_LIST` replaced by `[REDACTED_ENV]`
+ */
 export function redactSecrets(input: string): string {
 	let output = input;
 	const original = output;

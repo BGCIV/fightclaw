@@ -40,6 +40,11 @@ const NAV_LINKS = [
 	...(import.meta.env.DEV ? [{ to: "/dev" as const, label: "Dev" }] : []),
 ];
 
+/**
+ * Render the application's root layout including head metadata, top navigation, route outlet, toast UI, and router devtools.
+ *
+ * @returns The root React element that composes head metadata, a dark-themed navigation bar with site links, the nested route Outlet, a dark-themed Toaster, and the TanStack router devtools.
+ */
 function RootComponent() {
 	return (
 		<>

@@ -6,6 +6,16 @@ type ThoughtPanelProps = {
 	isThinking: boolean;
 };
 
+/**
+ * Render a player's thought panel that lists past thoughts, shows a thinking cursor, and auto-scrolls to the newest entry.
+ *
+ * The panel displays a player label, a scrollable list of thought lines (or a placeholder when empty), and an underscore cursor while the player is thinking. The content container is scrolled to the bottom when the number of thoughts changes.
+ *
+ * @param player - "A" or "B", used to position and style the panel
+ * @param thoughts - Ordered array of thought strings to render inside the panel
+ * @param isThinking - When true, shows a cursor indicating the player is currently thinking
+ * @returns A React element containing the rendered thought panel
+ */
 export function ThoughtPanel({
 	player,
 	thoughts,

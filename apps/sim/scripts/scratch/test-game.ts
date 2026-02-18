@@ -8,6 +8,12 @@ const bot = makeLlmBot("P1", {
 	delayMs: 0,
 });
 
+/**
+ * Initialize a two-player game, log legal moves, and ask the LLM bot to select and log a move.
+ *
+ * Creates an initial game state for players "P1" and "P2", enumerates legal moves, prints the count
+ * and first five entries, then requests a move from the configured LLM bot and logs the chosen move.
+ */
 async function run() {
 	const state = Engine.createInitialState(1, ["P1", "P2"]);
 	const legalMoves = Engine.listLegalMoves(state);

@@ -10,8 +10,14 @@ export const BOARD_COLS = 21;
 export const HEX_RADIUS = 20;
 
 /**
- * Pointy-top hex: odd-r offset layout.
- * Odd rows (B=1, D=3, …) shift right by half a hex width.
+ * Convert odd-r pointy-top hex grid coordinates to a 2D pixel position.
+ *
+ * Uses the odd-r offset layout where odd-numbered rows are shifted right by half a hex width.
+ *
+ * @param row - Grid row index
+ * @param col - Grid column index
+ * @param R - Hex radius (distance from center to any corner) in pixels
+ * @returns The pixel coordinates `{ x, y }` of the hex center
  */
 export function hexToPixel(row: number, col: number, R: number): PixelPoint {
 	const W = Math.sqrt(3) * R;
@@ -22,12 +28,26 @@ export function hexToPixel(row: number, col: number, R: number): PixelPoint {
 	};
 }
 
+/**
+ * Convert a hex identifier to the center pixel coordinates for a pointy-top hex.
+ *
+ * @param id - Hex identifier in engine format (containing row and column)
+ * @param R - Hex radius in SVG units
+ * @returns The pixel coordinates of the hex center as an object with `x` and `y`
+ */
 export function hexIdToPixel(id: HexId, R: number): PixelPoint {
 	const { row, col } = parseHexIdEngine(id);
 	return hexToPixel(row, col, R);
 }
 
-/** SVG polygon points for a pointy-top hexagon centred at (cx, cy). */
+/**
+ * Generate an SVG polygon `points` string for a pointy-top hexagon centered at (cx, cy).
+ *
+ * @param cx - X coordinate of the hexagon center in SVG user units
+ * @param cy - Y coordinate of the hexagon center in SVG user units
+ * @param R - Radius of the hexagon (distance from center to a vertex)
+ * @returns A string of vertex coordinates formatted as `"x,y x,y ..."` suitable for an SVG polygon `points` attribute
+ */
 export function hexPoints(cx: number, cy: number, R: number): string {
 	const pts: string[] = [];
 	for (let i = 0; i < 6; i++) {
@@ -39,17 +59,14 @@ export function hexPoints(cx: number, cy: number, R: number): string {
 	return pts.join(" ");
 }
 
-/** viewBox string that fits a board of given dimensions with padding.
+/**
+ * Compute an SVG viewBox string that centers and fits a hexagonal board for the given hex radius and grid size.
  *
- * Even rows: hex centers span [W/2 .. (cols-1)*W + W/2]
- * Odd rows:  hex centers span [W .. (cols-1)*W + W]
- *
- * Polygon half-width = W/2, so full content spans:
- *   left  = 0  (even row col-0 center W/2 minus half-width W/2)
- *   right = (cols-1)*W + W + W/2 = cols*W + W/2  (odd row last col plus half-width)
- *
- * The visual midpoint of all that content is ((cols*W + W/2) / 2).
- * We build the viewBox centred on that midpoint.
+ * @param R - Hex radius in the same SVG units used for rendering
+ * @param pad - Padding added to all sides of the content (default: 4)
+ * @param cols - Number of columns in the board (default: BOARD_COLS)
+ * @param rows - Number of rows in the board (default: BOARD_ROWS)
+ * @returns The viewBox string in the form "minX minY width height" that encloses the board content with the specified padding and horizontal centering
  */
 export function boardViewBox(
 	R: number,

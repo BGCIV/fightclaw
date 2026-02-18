@@ -7,6 +7,31 @@ import type {
 import { playMatch } from "./match";
 import type { Bot, EngineConfigInput } from "./types";
 
+/**
+ * Run a series of matches between two bots and return a tournament summary with all match results.
+ *
+ * Runs `opts.games` matches using the provided seed and options, collects each match result, and
+ * computes aggregate statistics (win counts, draws, average turns, and illegal move rate).
+ *
+ * @param opts - Tournament options
+ * @param opts.games - Number of matches to run
+ * @param opts.seed - Numeric seed used as the base for per-match seeds
+ * @param opts.maxTurns - Maximum turns allowed per match
+ * @param opts.players - Tuple of two bots participating in each match
+ * @param opts.autofixIllegal - If true, attempt to auto-correct illegal moves
+ * @param opts.engineConfig - Optional engine configuration passed to each match
+ * @param opts.scenario - Optional scenario name to run
+ * @param opts.harness - Optional harness mode for match execution
+ * @param opts.invalidPolicy - Policy for handling invalid moves
+ * @param opts.moveValidationMode - Mode for move validation
+ * @param opts.strict - If true, enable strict mode in the engine
+ * @param opts.artifactDir - Directory path to store match artifacts
+ * @param opts.storeFullPrompt - If true, store full prompts produced during matches
+ * @param opts.storeFullOutput - If true, store full outputs produced during matches
+ * @returns An object containing:
+ *  - `summary`: aggregate tournament statistics (`games`, `seed`, `maxTurns`, `wins`, `draws`, `avgTurns`, `illegalMoveRate`)
+ *  - `results`: array of individual match results
+ */
 export async function runTournament(opts: {
 	games: number;
 	seed: number;

@@ -79,7 +79,13 @@ const inferSide = (events: EngineEvent[]): "A" | "B" | null => {
 const strongholdForSide = (side: "A" | "B"): string =>
 	side === "A" ? "B2" : "B20";
 
-/** Compute odd-r hex distance between two hex IDs. */
+/**
+ * Calculate the hex-grid distance between two hexes identified by their hex IDs using odd-r offset -> cube coordinates.
+ *
+ * @param a - Hex ID of the first cell
+ * @param b - Hex ID of the second cell
+ * @returns The number of steps between `a` and `b` on the hex grid
+ */
 function hexDist(a: string, b: string): number {
 	const pa = parseHexId(a);
 	const pb = parseHexId(b);
@@ -100,10 +106,33 @@ function hexDist(a: string, b: string): number {
 }
 
 let effectCounter = 0;
+/**
+ * Generate a new unique effect identifier.
+ *
+ * @returns A unique effect id string in the form `fx-N`, where `N` is an incrementing integer.
+ */
 function nextEffectId(): string {
 	return `fx-${++effectCounter}`;
 }
 
+/**
+ * Manages and plays visual arena animations for engine event envelopes and exposes the resulting visual state and controls.
+ *
+ * The hook queues incoming engine event envelopes, animates move/attack/recruit/fortify/pass sequences (including unit animation states, visual effects, floating damage numbers, and lunge targets), applies an optional post-state snapshot, and ensures animations can be aborted or sped up when the queue changes.
+ *
+ * @param options - Optional configuration.
+ * @param options.onApplyBaseState - Callback invoked with a MatchState after an envelope's post-state is applied so the consumer can update the canonical board state.
+ * @returns An API object with:
+ *  - effects: current array of ArenaEffect entries for rendering transient visual effects.
+ *  - unitAnimStates: Map of unitId -> UnitAnimState representing per-unit animation state ("moving", "attacking", "spawning", "fortifying", "dying", etc.).
+ *  - dyingUnitIds: Set of unit IDs currently marked as dying to keep them visible during death animations.
+ *  - hudFx: HUD effect flags (e.g., passPulse).
+ *  - damageNumbers: array of DamageNumberEntry for floating damage popups.
+ *  - lungeTargets: Map of attackerId -> {x,y} pixel coordinates used for melee lunge animations.
+ *  - isAnimating: boolean indicating whether the animator is actively processing the queue.
+ *  - enqueue(envelope, opts?): adds an EngineEventsEnvelopeV1 (and optional postState) to the animation queue.
+ *  - reset(): clears the queue and all animation/visual state immediately.
+ */
 export function useArenaAnimator(options?: {
 	onApplyBaseState?: (state: MatchState) => void;
 }) {

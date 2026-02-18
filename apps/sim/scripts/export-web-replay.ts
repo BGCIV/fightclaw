@@ -51,6 +51,15 @@ type Args = {
 	quiet?: boolean;
 };
 
+/**
+ * Resolve the directory containing benchmark results to export.
+ *
+ * If `args.run` is provided, it is resolved to an absolute path and validated to exist; otherwise the function selects the most recently modified directory under `results/` whose name starts with `benchmark_v2_` and that contains an `api_lane` subdirectory.
+ *
+ * @param args - Command-line arguments; may include `run` to specify a run directory.
+ * @returns The absolute path to the resolved run directory.
+ * @throws If the specified run directory does not exist, if the `results` directory does not exist, or if no suitable `benchmark_v2_` run with an `api_lane` subdirectory can be found.
+ */
 function resolveRunDir(args: Args): string {
 	if (args.run) {
 		const resolved = path.resolve(process.cwd(), args.run);
@@ -82,6 +91,13 @@ function resolveRunDir(args: Args): string {
 	return latest;
 }
 
+/**
+ * Collects artifact JSON file paths under the run's api_lane/artifacts directory.
+ *
+ * @param runDir - Path to the benchmark run directory to search
+ * @returns A sorted array of file paths for JSON files found under `api_lane/**/artifacts/**`
+ * @throws Error if the `api_lane` directory is not present inside `runDir`
+ */
 function findArtifactFiles(runDir: string): string[] {
 	const apiLaneDir = path.join(runDir, "api_lane");
 	if (!existsSync(apiLaneDir)) {
@@ -106,6 +122,12 @@ function findArtifactFiles(runDir: string): string[] {
 	return out.sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Create the initial MatchState corresponding to a stored MatchArtifact.
+ *
+ * @param artifact - The artifact containing seed, participants, and optional scenario information
+ * @returns The initial MatchState configured for the artifact's seed and participants, using the artifact's scenario if present
+ */
 function createInitialStateForArtifact(artifact: MatchArtifact): MatchState {
 	if (artifact.scenario) {
 		return createCombatScenario(
@@ -122,6 +144,16 @@ function createInitialStateForArtifact(artifact: MatchArtifact): MatchState {
 	);
 }
 
+/**
+ * Create a ReplayMatch from a stored artifact JSON file.
+ *
+ * The returned match aggregates the artifact's metadata, reconstructed initial state,
+ * and its accepted moves as replay steps. If the artifact lacks a scenario field,
+ * the `scenario` property of the result will be `null`.
+ *
+ * @param file - Filesystem path to the artifact JSON file
+ * @returns A ReplayMatch representing the match described by the artifact file
+ */
 function toReplayMatch(file: string): ReplayMatch {
 	const artifact = JSON.parse(readFileSync(file, "utf8")) as MatchArtifact;
 	const matchupDir = path.basename(path.dirname(path.dirname(file)));
@@ -148,6 +180,11 @@ function toReplayMatch(file: string): ReplayMatch {
 	};
 }
 
+/**
+ * Build a replay bundle from benchmark artifacts and write it to disk.
+ *
+ * Parses command-line arguments, resolves the benchmark run directory, collects artifact files, converts them into replay matches, assembles a ReplayBundle JSON payload, and writes it to the specified output path. Prints a brief summary to stdout unless run with `--quiet`.
+ */
 function main() {
 	const rawArgs = process.argv.slice(2);
 	const divider = rawArgs.indexOf("--");

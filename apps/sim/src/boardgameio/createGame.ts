@@ -14,6 +14,17 @@ import type {
 	TurnPlanMeta,
 } from "./types";
 
+/**
+ * Create a boardgame.io game object configured for the Fightclaw simulation harness.
+ *
+ * The returned game is wired for harness use: it initializes match state from a scenario
+ * or engine initial state, maps players, advances a turn index, determines turn order
+ * from the engine's active side, evaluates terminal state, and exposes move handlers
+ * for applying engine moves and setting turn-plan metadata.
+ *
+ * @param config - Harness configuration (players, optional scenario, seed, engineConfig, and move validation mode)
+ * @returns A boardgame.io-compatible game object implementing the Fightclaw simulation harness
+ */
 export function createFightclawGame(config: HarnessConfig) {
 	const game: {
 		[key: string]: unknown;
@@ -116,6 +127,11 @@ export type BoardgameMoveDispatchers = {
 	setTurnPlanMeta: (payload: TurnPlanMeta) => void;
 };
 
+/**
+ * Create a shallow copy of a `Move` object.
+ *
+ * @returns A new `Move` with the same top-level properties as `move` (shallow copy).
+ */
 export function normalizeMove(move: Move): Move {
 	return { ...move };
 }

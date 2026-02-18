@@ -123,8 +123,13 @@ const STATIC_SCENARIO_PLACEMENTS: Partial<
 };
 
 /**
- * Creates a match state with units already positioned for immediate combat.
- * This bypasses the "movement phase" and tests actual combat decisions.
+ * Create an initial MatchState with units placed for immediate combat according to the chosen scenario.
+ *
+ * Initializes the engine state, clears any default units and board unitIds, then applies either a composition layout
+ * or static unit placements for the provided scenario so the resulting state is ready for combat testing.
+ *
+ * @param scenario - The scenario name that determines unit placement (defaults to "melee")
+ * @returns The initialized MatchState with units positioned for combat
  */
 export function createCombatScenario(
 	seed: number,
@@ -150,6 +155,14 @@ export function createCombatScenario(
 	return state;
 }
 
+/**
+ * Clears all unit lists from both players and removes unit references from every board hex.
+ *
+ * This mutates the provided match state by emptying players.A.units and players.B.units
+ * and setting each hex.unitIds to an empty array.
+ *
+ * @param state - The match state to reset for scenario placement
+ */
 function resetScenarioState(state: MatchState) {
 	state.players.A.units = [];
 	state.players.B.units = [];
@@ -158,6 +171,12 @@ function resetScenarioState(state: MatchState) {
 	});
 }
 
+/**
+ * Apply a list of unit placements to the given match state.
+ *
+ * @param state - The match state to modify
+ * @param placements - Readonly array of unit placement tuples `[unitId, unitType, owner, position]` to add to the state
+ */
 function addPlacements(
 	state: MatchState,
 	placements: readonly UnitPlacement[],
@@ -167,6 +186,14 @@ function addPlacements(
 	}
 }
 
+/**
+ * Populate the match state with units for both players according to a named formation layout.
+ *
+ * @param state - The match state to modify by adding units
+ * @param layoutName - The formation layout to use for positioning units
+ * @param aType - Unit type to assign to player A's formation
+ * @param bType - Unit type to assign to player B's formation
+ */
 function addComposition(
 	state: MatchState,
 	layoutName: FormationLayoutName,
@@ -178,6 +205,17 @@ function addComposition(
 	addFormationUnits(state, "B", bType, layout.B);
 }
 
+/**
+ * Adds a formation of units for a given owner at the specified board positions.
+ *
+ * Each unit is created with `unitType`, placed at the corresponding entry in `positions`,
+ * and assigned a sequential id of the form `<owner>-<n>` (starting at 1).
+ *
+ * @param state - The match state to modify
+ * @param owner - Owner identifier used for created unit ids and ownership
+ * @param unitType - Type assigned to every unit in the formation
+ * @param positions - Ordered list of board coordinates where units will be placed; the nth entry produces an id of `<owner>-<n>`
+ */
 function addFormationUnits(
 	state: MatchState,
 	owner: UnitOwner,
@@ -189,6 +227,17 @@ function addFormationUnits(
 	}
 }
 
+/**
+ * Place a unit into the match state at the given scenario coordinate, relocating to the nearest empty hex in the same row if the target is occupied.
+ *
+ * Mutates `state` by adding a new unit object to `state.players[owner].units` and appending `unitId` to the destination hex's `unitIds`. If the requested position cannot be resolved to a board hex or no empty hex is found in the row, the state is left unchanged.
+ *
+ * @param state - The match state to modify
+ * @param unitId - The unique identifier to assign to the new unit
+ * @param unitType - The unit's type, which determines its initial HP values
+ * @param owner - The unit owner (`"A"` or `"B"`)
+ * @param position - A scenario coordinate to place the unit; this may be resolved or remapped (including canonical 17-column mapping), and if occupied the unit will be moved to the nearest empty hex in the same row
+ */
 function addUnitToState(
 	state: MatchState,
 	unitId: string,
@@ -225,10 +274,26 @@ function addUnitToState(
 	hex.unitIds.push(unitId);
 }
 
+/**
+ * Retrieve a board hex by its identifier.
+ *
+ * @param state - The match state containing the board
+ * @param id - The hex identifier to look up (e.g., "A1")
+ * @returns The hex with the matching `id`, or `undefined` if no match exists
+ */
 function getHexById(state: MatchState, id: string) {
 	return state.board.find((hex) => hex.id === id);
 }
 
+/**
+ * Map a requested hex coordinate to the board's canonical coordinate when using the 17-column layout.
+ *
+ * If `requested` is not a valid hex coordinate, the board does not have 17 columns, or the requested column is invalid, the original `requested` string is returned. Otherwise the requested canonical column is mapped (or rounded to the nearest mapped column) using the 17-column canonical column map and the resulting row+column string is returned.
+ *
+ * @param state - Current match state used to determine the board's column count and mapping
+ * @param requested - Hex coordinate string (e.g., "A5")
+ * @returns The resolved hex coordinate string; returns `requested` unchanged if no mapping is applied
+ */
 function resolveScenarioHex(state: MatchState, requested: string): string {
 	const coord = parseHexCoordinate(requested);
 	if (!coord) return requested;
@@ -254,10 +319,23 @@ function resolveScenarioHex(state: MatchState, requested: string): string {
 	return `${coord.row}${nearestIndex + 1}`;
 }
 
+/**
+ * Determines the number of columns in the match board.
+ *
+ * @param state - The current match state containing the board array
+ * @returns The board's column count (floor of `state.board.length / 9`)
+ */
 function boardColumns(state: MatchState): number {
 	return Math.floor(state.board.length / 9);
 }
 
+/**
+ * Finds the nearest empty hex in the same row as a given position.
+ *
+ * @param state - Current match state
+ * @param position - Hex coordinate (row letter A-I followed by column number) to search from
+ * @returns The coordinate of the nearest empty hex in the same row, or `undefined` if none is available
+ */
 function findNearestEmptyInRow(
 	state: MatchState,
 	position: string,
@@ -285,6 +363,12 @@ function findNearestEmptyInRow(
 	return undefined;
 }
 
+/**
+ * Parse a hex grid coordinate string into its row letter and 1-based column number.
+ *
+ * @param value - Coordinate in the form `A1` through `I<number>` (row A–I followed by a positive integer)
+ * @returns An object `{ row, col }` with `row` as the letter and `col` as the column number when valid, `undefined` otherwise
+ */
 function parseHexCoordinate(
 	value: string,
 ): { row: string; col: number } | undefined {

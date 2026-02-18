@@ -36,6 +36,17 @@ interface BoardgameRunnerOptions {
 	storeFullOutput: boolean;
 }
 
+/**
+ * Runs a two-player boardgame.io match using the provided harness configuration and bots.
+ *
+ * The function executes up to `opts.maxTurns`, requesting turn plans from each bot, applying and validating moves
+ * against the engine, handling illegal moves according to `opts.invalidPolicy`, collecting per-turn metrics and
+ * explainability, writing artifacts (prompts, moves, metrics, and optional full logs), and optionally gathering
+ * diagnostics. The client is always stopped when the match completes or an error occurs.
+ *
+ * @param opts - Configuration and runtime options for the match (seed, players, engine/scenario config, invalid-move policy, artifact/storage options, diagnostics and verbosity flags, etc.)
+ * @returns The final MatchResult containing the seed, number of turns, winner (player id or `null` for draw), count of illegal moves, termination reason (`"terminal"`, `"illegal"`, or `"maxTurns"`), and an optional recorded log when recording is enabled.
+ */
 export async function playMatchBoardgameIO(
 	opts: BoardgameRunnerOptions,
 ): Promise<MatchResult> {
@@ -410,6 +421,13 @@ export async function playMatchBoardgameIO(
 	}
 }
 
+/**
+ * Asserts that the provided client state is not null and returns it.
+ *
+ * @param state - The client state to check.
+ * @returns The same `state` value, guaranteed to be non-null.
+ * @throws Error if `state` is null.
+ */
 function requireState<T>(state: T | null): T {
 	if (!state) {
 		throw new Error("boardgame client state is null");
@@ -417,10 +435,22 @@ function requireState<T>(state: T | null): T {
 	return state;
 }
 
+/**
+ * Compute a deterministic SHA-256 hash of the given state.
+ *
+ * @param state - The value to hash; serialized with a stable JSON stringifier.
+ * @returns The hexadecimal SHA-256 digest of the serialized `state`.
+ */
 function hashState(state: unknown): string {
 	return sha256(stableStringify(state));
 }
 
+/**
+ * Create a concise summary extracting the winner, reason, turns, and illegalMoves from a MatchResult.
+ *
+ * @param result - The full match result to summarize
+ * @returns An object with `winner`, `reason`, `turns`, and `illegalMoves` fields
+ */
 function resultSummaryFromResult(result: MatchResult) {
 	return {
 		winner: result.winner,
@@ -430,6 +460,12 @@ function resultSummaryFromResult(result: MatchResult) {
 	};
 }
 
+/**
+ * Create a shallow copy of a Move with `reasoning` and `metadata` fields removed.
+ *
+ * @param move - The move to clean; may include optional `reasoning` or `metadata` annotations
+ * @returns The same move shape with `reasoning` and `metadata` properties omitted
+ */
 function stripMoveAnnotations(move: Move): Move {
 	const clean = {
 		...(move as Move & { reasoning?: string; metadata?: unknown }),
@@ -439,6 +475,13 @@ function stripMoveAnnotations(move: Move): Move {
 	return clean as Move;
 }
 
+/**
+ * Builds initial explainability data for a turn using committed moves and optional raw model output.
+ *
+ * @param moves - The sequence of attempted moves for the turn.
+ * @param rawOutput - Optional raw textual output from the bot/model; used to extract a declared plan and reasoning when present.
+ * @returns An object with optional `declaredPlan` (short plan summary or extracted plan) and `whyThisMove` (short rationale for the chosen move).
+ */
 function buildInitialTurnExplainability(
 	moves: Move[],
 	rawOutput?: string,
@@ -456,6 +499,16 @@ function buildInitialTurnExplainability(
 	};
 }
 
+/**
+ * Derives explainability signals for a completed turn using computed metrics and the recorded move attempts.
+ *
+ * @param metrics - Aggregated turn metrics (combat, resources, position, etc.) used to evaluate swings and power spikes
+ * @param attempts - Sequence of attempted moves with their acceptance status; used to extract any available "why this move" rationale
+ * @returns An object containing:
+ *  - `powerSpikeTriggered`: `true` if the turn exhibits a significant tactical/strategic swing,
+ *  - `swingEvent`: an optional short label describing the type of swing detected (e.g., unit trade, HP swing, VP swing, decisive),
+ *  - `whyThisMove`: an optional extracted explanation string from the provided attempts
+ */
 function buildMetricsExplainability(
 	metrics: TurnMetricsV2,
 	attempts: Array<{ accepted: boolean; move: Move }>,
@@ -498,6 +551,12 @@ function buildMetricsExplainability(
 	};
 }
 
+/**
+ * Extracts the declared plan from raw model output by taking the text before a `---` delimiter, selecting up to three non-empty, non-comment lines, and joining them with ` | `.
+ *
+ * @param rawOutput - Raw text that may include a plan and an optional reasoning section separated by `---`.
+ * @returns The extracted plan string clipped to 220 characters, or `undefined` if no plan lines are present.
+ */
 function extractDeclaredPlan(rawOutput?: string): string | undefined {
 	if (!rawOutput) return undefined;
 	const commandBlock = rawOutput.split("---")[0] ?? rawOutput;
@@ -510,6 +569,12 @@ function extractDeclaredPlan(rawOutput?: string): string | undefined {
 	return clipText(lines.join(" | "), 220);
 }
 
+/**
+ * Builds a short textual summary of the first up to five moves.
+ *
+ * @param moves - The sequence of moves to summarize; only the first five moves are included
+ * @returns The moves joined with `" -> "` and clipped to 220 characters, or `undefined` if `moves` is empty
+ */
 function summarizePlanFromMoves(moves: Move[]): string | undefined {
 	if (moves.length === 0) return undefined;
 	const summary = moves
@@ -519,6 +584,11 @@ function summarizePlanFromMoves(moves: Move[]): string | undefined {
 	return clipText(summary, 220);
 }
 
+/**
+ * Produces a concise human-readable snippet summarizing the given move.
+ *
+ * @returns A short textual description of the move formatted by action, e.g. "attack <unitId> <target>", "move <unitId> <to>", "recruit <unitType> <at>", "fortify <unitId>", "upgrade <unitId>", or the raw action string for unknown actions.
+ */
 function summarizeMove(move: Move): string {
 	switch (move.action) {
 		case "attack":
@@ -536,6 +606,14 @@ function summarizeMove(move: Move): string {
 	}
 }
 
+/**
+ * Extracts the reasoning section that follows a '---' delimiter in a model's raw output.
+ *
+ * If `rawOutput` contains one or more '---' separators, returns the trimmed text after the first '---', clipped to 240 characters; otherwise returns `undefined`.
+ *
+ * @param rawOutput - Full raw text output from a model or bot, optionally containing '---' as a delimiter before a reasoning section
+ * @returns The reasoning text trimmed and clipped to 240 characters, or `undefined` if no reasoning section is present
+ */
 function extractReasoningFromOutput(rawOutput?: string): string | undefined {
 	if (!rawOutput) return undefined;
 	const sections = rawOutput.split("---");
@@ -544,6 +622,12 @@ function extractReasoningFromOutput(rawOutput?: string): string | undefined {
 	return reasoning.length > 0 ? clipText(reasoning, 240) : undefined;
 }
 
+/**
+ * Finds the first "why this move" explanation from accepted move attempts, falling back to all attempts if none are accepted.
+ *
+ * @param attempts - Ordered list of move attempts, each with an `accepted` flag and a `move` object
+ * @returns The first found explanation string, or `undefined` if no explanation is present on any attempted move
+ */
 function extractWhyThisMoveFromAttempts(
 	attempts: Array<{ accepted: boolean; move: Move }>,
 ): string | undefined {
@@ -556,6 +640,12 @@ function extractWhyThisMoveFromAttempts(
 	return undefined;
 }
 
+/**
+ * Finds the first available "whyThisMove" explanation in the provided moves.
+ *
+ * @param moves - Moves to search in order for a `whyThisMove` explanation
+ * @returns The first `whyThisMove` string found, or `undefined` if none exist
+ */
 function extractWhyThisMoveFromMoves(moves: Move[]): string | undefined {
 	for (const move of moves) {
 		const why = extractWhyThisMoveFromMove(move);
@@ -564,6 +654,12 @@ function extractWhyThisMoveFromMoves(moves: Move[]): string | undefined {
 	return undefined;
 }
 
+/**
+ * Extracts a concise "why this move" explanation from a move's annotations.
+ *
+ * @param move - The move which may include `reasoning` or `metadata.whyThisMove`
+ * @returns The extracted explanation trimmed and clipped to 240 characters, or `undefined` if no explanation is present
+ */
 function extractWhyThisMoveFromMove(move: Move): string | undefined {
 	const annotated = move as Move & {
 		reasoning?: string;
@@ -574,11 +670,33 @@ function extractWhyThisMoveFromMove(move: Move): string | undefined {
 	return clipText(why.trim(), 240);
 }
 
+/**
+ * Truncates a string to fit within a character budget and appends an ellipsis when truncation occurs.
+ *
+ * @param input - The original text to potentially truncate.
+ * @param maxChars - Maximum allowed length of the returned string.
+ * @returns The original `input` if its length is less than or equal to `maxChars`; otherwise the string formed by taking the first `maxChars - 3` characters of `input` and appending `...`. Note: if `maxChars` is less than or equal to 3, the returned value will contain fewer (or zero) characters from `input` before the ellipsis. 
+ */
 function clipText(input: string, maxChars: number): string {
 	if (input.length <= maxChars) return input;
 	return `${input.slice(0, maxChars - 3)}...`;
 }
 
+/**
+ * Compute a structured set of metrics describing a player's turn by comparing game state before and after and summarizing attempted moves.
+ *
+ * @param before - Game state snapshot immediately before the turn began.
+ * @param after - Game state snapshot immediately after the turn ended.
+ * @param playerID - ID of the player whose turn is being evaluated.
+ * @param attempts - Sequence of attempted moves for the turn; each entry indicates whether the move was accepted and contains the move.
+ * @returns A TurnMetricsV2 object containing:
+ *  - side: which side (`"A"` or `"B"`) corresponds to `playerID`.
+ *  - actions: counts of accepted and rejected attempts and breakdowns by action type.
+ *  - combat: attack-related metrics (accepted attacks, finisher opportunities/successes, HP/unit deltas, and whether the exchange was a favorable trade).
+ *  - position: average distance to the enemy stronghold before and after the turn and the delta when available.
+ *  - resources: resource deltas (gold, wood, victory points) for both players.
+ *  - upgrade: estimated upgrade-related metrics including number of upgrades accepted and estimated gold/wood spent.
+ */
 function buildTurnMetricsV2(
 	before: Parameters<Bot["chooseMove"]>[0]["state"],
 	after: Parameters<Bot["chooseMove"]>[0]["state"],
@@ -683,6 +801,17 @@ function buildTurnMetricsV2(
 	};
 }
 
+/**
+ * Estimates the number and resource cost of accepted `upgrade` moves for a given side.
+ *
+ * @param before - Game state snapshot used to resolve unit IDs and types
+ * @param side - Which player's side (`"A"` or `"B"`) to evaluate upgrades for
+ * @param accepted - Array of move attempts (each with `accepted` and `move`); only accepted moves with `action === "upgrade"` are counted
+ * @returns An object with:
+ *  - `upgradesAccepted`: count of accepted upgrade moves that matched a unit on `side`
+ *  - `estimatedGoldSpend`: summed estimated gold cost for those upgrades
+ *  - `estimatedWoodSpend`: summed estimated wood cost for those upgrades
+ */
 function estimateUpgradeSpend(
 	before: Parameters<Bot["chooseMove"]>[0]["state"],
 	side: "A" | "B",
@@ -719,10 +848,23 @@ function estimateUpgradeSpend(
 	};
 }
 
+/**
+ * Compute the total hit points of a list of units.
+ *
+ * @param units - Array of objects containing an `hp` numeric property
+ * @returns The sum of all units' `hp` values (0 if the array is empty)
+ */
 function sumHp(units: Array<{ hp: number }>): number {
 	return units.reduce((s, u) => s + u.hp, 0);
 }
 
+/**
+ * Compute the average distance in board columns from the specified side's units to the enemy stronghold.
+ *
+ * @param state - Game state containing board hexes and player unit positions.
+ * @param side - The side ("A" or "B") whose units will be measured.
+ * @returns The average absolute column distance to the enemy stronghold, or `null` if the enemy stronghold, unit positions, or column data are unavailable.
+ */
 function avgDistanceToEnemyStronghold(
 	state: Parameters<Bot["chooseMove"]>[0]["state"],
 	side: "A" | "B",
@@ -744,11 +886,27 @@ function avgDistanceToEnemyStronghold(
 	return dists.reduce((s, d) => s + d, 0) / dists.length;
 }
 
+/**
+ * Extracts the numeric column index from a hex-style tile identifier.
+ *
+ * @param hexId - Tile identifier expected to start with a letter followed by digits (e.g., "A12")
+ * @returns The parsed column number, or `null` if the identifier does not contain a valid number
+ */
 function parseCol(hexId: string): number | null {
 	const n = Number.parseInt(hexId.replace(/^[A-Z]/i, ""), 10);
 	return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Selects a turn plan for the given bot for a specific turn.
+ *
+ * The function prefers bot implementations in this order: `chooseTurnWithMeta`, `chooseTurn`, then `chooseMove`.
+ * When available, metadata returned by the bot (`prompt`, `rawOutput`, `model`) is included in the result; otherwise a fallback prompt is generated by encoding the current state for the bot's side.
+ *
+ * @param opts.bot - The bot instance to query for a plan.
+ * @param opts.playerID - The player ID used to determine the bot's side when producing a fallback prompt.
+ * @returns An object containing `moves` (the chosen move sequence) and `meta` (turnIndex and prompt; may also include `rawOutput` and `model` when provided by the bot).
+ */
 async function chooseTurnPlan(opts: {
 	bot: Bot;
 	state: BoardgameRunnerOptions["engineConfig"] extends never
@@ -818,6 +976,12 @@ async function chooseTurnPlan(opts: {
 	};
 }
 
+/**
+ * Builds a MatchResult from run data and conditionally attaches a MatchLog when recording.
+ *
+ * @param input - Run summary including seed, turns, winner, illegalMoves, termination reason, final state, accepted moves, engine events, player pair, and optional `record` flag
+ * @returns The assembled MatchResult. If `input.record` is true, `log` contains `seed`, `players`, `moves`, `engineEvents`, and `finalState`; otherwise `log` is undefined.
+ */
 function finalizeResult(input: {
 	seed: number;
 	turns: number;

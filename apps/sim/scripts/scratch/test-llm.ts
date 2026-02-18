@@ -5,6 +5,9 @@ const client = new OpenAI({
 	baseURL: "https://openrouter.ai/api/v1",
 });
 
+/**
+ * Executes a chat completion request using a predefined model and messages, then logs the JSON response or any error.
+ */
 async function run() {
 	try {
 		const completion = await client.chat.completions.create({

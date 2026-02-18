@@ -52,16 +52,35 @@ const mirroredPairs: Array<[Strategy, Strategy]> = [
 	["defensive", "defensive"],
 ];
 
+/**
+ * Retrieves the value immediately following a given command-line flag.
+ *
+ * @param name - The flag name to search for (e.g. "--flag")
+ * @returns The argument following `name` if present, `undefined` otherwise.
+ */
 function parseArg(name: string): string | undefined {
 	const idx = process.argv.indexOf(name);
 	if (idx < 0) return undefined;
 	return process.argv[idx + 1];
 }
 
+/**
+ * Checks whether a command-line flag is present in process.argv.
+ *
+ * @param name - The exact flag string to look for (e.g. `--skipFastLane` or `-v`)
+ * @returns `true` if the flag appears in the current process arguments, `false` otherwise.
+ */
 function hasFlag(name: string): boolean {
 	return process.argv.includes(name);
 }
 
+/**
+ * Parse a boolean-like command-line argument value.
+ *
+ * @param name - The argument flag name to read (as passed to `parseArg`)
+ * @param fallback - Value to return when the argument is missing or unrecognized
+ * @returns `true` for values `"true"`, `"1"`, or `"yes"`; `false` for values `"false"`, `"0"`, or `"no"`; otherwise `fallback`
+ */
 function parseBoolArg(name: string, fallback: boolean): boolean {
 	const value = parseArg(name);
 	if (value === undefined) return fallback;
@@ -75,6 +94,19 @@ function parseBoolArg(name: string, fallback: boolean): boolean {
 	return fallback;
 }
 
+/**
+ * Execute a `pnpm` command in a specified working directory with optional timeout and retry behavior.
+ *
+ * @param cwd - The working directory in which to run `pnpm`.
+ * @param args - The argument list to pass to `pnpm` (e.g., `["run", "build"]`).
+ * @param dryRun - If `true`, the command is not executed and the function returns `true`.
+ * @param policy - Optional execution policy:
+ *   - `timeoutMs`: maximum milliseconds to allow the command to run before killing it,
+ *   - `retries`: number of additional attempts on failure,
+ *   - `continueOnError`: if `true`, return `false` instead of throwing when all attempts fail.
+ * @returns `true` if the command ran successfully or if `dryRun` is `true`; `false` if all attempts failed and `policy.continueOnError` is `true`.
+ * @throws Re-throws the underlying error if the command fails after all retries and `policy.continueOnError` is not set.
+ */
 function runCmd(
 	cwd: string,
 	args: string[],
@@ -111,6 +143,14 @@ function runCmd(
 	return false;
 }
 
+/**
+ * Generate all scenario/strategy matchups and assign sequential seeds starting from `baseSeed`.
+ *
+ * Each combination of `scenarios` and `mirroredPairs` becomes a Matchup; seeds increment by 1 for each matchup.
+ *
+ * @param baseSeed - The starting seed value used for the first generated matchup
+ * @returns An array of Matchup objects covering every scenario paired with each mirrored strategy pair, each with a unique sequential seed
+ */
 function collectMatchups(baseSeed: number): Matchup[] {
 	const out: Matchup[] = [];
 	let seed = baseSeed;
@@ -123,6 +163,21 @@ function collectMatchups(baseSeed: number): Matchup[] {
 	return out;
 }
 
+/**
+ * Builds an aggregated summary of game results by reading per-lane `summary.json` files under a directory.
+ *
+ * Reads every subdirectory of `laneDir` and, for each readable `summary.json`, accumulates total games, draws,
+ * illegal moves, and weighted average match lengths; also computes per-scenario aggregates where the scenario name
+ * is taken from the subdirectory name prefix before `__`.
+ *
+ * Malformed or missing `summary.json` files are ignored. If `laneDir` does not exist, returns an aggregate with all
+ * counts and averages set to zero.
+ *
+ * @param laneDir - Path to a directory containing lane subdirectories each optionally holding a `summary.json`
+ *                  with `totalGames`, `draws`, `totalIllegalMoves`, and `matchLengths.mean`.
+ * @returns An Aggregate object with overall totals (`games`, `draws`, `illegalMoves`, `avgTurns`) and a `byScenario`
+ *          map where each entry contains `games`, `draws`, and `avgTurns` for that scenario.
+ */
 function aggregateSummaries(laneDir: string): Aggregate {
 	const aggregate: Aggregate = {
 		games: 0,
@@ -184,6 +239,14 @@ function aggregateSummaries(laneDir: string): Aggregate {
 	return aggregate;
 }
 
+/**
+ * Checks whether a matchup's output already satisfies the expected number of games when resuming a run.
+ *
+ * @param outputDirAbs - Absolute path to the matchup's output directory (expects a `summary.json` file there)
+ * @param expectedGames - The number of games expected for the matchup
+ * @param resumeEnabled - If `false`, the function always returns `false`
+ * @returns `true` if `summary.json` exists and reports completed games greater than or equal to `expectedGames`, `false` otherwise
+ */
 function shouldSkipCompletedMatchup(
 	outputDirAbs: string,
 	expectedGames: number,
@@ -204,6 +267,11 @@ function shouldSkipCompletedMatchup(
 	}
 }
 
+/**
+ * Orchestrates a full benchmark run: configures matchups from CLI flags and environment, executes fast (mock) and optional API-driven match lanes, and writes a benchmark summary.
+ *
+ * Reads command-line options and environment variables to determine run configuration (seeds, games per matchup, timeouts, resume behavior, dry-run, LLM model/settings), executes mass match runs for each matchup (skipping or resuming completed matchups when configured), collects and aggregates per-lane summaries, tracks API failures/skips, and writes a `benchmark-summary.json` to the run output directory.
+ */
 function main() {
 	const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 	const simDir = path.join(repoRoot, "apps", "sim");

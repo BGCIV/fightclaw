@@ -23,6 +23,24 @@ import type {
 	Move,
 } from "./types";
 
+/**
+ * Plays a simulated match between the provided bots using the configured harness and options.
+ *
+ * @param opts.seed - Seed used to initialize deterministic RNG for the match
+ * @param opts.players - Bots in turn order for the match
+ * @param opts.maxTurns - Maximum number of turns before the match is ended as a draw
+ * @param opts.harness - When `"boardgameio"`, runs the boardgame.io harness path; otherwise uses the legacy engine
+ * @param opts.enableDiagnostics - When true, collects per-turn diagnostics and final game diagnostics
+ * @param opts.invalidPolicy - Policy for handling invalid moves when using the boardgame.io harness (default `"skip"`)
+ * @param opts.strict - When true enforces strict harness runtime checks; defaults to the HARNESS_STRICT environment setting when not provided
+ * @param opts.moveValidationMode - Validation mode for moves when using the boardgame.io harness (default `"strict"`)
+ * @param opts.artifactDir - Directory to write harness artifacts (used by boardgame.io harness)
+ * @param opts.storeFullPrompt - When true, store full prompts in artifacts; defaults to false in CI
+ * @param opts.storeFullOutput - When true, store full outputs in artifacts; defaults to false in CI
+ * @param opts.engineConfig - Optional engine configuration passed to the game engine
+ * @param opts.scenario - Optional scenario name to initialize a preconfigured game state
+ * @returns A MatchResult describing the final outcome, including turns played, winner (if any), illegal move count, termination reason, and an optional match log when recording is enabled
+ */
 export async function playMatch(opts: {
 	seed: number;
 	players: Bot[]; // turn order
@@ -62,6 +80,25 @@ export async function playMatch(opts: {
 	return playMatchLegacy(opts);
 }
 
+/**
+ * Plays a two-player match using the engine and returns the final match result.
+ *
+ * Runs up to `maxTurns`, invoking each bot's `chooseTurn` (batch) or `chooseMove` (single-move) handler,
+ * validating and applying moves, tracking engine events and illegal-move handling, optionally recording
+ * the full match and collecting diagnostics.
+ *
+ * @param opts - Configuration for the match
+ * @param opts.seed - RNG seed used to initialize state and deterministically drive bots
+ * @param opts.players - Two bots in turn order (must contain exactly two entries)
+ * @param opts.maxTurns - Maximum number of turns to simulate before stopping with reason `"maxTurns"`
+ * @param opts.verbose - If true, log per-turn actions and warnings
+ * @param opts.record - If true, include a MatchLog in the returned result with moves, engine events, and final state
+ * @param opts.autofixIllegal - If true, attempt fallback/forced legal moves when bots produce illegal moves or crash; otherwise the match ends with reason `"illegal"`
+ * @param opts.enableDiagnostics - If true, collect per-turn and end-of-game diagnostics via the diagnostics collector
+ * @param opts.engineConfig - Optional engine configuration passed to initial state creation
+ * @param opts.scenario - Optional named scenario to initialize state instead of the engine's normal initial state
+ * @returns The final MatchResult containing the seed, number of turns simulated, the winner (or `null`), the count of illegal moves, the terminal reason (`"terminal"`, `"illegal"`, or `"maxTurns"`), and an optional `log` when `opts.record` is true
+ */
 async function playMatchLegacy(opts: {
 	seed: number;
 	players: Bot[]; // turn order
@@ -360,6 +397,12 @@ async function playMatchLegacy(opts: {
 	return result;
 }
 
+/**
+ * Replays a recorded match log through the game engine to verify that applied moves, emitted engine events, and final state match the log.
+ *
+ * @param log - Recorded match data containing `seed`, `players`, `moves`, and optional `engineEvents` and `finalState`.
+ * @returns `ok: true` if the replay matches the recorded events and final state; otherwise `ok: false` with an `error` message, and `mismatchAt` when engine events differ.
+ */
 export function replayMatch(log: MatchLog): {
 	ok: boolean;
 	mismatchAt?: number;
@@ -388,6 +431,12 @@ export function replayMatch(log: MatchLog): {
 	return { ok: true };
 }
 
+/**
+ * Remove any `reasoning` and `metadata` properties from a move object.
+ *
+ * @param m - The move that may include `reasoning` and/or `metadata`
+ * @returns A copy of `m` with `reasoning` and `metadata` omitted
+ */
 function stripReasoning(m: Move): Move {
 	const {
 		reasoning: _,
@@ -400,6 +449,12 @@ function stripReasoning(m: Move): Move {
 	return rest as Move;
 }
 
+/**
+ * Serialize a value to JSON, falling back to its string form if JSON serialization fails.
+ *
+ * @param x - The value to serialize
+ * @returns The JSON representation of `x` when possible, otherwise `String(x)`
+ */
 function safeJson(x: unknown): string {
 	try {
 		return JSON.stringify(x);

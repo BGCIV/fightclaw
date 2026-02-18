@@ -19,6 +19,14 @@ type LeaderboardResponse = {
 	leaderboard: LeaderboardEntry[];
 };
 
+/**
+ * Render the leaderboard view showing top agents by rating.
+ *
+ * Fetches leaderboard data from the server on mount, maintains `entries`, `loading`, and `error`
+ * state, and prevents state updates after the component unmounts.
+ *
+ * @returns A JSX element representing the leaderboard page with loading, error, and results states
+ */
 function Leaderboard() {
 	const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
 	const [loading, setLoading] = useState(true);

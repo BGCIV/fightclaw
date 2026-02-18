@@ -37,6 +37,12 @@ const TERRAIN_DISPLAY: Record<string, string> = {
 
 const ROWS = 9;
 
+/**
+ * Parse a hex-grid identifier (e.g., "A1") into zero-based row and column indices.
+ *
+ * @param id - Hex identifier where the first character is a row letter A–I and the following digits are a 1-based column number
+ * @returns An object with `row` and `col` as zero-based indices, or `null` if `id` does not match the expected format
+ */
 function parseHexId(id: string): { row: number; col: number } | null {
 	const match = /^([A-I])(\d+)$/.exec(id);
 	if (!match) return null;
@@ -49,10 +55,24 @@ function parseHexId(id: string): { row: number; col: number } | null {
 	};
 }
 
+/**
+ * Convert 0-based grid coordinates to a human-readable hex ID (e.g., "A1").
+ *
+ * @param row - Row index, 0-based (0 -> "A")
+ * @param col - Column index, 0-based (0 -> 1)
+ * @returns The hex identifier combining an uppercase row letter and a 1-based column (e.g., "A1")
+ */
 function toHexId(row: number, col: number): string {
 	return `${String.fromCharCode(65 + row)}${col + 1}`;
 }
 
+/**
+ * Get the valid neighboring hex IDs for a given hex on a board.
+ *
+ * @param id - The hex identifier in "A1" style
+ * @param cols - The number of columns on the board
+ * @returns An array of adjacent hex IDs (human-readable) that fall within board bounds
+ */
 function neighborsOfHex(id: string, cols: number): string[] {
 	const parsed = parseHexId(id);
 	if (!parsed) return [];
@@ -86,6 +106,13 @@ function neighborsOfHex(id: string, cols: number): string[] {
 	return result;
 }
 
+/**
+ * Compare two hex IDs by their grid coordinates.
+ *
+ * @param a - First hex ID (e.g., "A1")
+ * @param b - Second hex ID (e.g., "B3")
+ * @returns A negative number if `a` comes before `b`, `0` if they are equivalent, or a positive number if `a` comes after `b`. Comparison is by row then column; if either ID cannot be parsed, falls back to lexicographic string comparison.
+ */
 function compareHexId(a: string, b: string): number {
 	const pa = parseHexId(a);
 	const pb = parseHexId(b);
@@ -93,6 +120,13 @@ function compareHexId(a: string, b: string): number {
 	return pa.row - pb.row || pa.col - pb.col;
 }
 
+/**
+ * Compare two terrain entry strings by their hex coordinate portion (the substring before `=`).
+ *
+ * @param a - First terrain entry, typically formatted as `"A1"` or `"A1=terrain"`
+ * @param b - Second terrain entry, typically formatted as `"B2"` or `"B2=terrain"`
+ * @returns A negative number if `a` sorts before `b`, `0` if they are equal, or a positive number if `a` sorts after `b`
+ */
 function compareTerrainEntry(a: string, b: string): number {
 	const aHex = a.split("=")[0] ?? a;
 	const bHex = b.split("=")[0] ?? b;
@@ -101,7 +135,16 @@ function compareTerrainEntry(a: string, b: string): number {
 
 // ---------------------------------------------------------------------------
 // encodeMove — single move to CLI command string
-// ---------------------------------------------------------------------------
+/**
+ * Convert a Move object into its compact CLI command string.
+ *
+ * Encodes actions into one of the canonical command tokens used by the simulator:
+ * `move {unitId} {to}`, `attack {unitId} {target}`, `recruit {unitType} {at}`,
+ * `fortify {unitId}`, `upgrade {unitId}`, or `end_turn`.
+ *
+ * @param move - The move to encode
+ * @returns The encoded command string representing the move
+ */
 
 export function encodeMove(move: Move): string {
 	switch (move.action) {
@@ -124,7 +167,16 @@ export function encodeMove(move: Move): string {
 
 // ---------------------------------------------------------------------------
 // encodeState — full game state in compact notation
-// ---------------------------------------------------------------------------
+/**
+ * Produce a compact, token-efficient textual representation of the game state from a given side's perspective.
+ *
+ * The output includes a header with turn, active player, actions remaining, and resources; separate unit lists for the active side and the enemy (unit id, abbreviated type, position, hp, fortified flag, and stronghold annotation); optional terrain near units and contested nearby terrain entries; and an optional listing of the last enemy moves encoded as CLI-style commands.
+ *
+ * @param state - Full match state to encode
+ * @param side - Perspective side (`"A"` or `"B"`) for which the state is rendered
+ * @param lastEnemyMoves - Optional list of the enemy's most recent moves to include under `LAST_ENEMY_TURN`
+ * @returns A multi-section string describing the encoded state suitable for LLM consumption (sections: header, ENEMY, UNITS_<side>, UNITS_<enemy>, TERRAIN_NEAR_UNITS, TERRAIN_CONTESTED_NEARBY, LAST_ENEMY_TURN as present)
+ */
 
 export function encodeState(
 	state: MatchState,
@@ -250,7 +302,14 @@ export function encodeState(
 
 // ---------------------------------------------------------------------------
 // encodeLegalMoves — categorize legal moves by action type
-// ---------------------------------------------------------------------------
+/**
+ * Encode a list of legal moves into a compact, categorized multiline text format.
+ *
+ * Attack entries are enriched using the provided game state when a target unit occupies the target hex.
+ *
+ * @param moves - Array of legal moves to encode
+ * @param state - Current match state used to look up units for enriching attack entries
+ * @returns A multiline string beginning with "LEGAL_MOVES:" and optional sections "ATTACKS:", "MOVES:", "RECRUIT:", and "OTHER:". Attack lines include target id, short type abbreviation, and `hp=current/max` when the target unit is known. */
 
 export function encodeLegalMoves(moves: Move[], state: MatchState): string {
 	const attacks: string[] = [];

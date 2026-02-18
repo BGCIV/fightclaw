@@ -39,6 +39,18 @@ type StateEvent = {
 	state: MatchState;
 };
 
+/**
+ * Spectator landing page component that displays a live or replaying match with UI for board and agent thoughts.
+ *
+ * Manages fetching featured matches, subscribing to match event streams or replay logs, driving the arena animator
+ * with incoming engine events, and maintaining derived UI state such as the latest match state, connection status,
+ * per-player thought lists, and thinking flags.
+ *
+ * Side effects: performs network requests and opens EventSource streams to receive state and engine events; enqueues
+ * engine events into the animator; resets animator and local UI state when the viewed match or mode changes.
+ *
+ * @returns The React element tree for the spectator landing UI (top status bar, ThoughtPanel columns, and HexBoard).
+ */
 function SpectatorLanding() {
 	const search = Route.useSearch();
 	const replayMatchId = search.replayMatchId ?? null;
@@ -497,10 +509,27 @@ type MatchLogResponseV1 = {
 	events: MatchLogRowV1[];
 };
 
+/**
+ * Determine whether a value is a plain record (an object that is not `null` and not an array).
+ *
+ * This function acts as a type guard narrowing the input to `Record<string, unknown>`.
+ *
+ * @returns `true` if the value is an object (not `null`) and not an array, `false` otherwise.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Extracts a MatchState object from a received envelope or nested payload.
+ *
+ * Accepts several common envelope shapes (top-level state object or an object
+ * containing `state` or `game` properties) and returns the contained match
+ * state when it has a `players` property.
+ *
+ * @param input - The raw envelope or payload to inspect
+ * @returns `MatchState` if a valid match state is found, `null` otherwise
+ */
 function parseStateFromEnvelope(input: unknown): MatchState | null {
 	if (!input || typeof input !== "object") {
 		return null;

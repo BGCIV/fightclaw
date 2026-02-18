@@ -19,13 +19,11 @@ export type ParsedCommand =
 // ---------------------------------------------------------------------------
 
 /**
- * Parse multi-line CLI-style command text into an array of ParsedCommands.
+ * Parse CLI-style command text and return the commands found in the command section.
  *
- * - Strips markdown code fences (``` ... ```)
- * - Truncates at a `---` separator (reasoning section)
- * - Skips blank lines and `# comment` lines
- * - Action names are case-insensitive
- * - `pass` is treated as `end_turn`
+ * The parser removes surrounding Markdown code fences, stops at the first line containing `---` (the remainder is treated as optional reasoning and ignored), skips blank lines and lines starting with `#`, treats action names case-insensitively, and accepts `pass`/`end` as `end_turn`.
+ *
+ * @returns An array of ParsedCommand objects parsed from the command portion of `text`
  */
 export function parseCommands(text: string): ParsedCommand[] {
 	const cleaned = stripCodeFences(text);
@@ -34,7 +32,10 @@ export function parseCommands(text: string): ParsedCommand[] {
 }
 
 /**
- * Like parseCommands but also extracts the reasoning text after `---`.
+ * Parse a block of CLI-style commands and also extract optional reasoning found after the first `---` separator.
+ *
+ * @param text - Raw input text that may include code fences, commands, and an optional reasoning section.
+ * @returns An object containing `commands`, the parsed array of commands, and `reasoning`, the trimmed text after the `---` separator or `undefined` if no reasoning section exists.
  */
 export function parseCommandsWithReasoning(text: string): {
 	commands: ParsedCommand[];
@@ -53,14 +54,21 @@ export function parseCommandsWithReasoning(text: string): {
 // ---------------------------------------------------------------------------
 
 /**
- * Match a ParsedCommand against the array of legal moves.
- * Returns the matching Move or null if no match is found.
+ * Find the first legal Move that corresponds to a parsed CLI command.
+ *
+ * Attempts to match the parsed command to a Move in `legalMoves` by comparing
+ * the action and the fields relevant to that action (see field mapping).
  *
  * Field mapping:
- *   ParsedCommand.target  ->  Move.to      (for "move")
- *   ParsedCommand.target  ->  Move.target   (for "attack")
- *   ParsedCommand.target  ->  Move.at       (for "recruit")
- *   ParsedCommand.unitId  ->  Move.unitId   (for "fortify"/"upgrade")
+ *   - `move`:  `ParsedCommand.target` -> `Move.to`  (also matches `unitId`)
+ *   - `attack`: `ParsedCommand.target` -> `Move.target`  (also matches `unitId`)
+ *   - `recruit`: `ParsedCommand.target` -> `Move.at`  (also matches `unitType`)
+ *   - `fortify` / `upgrade`: `ParsedCommand.unitId` -> `Move.unitId`
+ *   - `end_turn`: matches any `end_turn` Move
+ *
+ * @param cmd - The parsed command to match
+ * @param legalMoves - List of permitted Move objects to search
+ * @returns The matching `Move` if found, `null` otherwise
  */
 export function matchCommand(
 	cmd: ParsedCommand,
@@ -107,14 +115,19 @@ export function matchCommand(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Strip markdown code fences (``` or ```lang). */
+/**
+ * Removes Markdown fenced code block delimiters (``` and ```lang) from the text and trims whitespace.
+ *
+ * @returns The input string with code-fence lines removed and surrounding whitespace trimmed.
+ */
 function stripCodeFences(text: string): string {
 	return text.replace(/^```[a-z]*\s*$/gm, "").trim();
 }
 
 /**
- * Split text at the first `---` line.
- * Returns the command portion and optional reasoning.
+ * Split input text at the first line that contains only `---` and return the text before it as commands and the trimmed text after it as optional reasoning.
+ *
+ * @returns An object with `commands` set to the portion before the separator, and `reasoning` set to the trimmed portion after the separator or `undefined` if no non-empty reasoning exists.
  */
 function splitAtSeparator(text: string): {
 	commands: string;
@@ -209,6 +222,12 @@ function parseLines(text: string): ParsedCommand[] {
 	return results;
 }
 
+/**
+ * Normalize a single command-line string by removing common list/numbering prefixes and surrounding backticks.
+ *
+ * @param raw - The raw input line to normalize
+ * @returns The cleaned command line with leading numbering (e.g., "1.", "2)"), bullet markers ("-", "*"), and surrounding backticks removed
+ */
 function normalizeCommandLine(raw: string): string {
 	return raw
 		.trim()
@@ -217,6 +236,12 @@ function normalizeCommandLine(raw: string): string {
 		.replace(/^`+|`+$/g, "");
 }
 
+/**
+ * Sanitize a token by removing all characters except letters, digits, underscores, and dashes.
+ *
+ * @param token - The input string to clean; may be undefined
+ * @returns The cleaned token containing only `A-Z`, `a-z`, `0-9`, `_`, and `-`, or `undefined` if the input is falsy or the result is empty
+ */
 function cleanToken(token: string | undefined): string | undefined {
 	if (!token) return undefined;
 	const cleaned = token.replace(/[^A-Za-z0-9_-]/g, "");

@@ -76,6 +76,19 @@ function createEmptyStats(): SimulationStats {
 	};
 }
 
+/**
+ * Compute aggregated simulation statistics from a list of match results.
+ *
+ * Aggregates totals, per-player win counts, draws, illegal move counts, match
+ * length descriptive statistics (min, max, mean, median, percentiles, stdDev,
+ * outliers), per-player win rates with 95% confidence intervals, and a
+ * distribution of mock LLM strategies when `botConfigs` is provided.
+ *
+ * @param results - The match results to aggregate.
+ * @param playerIds - The list of player IDs to include in per-player summaries.
+ * @param botConfigs - Optional bot configuration objects used to populate mock-LLM strategy distribution.
+ * @returns A SimulationStats object containing aggregated totals, per-player statistics, match length metrics, and strategy distribution.
+ */
 function aggregateResults(
 	results: MatchResult[],
 	playerIds: string[],
@@ -219,6 +232,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const forkWorkerPath = path.join(__dirname, "forkWorker.ts");
 
+/**
+ * Convert a Bot descriptor into a runtime BotConfig used by the simulation.
+ *
+ * The function derives the bot `type` from the bot's name (e.g., names containing
+ * "greedy", "aggressive", or "mockllm") and, for `mockllm` types, extracts an
+ * LLM `strategy` from naming patterns (e.g., `MockLLM_<strategy>` or `strategy=<name>`),
+ * defaulting to `"strategic"` when no strategy is present.
+ *
+ * @param bot - The bot descriptor containing at minimum `id` and `name`
+ * @returns A BotConfig with `id`, `name`, `type`, and for `mockllm` bots an `llmConfig.strategy`
+ */
 function botToConfig(bot: Bot): BotConfig {
 	// Infer type from bot name
 	const name = bot.name.toLowerCase();
@@ -249,6 +273,20 @@ function createForkWorker(): ChildProcess {
 	return fork(forkWorkerPath, [], { stdio: "inherit" });
 }
 
+/**
+ * Run a batch of matches on a forked worker process.
+ *
+ * Sends a run request to the given worker for the specified seeds and resolves with the match results when the worker completes.
+ *
+ * @param worker - The child process running the worker script
+ * @param seeds - Array of random seeds identifying matches to run
+ * @param maxTurns - Maximum number of turns allowed per match
+ * @param botConfigs - Bot configurations to use for each player
+ * @param engineConfig - Optional engine configuration to pass to the worker
+ * @param harnessOptions - Optional harness/runtime options to pass to the worker
+ * @returns An array of MatchResult objects corresponding to the completed seeds
+ * @throws Rejects with an Error if the worker reports an error, the worker emits an error event, or the batch times out after 5 minutes
+ */
 function runWorkerBatch(
 	worker: ChildProcess,
 	seeds: number[],
@@ -292,6 +330,19 @@ function runWorkerBatch(
 	});
 }
 
+/**
+ * Run a batch of simulated matches between two bot players and return aggregated statistics.
+ *
+ * The run may execute sequentially (single process) or in parallel using forked workers,
+ * will resume from a checkpoint in the output directory if present, writes per-match results
+ * to results.jsonl and a final summary.json, and saves a checkpoint on shutdown.
+ *
+ * @param options - Simulation options (games, seed, parallelism, maxTurns, outputDir, etc.)
+ * @param players - A tuple of two Bot definitions to compete in the simulation
+ * @param engineConfig - Optional engine configuration applied to each match
+ * @param harnessOptions - Optional harness/runtime options (scenario, harness, invalidPolicy, moveValidationMode, artifact storage, etc.)
+ * @returns Aggregated SimulationStats covering all matches (wins, losses, draws, match length distribution, anomalies, strategy distribution, and totals)
+ */
 export async function runMassSimulation(
 	options: SimulationOptions,
 	players: [Bot, Bot],

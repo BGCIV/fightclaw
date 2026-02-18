@@ -173,11 +173,23 @@ const TERRAIN_ADVANTAGE_SCORE: Record<string, number> = {
 	gold_mine: 1,
 };
 
+/**
+ * Extracts the numeric column index from a hex identifier.
+ *
+ * @param hexId - Hex identifier string that contains a numeric suffix (e.g., `A12`, `h3`)
+ * @returns The parsed column number, or `null` if no numeric suffix can be parsed
+ */
 function parseCol(hexId: string): number | null {
 	const n = Number.parseInt(hexId.replace(/^[A-Z]/i, ""), 10);
 	return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Parse a game-state snapshot from a raw prompt string into a structured ParsedState.
+ *
+ * @param prompt - The raw prompt text that may contain a `STATE` line, `UNITS_<side>` blocks, and terrain information.
+ * @returns A ParsedState containing side, gold, wood, terrainByHex, ownUnits, and enemyUnits, or `null` if the prompt does not contain a parsable state and unit blocks.
+ */
 function parseStateFromPrompt(prompt: string | undefined): ParsedState | null {
 	if (!prompt) return null;
 	const stateLine = prompt
@@ -210,6 +222,12 @@ function parseStateFromPrompt(prompt: string | undefined): ParsedState | null {
 	};
 }
 
+/**
+ * Extracts a TERRAIN_NEAR_UNITS block from a prompt and returns a mapping of hex IDs to terrain types.
+ *
+ * @param prompt - The full prompt text to search for a `TERRAIN_NEAR_UNITS:` block
+ * @returns An object mapping hex identifiers (uppercased) to terrain names (lowercased); empty if no terrain block is found
+ */
 function parseTerrainBlock(prompt: string): Record<string, string> {
 	const terrainMatch = prompt.match(
 		/TERRAIN_NEAR_UNITS:\n([\s\S]*?)(?:\n\n|\nTURN_DELTA_|\nTACTICAL_|\nLEGAL_MOVES:|$)/,
@@ -234,6 +252,13 @@ function parseTerrainBlock(prompt: string): Record<string, string> {
 	return byHex;
 }
 
+/**
+ * Parse a multiline unit listing into ParsedUnit entries.
+ *
+ * @param block - Multiline text containing unit descriptions (one unit per line). Lines that do not match the expected unit pattern are ignored.
+ * @param side - Side identifier to assign to each parsed unit (`"A"` or `"B"`).
+ * @returns An array of ParsedUnit objects extracted from `block`; returns an empty array if no valid unit lines are found.
+ */
 function parseUnitsBlock(block: string, side: "A" | "B"): ParsedUnit[] {
 	const lines = block
 		.split("\n")
@@ -259,15 +284,33 @@ function parseUnitsBlock(block: string, side: "A" | "B"): ParsedUnit[] {
 	return units;
 }
 
+/**
+ * Compute the total hit points across a list of units.
+ *
+ * @param units - Array of units whose `hp` values will be summed
+ * @returns The sum of `hp` for all units; `0` if `units` is empty
+ */
 function sumHp(units: ParsedUnit[]): number {
 	return units.reduce((s, u) => s + u.hp, 0);
 }
 
+/**
+ * Compute the arithmetic mean of an array of numbers.
+ *
+ * @param values - The numbers to average
+ * @returns The arithmetic mean of `values`, or `0` if `values` is empty
+ */
 function mean(values: number[]): number {
 	if (values.length === 0) return 0;
 	return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
+/**
+ * Ensures a numeric value falls within the inclusive range 0 through 1.
+ *
+ * @param value - The input number to clamp
+ * @returns The input constrained to 0 if less than 0, 1 if greater than 1, or the original value otherwise
+ */
 function clamp01(value: number): number {
 	if (Number.isNaN(value)) return 0;
 	if (value < 0) return 0;
@@ -275,6 +318,13 @@ function clamp01(value: number): number {
 	return value;
 }
 
+/**
+ * Classifies a zero-based index into an early, mid, or late phase of a sequence.
+ *
+ * @param i - Zero-based position within the sequence
+ * @param total - Total number of positions in the sequence
+ * @returns `early` if `total` is less than or equal to 1 or `i` falls in the first third, `mid` if `i` falls in the middle third, and `late` if `i` falls in the final third
+ */
 function toPhase(i: number, total: number): "early" | "mid" | "late" {
 	if (total <= 1) return "early";
 	const p = i / (total - 1);
@@ -283,11 +333,23 @@ function toPhase(i: number, total: number): "early" | "mid" | "late" {
 	return "late";
 }
 
+/**
+ * Maps a terrain identifier to its numeric advantage score.
+ *
+ * @param terrain - Terrain key (e.g., "crown", "high_ground"); may be `undefined`
+ * @returns The terrain's advantage score from the terrain lookup, or `0` if the terrain is `undefined` or not recognized
+ */
 function terrainScore(terrain: string | undefined): number {
 	if (!terrain) return 0;
 	return TERRAIN_ADVANTAGE_SCORE[terrain] ?? 0;
 }
 
+/**
+ * Computes the Shannon entropy (in bits) for a discrete distribution represented by category counts.
+ *
+ * @param counts - Map from category identifier to its non-negative count or weight
+ * @returns The entropy in bits; `0` when the total count is `0` or no category has positive weight
+ */
 function shannonEntropy(counts: Map<string, number>): number {
 	let total = 0;
 	for (const v of counts.values()) total += v;
@@ -301,6 +363,13 @@ function shannonEntropy(counts: Map<string, number>): number {
 	return h;
 }
 
+/**
+ * Resolve the filesystem directory that contains artifact JSON files for analysis.
+ *
+ * @param input - A path to a directory or file; may contain or be adjacent to an `artifacts` subdirectory
+ * @returns The absolute path to the directory to use: the `artifacts` subdirectory if present, otherwise the resolved `input` path
+ * @throws Error if the resolved `input` path does not exist
+ */
 function resolveArtifactsDir(input: string): string {
 	const direct = path.resolve(input);
 	if (!existsSync(direct)) {
@@ -313,6 +382,13 @@ function resolveArtifactsDir(input: string): string {
 	return statPath;
 }
 
+/**
+ * Analyze JSON artifact files in a directory and aggregate behavioral metrics across all games.
+ *
+ * @param input - Path to a directory containing artifact JSON files (or a path that resolves to an artifacts directory).
+ * @returns A BehaviorSummary object with aggregated metrics including game counts, attack timing and finisher metrics, positional progression for sides A/B, adaptation statistics, action diversity and profile, upgrade economy, archetype separation signals, macro-index components, terrain leverage, fortify ROI estimates, and telemetry coverage.
+ * @throws If the provided path does not exist or cannot be resolved to an artifacts directory.
+ */
 export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 	const artifactsDir = resolveArtifactsDir(input);
 	const files = readdirSync(artifactsDir)

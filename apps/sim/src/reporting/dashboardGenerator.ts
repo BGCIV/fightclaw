@@ -579,11 +579,23 @@ export class DashboardGenerator {
 	}
 }
 
+/**
+ * Format a turn value as a one-decimal-place string or indicate missing/invalid data.
+ *
+ * @param value - The turn value to format; may be null or a non-finite number to represent absent data.
+ * @returns The value formatted with one decimal place (e.g., "3.5"), or `"n/a"` if `value` is null or not a finite number.
+ */
 function formatTurn(value: number | null): string {
 	if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
 	return value.toFixed(1);
 }
 
+/**
+ * Render dashboard HTML from provided data and write it to the given file path.
+ *
+ * @param data - The dashboard data to render
+ * @param outputPath - Filesystem path where the generated HTML will be written
+ */
 export function generateDashboard(
 	data: DashboardData,
 	outputPath: string,

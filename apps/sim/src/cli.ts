@@ -27,12 +27,24 @@ type Args = ReturnType<typeof minimist>;
 type BotType = "random" | "greedy" | "aggressive" | "mockllm" | "llm";
 type StrategyName = "aggressive" | "defensive" | "random" | "strategic";
 
+/**
+ * Chooses an API key from environment variables for LLM providers.
+ *
+ * @param _baseUrl - Optional base URL for the LLM provider (currently not used when selecting the key)
+ * @returns The value of `LLM_API_KEY` if set, otherwise the value of `OPENROUTER_API_KEY`, or `undefined` if neither is set
+ */
 function inferApiKeyForBaseUrl(
 	_baseUrl: string | undefined,
 ): string | undefined {
 	return process.env.LLM_API_KEY ?? process.env.OPENROUTER_API_KEY;
 }
 
+/**
+ * Map a strategy name to a corresponding LLM system prompt.
+ *
+ * @param strategy - Optional strategy identifier: "aggressive", "defensive", or "strategic"
+ * @returns The system prompt associated with `strategy`, or `undefined` if the strategy is unrecognized
+ */
 function strategyPromptForLlm(strategy?: string): string | undefined {
 	const normalized = (strategy ?? "").toLowerCase() as StrategyName | "";
 	switch (normalized) {
@@ -47,6 +59,29 @@ function strategyPromptForLlm(strategy?: string): string | undefined {
 	}
 }
 
+/**
+ * Create a Bot instance configured for the given role and options.
+ *
+ * @param id - Identifier for the bot instance
+ * @param type - Bot type to create (e.g., "random", "greedy", "llm", "mockllm", "aggressive")
+ * @param opts - Additional configuration for LLM and mock bots
+ * @param opts.prompt - System prompt or inline prompt for LLM/mock LLM bots
+ * @param opts.strategy - High-level behavior strategy for mock LLM bots or to select a default LLM system prompt
+ * @param opts.model - Model name for LLM bots
+ * @param opts.apiKey - API key for LLM access
+ * @param opts.baseUrl - Base URL for the LLM service endpoint
+ * @param opts.llmDelayMs - Optional per-request artificial delay (milliseconds) applied by the LLM wrapper
+ * @param opts.llmParallelCalls - Optional limit for concurrent LLM calls
+ * @param opts.llmTimeoutMs - Optional per-request timeout for LLM calls (milliseconds)
+ * @param opts.llmMaxRetries - Optional maximum retry attempts for LLM calls
+ * @param opts.llmRetryBaseMs - Optional base backoff (milliseconds) used when retrying LLM calls
+ * @param opts.llmMaxTokens - Optional max token limit for LLM responses
+ * @param opts.openrouterReferrer - Optional OpenRouter referrer header value
+ * @param opts.openrouterTitle - Optional OpenRouter title header value
+ * @returns A Bot instance matching the requested type and configured with the provided options
+ * @throws Error if `type` is "llm" and `opts.model` is missing
+ * @throws Error if `type` is "llm" and `opts.apiKey` is missing
+ */
 function makeBot(
 	id: string,
 	type: BotType,
@@ -145,11 +180,22 @@ type DashboardArtifact = {
 	turns?: DashboardArtifactTurn[];
 };
 
+/**
+ * Compute the arithmetic mean of the given numbers.
+ *
+ * @returns The arithmetic mean of the input values, or `null` if the array is empty.
+ */
 function mean(values: number[]): number | null {
 	if (values.length === 0) return null;
 	return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+/**
+ * Compute the median of a numeric array.
+ *
+ * @param values - Array of numbers to compute the median from
+ * @returns The median number; for an even-length array returns the average of the two middle values, or `null` if `values` is empty
+ */
 function median(values: number[]): number | null {
 	if (values.length === 0) return null;
 	const sorted = [...values].sort((a, b) => a - b);
@@ -163,6 +209,12 @@ function median(values: number[]): number | null {
 	return (a + b) / 2;
 }
 
+/**
+ * Locate JSON files that appear to be dashboard artifacts within a directory or its `artifacts` subdirectory.
+ *
+ * @param inputDir - Path to the directory to search
+ * @returns An array of file paths for `.json` files that contain a top-level `turns` array or `artifactVersion === 1`, or an empty array if none are found
+ */
 function resolveArtifactFiles(inputDir: string): string[] {
 	const candidates = [path.join(inputDir, "artifacts"), inputDir];
 	for (const dir of candidates) {
@@ -188,16 +240,37 @@ function resolveArtifactFiles(inputDir: string): string[] {
 	return [];
 }
 
+/**
+ * Normalize an artifact turn to a 1-based turn number, using the turn's explicit index when available.
+ *
+ * @param turn - Artifact turn which may include a numeric `turnIndex` field
+ * @param idx - Zero-based position of the turn in the turns array used as a fallback
+ * @returns The turn number (1-based). If `turn.turnIndex` is a finite number, that value is returned; otherwise `idx + 1` is returned.
+ */
 function toTurnNumber(turn: DashboardArtifactTurn, idx: number): number {
 	const value = turn.turnIndex;
 	return Number.isFinite(value) && typeof value === "number" ? value : idx + 1;
 }
 
+/**
+ * Normalize an opening label for dashboard aggregation.
+ *
+ * Trims whitespace, converts to lowercase, and truncates to 48 characters; returns `"unknown"` when the resulting label is empty.
+ *
+ * @param input - The raw opening label to normalize
+ * @returns The normalized opening label or `"unknown"` if the input is empty after normalization
+ */
 function normalizeOpeningChoice(input: string): string {
 	const clipped = input.trim().toLowerCase().slice(0, 48);
 	return clipped.length > 0 ? clipped : "unknown";
 }
 
+/**
+ * Finds the first turn where an accepted command attempt contains a commitment action.
+ *
+ * @param turns - Array of dashboard turns to scan
+ * @returns The turn number of the first accepted attempt that includes `attack`, `recruit`, `upgrade`, or `fortify`, or `null` if none is found
+ */
 function detectFirstCommitmentTurn(
 	turns: DashboardArtifactTurn[],
 ): number | null {
@@ -221,6 +294,17 @@ function detectFirstCommitmentTurn(
 	return null;
 }
 
+/**
+ * Extracts archetype tags mentioned in a turn's explanations and move metadata.
+ *
+ * Scans the turn's top-level `whyThisMove`, each command attempt's
+ * `move.metadata.breakdown.archetype`, and `move.metadata.whyThisMove` or
+ * `move.reasoning` for occurrences of `archetype=<tag>` and collects all
+ * discovered tags.
+ *
+ * @param turn - The dashboard artifact turn to inspect
+ * @returns An array of discovered archetype tags in lowercase (may be empty)
+ */
 function extractArchetypeTags(turn: DashboardArtifactTurn): string[] {
 	const tags: string[] = [];
 	const topLevelWhy = turn.whyThisMove;
@@ -242,6 +326,19 @@ function extractArchetypeTags(turn: DashboardArtifactTurn): string[] {
 	return tags;
 }
 
+/**
+ * Classifies a match's playstyle into an archetype based on turn-level artifact data.
+ *
+ * Analyzes provided turns for explicit archetype tags and, if none are present,
+ * derives an archetype from observed action rates (attacks, moves, recruits, upgrades, fortifies)
+ * and early aggression. Returns a chosen archetype string (for example: `timing_push`,
+ * `greedy_macro`, `turtle_boom`, `map_control`, or `unknown`) and a confidence score in
+ * the range 0–1 indicating how strongly the data supports that classification.
+ *
+ * @param turns - Array of dashboard artifact turns to analyze.
+ * @returns An object with `archetype` set to the selected archetype name (or `"unknown"`)
+ *          and `confidence` set to a number between 0 and 1 representing classification confidence.
+ */
 function classifyMatchArchetype(turns: DashboardArtifactTurn[]): {
 	archetype: string;
 	confidence: number;
@@ -323,6 +420,14 @@ function classifyMatchArchetype(turns: DashboardArtifactTurn[]): {
 	};
 }
 
+/**
+ * Build explainability data (timeline and archetype classifier) by aggregating dashboard artifact JSON files found in a directory.
+ *
+ * @param inputDir - Path to a directory containing dashboard artifact JSON files (or a directory that contains an `artifacts` subdirectory).
+ * @returns An object containing:
+ *  - `timeline` (optional): aggregated timeline metrics including number of matches analyzed, top opening choices, statistics for first commitment turns, most frequent power-spike turns, and decisive swing turn statistics.
+ *  - `archetypeClassifier` (optional): aggregated archetype classification results including number of matches analyzed, primary archetype, average confidence, distribution of archetypes, and a sample of classified matches.
+ */
 function buildDashboardExplainabilityData(inputDir: string): {
 	timeline?: DashboardData["timeline"];
 	archetypeClassifier?: DashboardData["archetypeClassifier"];
@@ -481,6 +586,13 @@ function buildDashboardExplainabilityData(inputDir: string): {
 	};
 }
 
+/**
+ * CLI entry point that parses command-line arguments and dispatches runtime commands.
+ *
+ * Parses options, configures engine and bot instances (including LLM options), and runs the selected command
+ * (supported commands include: `single`, `replay`, `tourney`, `mass`, `analyze`, `dashboard`, and `behavior`).
+ * Performs file I/O, prints results or summaries, and exits the process when appropriate.
+ */
 async function main() {
 	const argv: Args = minimist(process.argv.slice(2));
 	const cmd = argv._[0];

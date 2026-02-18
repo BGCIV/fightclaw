@@ -165,16 +165,35 @@ const mirroredPairs: Array<[Strategy, Strategy]> = [
 	["defensive", "defensive"],
 ];
 
+/**
+ * Retrieve the value of a named command-line argument.
+ *
+ * @param name - The exact argument name to search for (for example `'--foo'` or `'-f'`)
+ * @returns The argument's following value if present, or `undefined` if the name is not found
+ */
 function parseArg(name: string): string | undefined {
 	const idx = process.argv.indexOf(name);
 	if (idx < 0) return undefined;
 	return process.argv[idx + 1];
 }
 
+/**
+ * Checks whether a command-line flag is present in the current process arguments.
+ *
+ * @param name - The flag to look for (for example, `--dry-run`)
+ * @returns `true` if the flag appears in the process arguments, `false` otherwise.
+ */
 function hasFlag(name: string): boolean {
 	return process.argv.includes(name);
 }
 
+/**
+ * Parse a boolean command-line argument and return a fallback when it is absent or unparseable.
+ *
+ * @param name - The exact CLI argument name to search for (for example `"--verbose"`).
+ * @param fallback - Value to return when the argument is not present or its value cannot be parsed.
+ * @returns `true` if the argument is present and either has no value or its value is one of `"true"`, `"1"`, or `"yes"` (case-insensitive); `false` if the value is one of `"false"`, `"0"`, or `"no"`; otherwise the provided `fallback`.
+ */
 function parseBoolArg(name: string, fallback: boolean): boolean {
 	const idx = process.argv.indexOf(name);
 	if (idx < 0) return fallback;
@@ -190,6 +209,16 @@ function parseBoolArg(name: string, fallback: boolean): boolean {
 	return fallback;
 }
 
+/**
+ * Execute a `pnpm` command in the given working directory with optional retries, timeout, and dry-run behavior.
+ *
+ * @param cwd - Working directory to run the command in
+ * @param args - Arguments passed to `pnpm` (e.g., `["run", "test"]`)
+ * @param dryRun - If `true`, the command is not executed and the call is treated as successful
+ * @param policy - Optional run policy controlling `timeoutMs`, `retries`, and `continueOnError`
+ * @returns `true` if the command succeeded or was a dry-run, `false` if it ultimately failed but `policy.continueOnError` allowed continuation
+ * @throws Re-throws the last command error if all attempts fail and `policy.continueOnError` is not set
+ */
 function runCmd(
 	cwd: string,
 	args: string[],
@@ -229,6 +258,16 @@ function runCmd(
 	return false;
 }
 
+/**
+ * Execute `pnpm` with the given arguments in a working directory, honoring optional timeout, retry, and dry-run behavior.
+ *
+ * @param cwd - Working directory to run the command in
+ * @param args - Command-line arguments passed to `pnpm`
+ * @param dryRun - If true, do not execute the command and return a successful RunResult stub
+ * @param policy - Optional execution policy; may include `timeoutMs` (millisecond kill timeout), `retries` (number of retry attempts), and `continueOnError` (treat final failure as non-throwing)
+ * @returns A RunResult describing whether the command ultimately succeeded (`ok`), how many attempts were made (`attempts`), and the elapsed duration in milliseconds (`durationMs`)
+ * @throws If the command fails after all retries and `policy.continueOnError` is not set, the function will rethrow the last error
+ */
 function runCmdAsync(
 	cwd: string,
 	args: string[],
@@ -310,6 +349,12 @@ function runCmdAsync(
 	})();
 }
 
+/**
+ * Generates all matchups by combining each scenario with every mirrored pair and assigning sequential seeds.
+ *
+ * @param baseSeed - Starting seed for the first matchup; seeds increment by 1 for each subsequent matchup
+ * @returns An array of Matchup objects covering every scenario × mirrored pair combination with assigned seeds
+ */
 function collectMatchups(baseSeed: number): Matchup[] {
 	const out: Matchup[] = [];
 	let seed = baseSeed;
@@ -322,6 +367,18 @@ function collectMatchups(baseSeed: number): Matchup[] {
 	return out;
 }
 
+/**
+ * Aggregate per-matchup summary files in a lane directory into a single roll-up.
+ *
+ * Reads each subdirectory's `summary.json` (skipping missing or invalid files) and sums games, draws,
+ * and illegal moves; computes overall and per-scenario average turns weighted by game counts.
+ *
+ * @param laneDir - Absolute or relative path to a lane directory containing matchup subdirectories
+ *   each with a `summary.json`.
+ * @param includedMatchups - Optional set of matchup directory names to include; when provided,
+ *   only entries whose directory name is in this set are considered.
+ * @returns An Aggregate containing total `games`, `draws`, `illegalMoves`, overall `avgTurns`,
+ *   and a `byScenario` map where each scenario has `games`, `draws`, and `avgTurns`.
 function aggregateSummaries(
 	laneDir: string,
 	includedMatchups?: ReadonlySet<string>,
@@ -387,6 +444,12 @@ function aggregateSummaries(
 	return aggregate;
 }
 
+/**
+ * Parse a JSONL file of API game results into an array of ApiGameResult objects.
+ *
+ * @param filePath - Path to the JSONL file where each non-empty line is a JSON object representing an ApiGameResult
+ * @returns An array of parsed `ApiGameResult` entries; returns an empty array if the file cannot be read or parsing fails
+ */
 function parseResultsJsonl(filePath: string): ApiGameResult[] {
 	try {
 		const content = readFileSync(filePath, "utf-8");
@@ -400,6 +463,12 @@ function parseResultsJsonl(filePath: string): ApiGameResult[] {
 	}
 }
 
+/**
+ * Computes lane-level metrics from a sequence of per-game API results.
+ *
+ * @param rows - Array of API game result objects to summarize
+ * @returns An ApiLaneMetrics object containing counts (totalGames, draws, maxTurnsEndings), rates (drawRate, maxTurnsEndingRate), and turn statistics (`mean`, `p95`, `max`)
+ */
 export function summarizeApiGameRows(
 	rows: ReadonlyArray<ApiGameResult>,
 ): ApiLaneMetrics {
@@ -437,6 +506,13 @@ export function summarizeApiGameRows(
 	};
 }
 
+/**
+ * Produce lane-level API metrics by reading and summarizing per-matchup result files.
+ *
+ * @param apiLaneDir - Path to the API lane directory containing per-matchup subdirectories with `results.jsonl`
+ * @param includedMatchups - Optional set of matchup directory names to include; when provided, only those matchups are considered
+ * @returns Aggregated ApiLaneMetrics computed from all parsed `results.jsonl` entries in the lane; returns an empty/zeroed metrics object when the directory or results are missing
+ */
 function aggregateApiLaneMetrics(
 	apiLaneDir: string,
 	includedMatchups?: ReadonlySet<string>,
@@ -454,6 +530,12 @@ function aggregateApiLaneMetrics(
 	return summarizeApiGameRows(rows);
 }
 
+/**
+ * Tally telemetry entries by their status.
+ *
+ * @param telemetry - Array of telemetry records (each must include a `status` field) to count by status
+ * @returns `completed` — number of entries with status `"ok"`; `skipped` — number with status `"skipped"`; `failed` — number with status `"failed"`
+ */
 export function countApiTelemetryTotals(
 	telemetry: ReadonlyArray<Pick<ApiMatchTelemetry, "status">>,
 ): ApiTelemetryTotals {
@@ -464,6 +546,12 @@ export function countApiTelemetryTotals(
 	};
 }
 
+/**
+ * Collects matchup identifiers from telemetry entries that completed successfully.
+ *
+ * @param telemetry - Array of telemetry records containing `matchup` and `status`; only entries with `status === "ok"` are considered
+ * @returns A `Set` of matchup identifier strings for telemetry entries whose status is `"ok"`
+ */
 export function collectSuccessfulApiMatchups(
 	telemetry: ReadonlyArray<Pick<ApiMatchTelemetry, "matchup" | "status">>,
 ): Set<string> {
@@ -476,6 +564,18 @@ export function collectSuccessfulApiMatchups(
 	return matchups;
 }
 
+/**
+ * Builds an integrity summary that compares run-scoped telemetry with raw on-disk lane data.
+ *
+ * @param params - Input values used to compute the integrity summary.
+ * @param params.telemetry - Array of telemetry records containing matchup identifiers and status.
+ * @param params.apiGamesPerMatchup - Number of API games expected per matchup.
+ * @param params.runScopedAggregate - Aggregate summary computed for the run-scoped (on-disk) data subset.
+ * @param params.runScopedMetrics - Computed API lane metrics for the run-scoped subset.
+ * @param params.rawAggregate - Aggregate summary computed from all on-disk lane data.
+ * @param params.rawMetrics - Computed API lane metrics for the raw on-disk data.
+ * @returns An ApiLaneIntegritySummary describing counts and consistency checks between telemetry, run-scoped aggregates/metrics, and raw on-disk aggregates/metrics.
+ */
 export function buildApiLaneIntegritySummary(params: {
 	telemetry: ReadonlyArray<Pick<ApiMatchTelemetry, "matchup" | "status">>;
 	apiGamesPerMatchup: number;
@@ -513,6 +613,14 @@ export function buildApiLaneIntegritySummary(params: {
 	};
 }
 
+/**
+ * Normalize an input string to a valid ApiGraduationLane.
+ *
+ * Trims and lowercases `value`; if it equals `"api_smoke"` or `"smoke"` returns `"api_smoke"`, otherwise returns `"api_full"`.
+ *
+ * @param value - The input lane identifier to normalize; may be undefined.
+ * @returns The normalized `ApiGraduationLane` (`"api_smoke"` or `"api_full"`).
+ */
 function normalizeApiGraduationLane(
 	value: string | undefined,
 ): ApiGraduationLane {
@@ -523,10 +631,21 @@ function normalizeApiGraduationLane(
 	return "api_full";
 }
 
+/**
+ * Determine the minimum completion rate required for a given API graduation lane.
+ *
+ * @param lane - The graduation lane to evaluate (`api_smoke` or `api_full`)
+ * @returns The completion rate threshold as a number between 0 and 1 (`0.95` for `api_smoke`, `0.9` for `api_full`)
+ */
 function completionRateThresholdForLane(lane: ApiGraduationLane): number {
 	return lane === "api_smoke" ? 0.95 : 0.9;
 }
 
+/**
+ * Evaluates API graduation gates for a run and produces a summary with gate results and consecutive-pass tracking.
+ *
+ * @returns An ApiGraduationSummary containing the lane, measured values (illegal moves, completion rate, max-turns ending rate, p95 wall-clock), the individual gate checks with thresholds and pass flags, an overall `pass` boolean, and a `consecutivePassTracking` object describing required and current consecutive passes along with run metadata.
+ */
 export function buildApiGraduationSummary(params: {
 	lane: ApiGraduationLane;
 	telemetryTotals: ApiTelemetryTotals;
@@ -600,6 +719,17 @@ export function buildApiGraduationSummary(params: {
 	};
 }
 
+/**
+ * Read and validate an on-disk API graduation history JSON file.
+ *
+ * Parses the JSON at `filePath` and returns an array of validated history entries.
+ * Invalid or missing files, parse errors, or non-array content result in an empty array.
+ * Each returned entry is normalized so `lane` is either `"api_smoke"` or `"api_full"`,
+ * `runName` and `runTimestamp` are strings, and `pass` is a boolean.
+ *
+ * @param filePath - Path to the JSON file containing the graduation history
+ * @returns An array of validated and normalized ApiGraduationHistoryEntry objects; an empty array if the file is missing or invalid
+ */
 function readApiGraduationHistory(
 	filePath: string,
 ): ApiGraduationHistoryEntry[] {
@@ -631,6 +761,14 @@ function readApiGraduationHistory(
 	}
 }
 
+/**
+ * Persist API graduation history entries to disk at the specified file path.
+ *
+ * Ensures the parent directory exists and writes `entries` as pretty-printed JSON.
+ *
+ * @param filePath - Absolute or relative path to the output JSON file
+ * @param entries - Array of `ApiGraduationHistoryEntry` objects to be written
+ */
 function writeApiGraduationHistory(
 	filePath: string,
 	entries: ApiGraduationHistoryEntry[],
@@ -640,6 +778,16 @@ function writeApiGraduationHistory(
 	writeFileSync(filePath, JSON.stringify(entries, null, 2));
 }
 
+/**
+ * Count consecutive passing entries at the end of the history for a specific lane.
+ *
+ * Filters the provided history to the given lane and returns how many most-recent entries
+ * have `pass` equal to `true`, stopping at the first non-passing or missing entry.
+ *
+ * @param entries - Array of graduation history entries (may contain multiple lanes)
+ * @param lane - The lane to evaluate
+ * @returns The number of consecutive trailing passing entries for `lane`
+ */
 export function countTrailingLanePasses(
 	entries: ReadonlyArray<ApiGraduationHistoryEntry>,
 	lane: ApiGraduationLane,
@@ -655,6 +803,14 @@ export function countTrailingLanePasses(
 	return streak;
 }
 
+/**
+ * Determines whether a matchup's output directory already contains a completed summary and should be skipped when resuming.
+ *
+ * @param outputDirAbs - Absolute path to the matchup's output directory
+ * @param expectedGames - Number of games expected for the matchup
+ * @param resumeEnabled - When false, never skip regardless of existing summaries
+ * @returns `true` if the on-disk summary reports at least `expectedGames` completed; `false` otherwise
+ */
 function shouldSkipCompletedMatchup(
 	outputDirAbs: string,
 	expectedGames: number,
@@ -675,6 +831,15 @@ function shouldSkipCompletedMatchup(
 	}
 }
 
+/**
+ * Compute the Kullback–Leibler divergence D_KL(p || q) using base-2 logarithms.
+ *
+ * Treats each array index as corresponding probability mass for that outcome; missing entries are treated as 0.
+ * Entries where `p[i] <= 0` or `q[i] <= 0` are ignored in the sum.
+ *
+ * @param p - Probability distribution `P` as an array of non-negative numbers (indices correspond to outcomes)
+ * @param q - Probability distribution `Q` as an array of non-negative numbers aligned with `p`
+ * @returns The KL divergence D_KL(p || q) in bits (base-2). Zero or a positive finite number.
 function klDivergence(p: number[], q: number[]): number {
 	let sum = 0;
 	for (let i = 0; i < p.length; i++) {
@@ -686,11 +851,30 @@ function klDivergence(p: number[], q: number[]): number {
 	return sum;
 }
 
+/**
+ * Compute the Jensen–Shannon divergence between two discrete probability distributions.
+ *
+ * @param p - First probability mass array; non-negative values representing probabilities over a shared support
+ * @param q - Second probability mass array; non-negative values representing probabilities over the same support
+ * @returns The Jensen–Shannon divergence (natural log base) between `p` and `q`, a number ≥ 0 (≤ ln(2) for distributions over the same finite support)
+ */
 function jsDivergence(p: number[], q: number[]): number {
 	const m = p.map((v, idx) => (v + (q[idx] ?? 0)) / 2);
 	return 0.5 * klDivergence(p, m) + 0.5 * klDivergence(q, m);
 }
 
+/**
+ * Return the value at the specified fractional percentile from a numeric array.
+ *
+ * The function sorts `values` in ascending order and selects the element at
+ * index ceil(n * fraction) - 1, clamped to the array bounds. If `values`
+ * is empty the function returns `0`. Values of `fraction` outside `0..1`
+ * are effectively clamped to the nearest valid position.
+ *
+ * @param values - Array of numeric samples
+ * @param fraction - Fractional percentile in the range 0..1 (e.g., 0.95 for the 95th percentile)
+ * @returns The value at the requested percentile, or `0` if `values` is empty
+ */
 function percentile(values: number[], fraction: number): number {
 	if (values.length === 0) return 0;
 	const sorted = [...values].sort((a, b) => a - b);
@@ -701,6 +885,14 @@ function percentile(values: number[], fraction: number): number {
 	return sorted[idx] ?? 0;
 }
 
+/**
+ * Executes an asynchronous worker across a list of items while limiting the number of concurrently running workers.
+ *
+ * @param items - The array of items to process.
+ * @param concurrency - Maximum number of worker instances to run in parallel (clamped to at least 1 and at most the number of items).
+ * @param worker - Async function invoked for each item.
+ * @returns Nothing.
+ */
 async function runWithConcurrency<T>(
 	items: T[],
 	concurrency: number,
@@ -724,6 +916,15 @@ async function runWithConcurrency<T>(
 	await Promise.all(workers);
 }
 
+/**
+ * Orchestrates fast and API benchmark runs for all matchups and writes a consolidated benchmark summary to disk.
+ *
+ * Runs optional fast (mock) and API (LLM-driven) lanes according to CLI flags, aggregates per-matchup artifacts
+ * and telemetry, computes behavior and gate metrics, updates API graduation history when applicable, and emits
+ * a JSON summary file under the simulation results directory.
+ *
+ * @throws If `--withApi` is provided but neither `LLM_API_KEY` nor `OPENROUTER_API_KEY` is present in the environment.
+ */
 async function main() {
 	const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 	const simDir = path.join(repoRoot, "apps", "sim");
