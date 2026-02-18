@@ -19,6 +19,7 @@ export type UnitTokenProps = {
 	animState: UnitAnimState;
 	stackCount?: number;
 	lungeTarget?: { x: number; y: number };
+	activePlayer?: "A" | "B";
 };
 
 export const UnitToken = memo(function UnitToken({
@@ -29,6 +30,7 @@ export const UnitToken = memo(function UnitToken({
 	animState,
 	stackCount,
 	lungeTarget,
+	activePlayer,
 }: UnitTokenProps) {
 	const color = PLAYER_COLORS[unit.owner as PlayerSide] ?? PLAYER_COLORS.A;
 	const lines = UNIT_ASCII[unit.type as UnitType] ?? UNIT_ASCII.infantry;
@@ -81,6 +83,7 @@ export const UnitToken = memo(function UnitToken({
 	}, [animState, lines, radius]);
 
 	const isDying = animState === "dying";
+	const isIdleActive = animState === "idle" && unit.owner === activePlayer;
 
 	return (
 		<motion.g
@@ -92,7 +95,12 @@ export const UnitToken = memo(function UnitToken({
 			animate={
 				animState === "attacking" && lungeTarget
 					? { x: lungeX, y: lungeY, scale: 1, opacity: 1 }
-					: { x, y, scale: 1, opacity: 1 }
+					: {
+							x,
+							y,
+							scale: 1,
+							opacity: isIdleActive ? [0.85, 1, 0.85] : 1,
+						}
 			}
 			exit={
 				isDying
@@ -111,7 +119,13 @@ export const UnitToken = memo(function UnitToken({
 							x: { type: "spring", stiffness: 200, damping: 20 },
 							y: { type: "spring", stiffness: 200, damping: 20 },
 							scale: { type: "tween", duration: 0.3, ease: "easeInOut" },
-							opacity: { type: "tween", duration: 0.3, ease: "easeInOut" },
+							opacity: isIdleActive
+								? {
+										duration: 3.5,
+										repeat: Number.POSITIVE_INFINITY,
+										ease: "easeInOut",
+									}
+								: { type: "tween", duration: 0.3, ease: "easeInOut" },
 						}
 			}
 		>
@@ -178,7 +192,7 @@ export const UnitToken = memo(function UnitToken({
 						fill="rgba(255,255,255,0.15)"
 						rx={hpBarHeight / 2}
 					/>
-					<rect
+					<motion.rect
 						x={-hpBarWidth / 2}
 						y={hpBarY}
 						width={hpBarWidth * hpFraction}
@@ -191,6 +205,8 @@ export const UnitToken = memo(function UnitToken({
 									: "#ef4444"
 						}
 						rx={hpBarHeight / 2}
+						animate={{ width: hpBarWidth * hpFraction }}
+						transition={{ type: "tween", duration: 0.4, ease: "easeOut" }}
 					/>
 				</g>
 			) : null}
@@ -223,13 +239,18 @@ export const UnitToken = memo(function UnitToken({
 
 			{/* Fortify indicator */}
 			{unit.isFortified ? (
-				<circle
+				<motion.circle
 					r={radius * 0.5}
 					fill="none"
 					stroke={color.stroke}
 					strokeWidth={1.2}
-					strokeOpacity={0.95}
 					strokeDasharray="3 2"
+					animate={{ strokeOpacity: [0.6, 1, 0.6] }}
+					transition={{
+						duration: 2,
+						repeat: Number.POSITIVE_INFINITY,
+						ease: "easeInOut",
+					}}
 				/>
 			) : null}
 		</motion.g>

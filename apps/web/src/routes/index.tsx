@@ -441,6 +441,7 @@ function SpectatorLanding() {
 							dyingUnitIds={dyingUnitIds}
 							damageNumbers={damageNumbers}
 							lungeTargets={lungeTargets}
+							activePlayer={latestState?.activePlayer}
 						/>
 					) : (
 						<div className="muted">Awaiting state stream...</div>

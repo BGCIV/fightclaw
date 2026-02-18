@@ -219,6 +219,7 @@ function BoardPreview() {
 						dyingUnitIds={dyingUnitIds}
 						damageNumbers={damageNumbers}
 						lungeTargets={lungeTargets}
+						activePlayer={boardState.activePlayer}
 					/>
 				</div>
 			</div>

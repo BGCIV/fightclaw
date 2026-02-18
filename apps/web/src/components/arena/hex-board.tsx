@@ -16,6 +16,7 @@ export type HexBoardProps = {
 	dyingUnitIds: Set<string>;
 	damageNumbers: DamageNumberEntry[];
 	lungeTargets: Map<string, { x: number; y: number }>;
+	activePlayer?: "A" | "B";
 };
 
 export const HexBoard = memo(function HexBoard({
@@ -25,6 +26,7 @@ export const HexBoard = memo(function HexBoard({
 	dyingUnitIds,
 	damageNumbers,
 	lungeTargets,
+	activePlayer,
 }: HexBoardProps) {
 	const R = HEX_RADIUS;
 	const viewBox = boardViewBox(R);
@@ -129,6 +131,7 @@ export const HexBoard = memo(function HexBoard({
 								animState={animState}
 								stackCount={units.length}
 								lungeTarget={lungeTargets.get(lead.id)}
+								activePlayer={activePlayer}
 							/>
 						);
 					})}
