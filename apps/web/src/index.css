@@ -411,16 +411,33 @@
 
 /* ── Dev controls panel ──────────────────────────────── */
 
+/* Dev page uses spectator-main for 3-col (A | board | B), plus a bottom bar */
+
+.dev-main {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: calc(100% - 36px);
+  overflow: hidden;
+}
+
 .dev-panel {
-  background: rgba(5, 11, 16, 0.85);
-  border-left: 1px dashed var(--spectator-border);
-  padding: 12px;
+  position: relative;
+  z-index: 99999;
+  background: rgba(5, 11, 16, 0.95);
+  border-top: 1px dashed var(--spectator-border);
+  padding: 8px 16px;
   font-family: var(--mono);
   font-size: 0.7rem;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: 40vh;
 }
 
 .dev-panel-label {
@@ -434,7 +451,25 @@
 .dev-panel-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dev-panel-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--spectator-border);
+}
+
+.dev-panel-log {
+  flex: 1;
+  min-width: 180px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--spectator-muted);
+  scrollbar-width: none;
 }
 
 .dev-panel-row {

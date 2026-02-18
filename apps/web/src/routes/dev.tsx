@@ -354,39 +354,50 @@ function DevLayout() {
 				{topBarRight}
 			</div>
 
-			<div className="spectator-main">
-				<ThoughtPanel player="A" thoughts={[]} isThinking={false} />
+			<div className="dev-main">
+				{/* Three-column spectator grid with BOTH thought panels */}
+				<div className="spectator-main" style={{ height: "100%" }}>
+					<ThoughtPanel player="A" thoughts={[]} isThinking={false} />
 
-				<div className="hex-board-container">
-					<HexBoard
-						state={boardState}
-						effects={effects}
-						unitAnimStates={unitAnimStates}
-						dyingUnitIds={dyingUnitIds}
-						damageNumbers={damageNumbers}
-						lungeTargets={lungeTargets}
-						activePlayer={boardState.activePlayer}
-					/>
+					<div className="hex-board-container">
+						<HexBoard
+							state={boardState}
+							effects={effects}
+							unitAnimStates={unitAnimStates}
+							dyingUnitIds={dyingUnitIds}
+							damageNumbers={damageNumbers}
+							lungeTargets={lungeTargets}
+							activePlayer={boardState.activePlayer}
+						/>
+					</div>
+
+					<ThoughtPanel player="B" thoughts={[]} isThinking={false} />
 				</div>
 
+				{/* Horizontal dev controls bar */}
 				<div className="dev-panel">
 					{/* Mode toggle */}
-					<div className="dev-panel-row">
-						<button
-							type="button"
-							className={`dev-panel-btn ${mode === "sandbox" ? "dev-panel-btn-primary" : ""}`}
-							onClick={() => switchMode("sandbox")}
-						>
-							Sandbox
-						</button>
-						<button
-							type="button"
-							className={`dev-panel-btn ${mode === "replay" ? "dev-panel-btn-primary" : ""}`}
-							onClick={() => switchMode("replay")}
-						>
-							API Replay
-						</button>
+					<div className="dev-panel-section">
+						<div className="dev-panel-label">Mode</div>
+						<div className="dev-panel-row">
+							<button
+								type="button"
+								className={`dev-panel-btn ${mode === "sandbox" ? "dev-panel-btn-primary" : ""}`}
+								onClick={() => switchMode("sandbox")}
+							>
+								Sandbox
+							</button>
+							<button
+								type="button"
+								className={`dev-panel-btn ${mode === "replay" ? "dev-panel-btn-primary" : ""}`}
+								onClick={() => switchMode("replay")}
+							>
+								Replay
+							</button>
+						</div>
 					</div>
+
+					<div className="dev-panel-divider" />
 
 					{mode === "sandbox" ? (
 						<>
@@ -396,30 +407,33 @@ function DevLayout() {
 									<input
 										type="number"
 										className="dev-panel-input"
+										style={{ width: 72 }}
 										value={seed}
 										onChange={(e) => setSeed(Number(e.target.value) || 0)}
 									/>
+									<button
+										type="button"
+										className="dev-panel-btn"
+										onClick={() => resetSandbox(seed)}
+									>
+										Reset
+									</button>
 								</div>
-								<button
-									type="button"
-									className="dev-panel-btn"
-									onClick={() => resetSandbox(seed)}
-								>
-									Reset
-								</button>
 							</div>
+
+							<div className="dev-panel-divider" />
 
 							<div className="dev-panel-section">
 								<div className="dev-panel-stat-label">Actions</div>
-								<button
-									type="button"
-									className="dev-panel-btn dev-panel-btn-primary"
-									onClick={playRandomMove}
-									disabled={boardState.status !== "active"}
-								>
-									Random Move
-								</button>
 								<div className="dev-panel-row">
+									<button
+										type="button"
+										className="dev-panel-btn dev-panel-btn-primary"
+										onClick={playRandomMove}
+										disabled={boardState.status !== "active"}
+									>
+										Random
+									</button>
 									<button
 										type="button"
 										className="dev-panel-btn"
@@ -442,31 +456,32 @@ function DevLayout() {
 					) : (
 						<>
 							<div className="dev-panel-section">
-								<div className="dev-panel-stat-label">Replay URL</div>
-								<input
-									type="text"
-									className="dev-panel-input"
-									value={replayUrl}
-									onChange={(e) => setReplayUrl(e.target.value)}
-								/>
+								<div className="dev-panel-stat-label">Source</div>
 								<div className="dev-panel-row">
+									<input
+										type="text"
+										className="dev-panel-input"
+										style={{ width: 180 }}
+										value={replayUrl}
+										onChange={(e) => setReplayUrl(e.target.value)}
+									/>
 									<button
 										type="button"
 										className="dev-panel-btn dev-panel-btn-primary"
 										onClick={() => void loadBundle(replayUrl)}
 									>
-										Load Replay
+										Load
 									</button>
 									<button
 										type="button"
 										className="dev-panel-btn"
 										onClick={() => void loadBundle("/dev-replay/latest.json")}
 									>
-										Load Latest
+										Latest
 									</button>
 								</div>
 								{replayError ? (
-									<div style={{ color: "#ff6b6b", fontSize: "0.65rem" }}>
+									<div style={{ color: "#ff6b6b", fontSize: "0.6rem" }}>
 										{replayError}
 									</div>
 								) : null}
@@ -474,6 +489,8 @@ function DevLayout() {
 
 							{bundle ? (
 								<>
+									<div className="dev-panel-divider" />
+
 									<div className="dev-panel-section">
 										<div className="dev-panel-stat-label">
 											Match ({bundle.matchCount})
@@ -493,6 +510,8 @@ function DevLayout() {
 
 									{selectedMatch ? (
 										<>
+											<div className="dev-panel-divider" />
+
 											<div className="dev-panel-section">
 												<div className="dev-panel-stat-label">Playback</div>
 												<div className="dev-panel-row">
@@ -501,7 +520,7 @@ function DevLayout() {
 														className="dev-panel-btn"
 														onClick={resetMatch}
 													>
-														Reset Match
+														Reset
 													</button>
 													<button
 														type="button"
@@ -511,8 +530,6 @@ function DevLayout() {
 													>
 														Step
 													</button>
-												</div>
-												<div className="dev-panel-row">
 													<button
 														type="button"
 														className={`dev-panel-btn ${replayPlaying ? "dev-panel-btn-primary" : ""}`}
@@ -521,13 +538,11 @@ function DevLayout() {
 													>
 														{replayPlaying ? "Pause" : "Play"}
 													</button>
-												</div>
-												<div className="dev-panel-row">
-													<span className="dev-panel-stat-label">Step ms</span>
+													<span className="dev-panel-stat-label">ms</span>
 													<input
 														type="number"
 														className="dev-panel-input"
-														style={{ width: 64 }}
+														style={{ width: 56 }}
 														value={stepMs}
 														onChange={(e) =>
 															setStepMs(
@@ -539,29 +554,20 @@ function DevLayout() {
 												<div className="dev-panel-stat">
 													<span className="dev-panel-stat-label">Result</span>
 													<span className="dev-panel-stat-accent">
+														{" "}
 														{selectedMatch.result.winner ?? "draw"} (
 														{selectedMatch.result.reason})
 													</span>
 												</div>
 											</div>
 
-											<div
-												className="dev-panel-section"
-												style={{ flex: 1, minHeight: 0 }}
-											>
+											<div className="dev-panel-divider" />
+
+											<div className="dev-panel-section">
 												<div className="dev-panel-stat-label">
-													Action Log ({actionLog.length})
+													Log ({actionLog.length})
 												</div>
-												<div
-													style={{
-														flex: 1,
-														overflowY: "auto",
-														fontSize: "0.6rem",
-														lineHeight: 1.4,
-														color: "var(--spectator-muted)",
-														maxHeight: 200,
-													}}
-												>
+												<div className="dev-panel-log">
 													{actionLog.map((line, i) => (
 														<div key={`log-${actionLog.length - i}`}>
 															{line}
@@ -576,36 +582,36 @@ function DevLayout() {
 						</>
 					)}
 
-					{/* State readout (always visible) */}
+					<div className="dev-panel-divider" />
+
+					{/* State readout */}
 					<div className="dev-panel-section">
 						<div className="dev-panel-label">State</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Status</span>
-							<span className="dev-panel-stat-accent">{boardState.status}</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Turn</span>
-							<span className="dev-panel-stat-value">{boardState.turn}</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Active</span>
-							<span className="dev-panel-stat-value">
-								{boardState.activePlayer}
+						<div className="dev-panel-row">
+							<span className="dev-panel-stat-label">
+								{boardState.status === "active" ? (
+									<span className="dev-panel-stat-accent">active</span>
+								) : (
+									boardState.status
+								)}
 							</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">AP</span>
-							<span className="dev-panel-stat-value">
-								{boardState.actionsRemaining}
+							<span className="dev-panel-stat-label">T{boardState.turn}</span>
+							<span className="dev-panel-stat-label">
+								<span
+									className={
+										boardState.activePlayer === "A"
+											? "player-a-color"
+											: "player-b-color"
+									}
+								>
+									{boardState.activePlayer}
+								</span>
 							</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Units A</span>
-							<span className="player-a-color">{unitCountA}</span>
-						</div>
-						<div className="dev-panel-stat">
-							<span className="dev-panel-stat-label">Units B</span>
-							<span className="player-b-color">{unitCountB}</span>
+							<span className="dev-panel-stat-label">
+								AP {boardState.actionsRemaining}
+							</span>
+							<span className="player-a-color">{unitCountA}u</span>
+							<span className="player-b-color">{unitCountB}u</span>
 						</div>
 					</div>
 				</div>
