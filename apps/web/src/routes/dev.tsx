@@ -180,6 +180,7 @@ function DevLayout() {
 	const [replayPlaying, setReplayPlaying] = useState(false);
 	const [stepMs, setStepMs] = useState(400);
 	const [actionLog, setActionLog] = useState<string[]>([]);
+	const [logExpanded, setLogExpanded] = useState(false);
 	const [replayError, setReplayError] = useState<string | null>(null);
 	const playIntervalRef = useRef<number | null>(null);
 
@@ -565,16 +566,46 @@ function DevLayout() {
 
 											<div className="dev-panel-divider" />
 
-											<div className="dev-panel-section">
-												<div className="dev-panel-stat-label">
-													Log ({actionLog.length})
+											<div
+												className="dev-panel-section"
+												style={{ minWidth: 200 }}
+											>
+												<div
+													className="dev-panel-stat-label"
+													style={{
+														display: "flex",
+														justifyContent: "space-between",
+														alignItems: "center",
+													}}
+												>
+													<span>Log ({actionLog.length})</span>
+													<button
+														type="button"
+														className="dev-panel-btn"
+														style={{
+															padding: "2px 6px",
+															fontSize: "0.5rem",
+															height: "auto",
+														}}
+														onClick={() => setLogExpanded((v) => !v)}
+													>
+														{logExpanded ? "▼" : "▶"}
+													</button>
 												</div>
-												<div className="dev-panel-log">
-													{actionLog.map((line, i) => (
-														<div key={`log-${actionLog.length - i}`}>
-															{line}
+												<div
+													className={`dev-panel-log ${logExpanded ? "" : "dev-panel-log-collapsed"}`}
+												>
+													{logExpanded ? (
+														actionLog.map((line, i) => (
+															<div key={`log-${actionLog.length - i}`}>
+																{line}
+															</div>
+														))
+													) : actionLog.length > 0 ? (
+														<div style={{ opacity: 0.6 }}>
+															Last: {actionLog[0]}
 														</div>
-													))}
+													) : null}
 												</div>
 											</div>
 										</>
