@@ -831,3 +831,56 @@ Ensure no new lint errors in modified files.
 git add apps/web/src/routes/dev.tsx apps/web/src/index.css
 git commit -m "feat(web): rework dev page to mirror spectator layout with dev controls panel"
 ```
+
+---
+
+## Post-Plan Addendum (2026-02-18): Implemented Dev Replay Workflow
+
+This addendum documents concrete `/dev` changes that were implemented after this plan was authored.
+Do not remove these behaviors when executing or extending the plan.
+
+### Scope of the addendum
+
+- Keeps all original tasks intact.
+- Adds the new API replay toolchain and dev-tab controls introduced later.
+
+### Implemented changes
+
+1. `/dev` now has mode switching:
+- `Sandbox` mode (random/burst local preview).
+- `API Replay` mode (replay real API lane games).
+
+2. `/dev` replay tools now include:
+- Replay URL input (`/dev-replay/latest.json` default).
+- `Load Replay` and `Load Latest`.
+- Match selector for replay bundle entries.
+- Playback controls: `Reset Match`, `Step`, `Play/Pause`, `Step ms`.
+- Action log (latest 200 replayed actions).
+
+3. Sim exporter added for web replay data:
+- New file: `apps/sim/scripts/export-web-replay.ts`
+- Writes: `apps/web/public/dev-replay/latest.json`
+- Reads from benchmark API artifact directories under `apps/sim/results`.
+
+4. Sim scripts added:
+- `export:web-replay`
+- `benchmark:v2:api_full:viz`
+- `benchmark:v2:api_smoke:viz`
+
+### Standard local workflow (now expected)
+
+1. Start web UI:
+- `pnpm run dev:web`
+- Open `http://localhost:3001/dev`
+
+2. Publish latest replay data:
+- `pnpm -C apps/sim run export:web-replay`
+
+3. Run API lane + auto-publish replay:
+- `pnpm -C apps/sim run benchmark:v2:api_full:viz`
+
+### Guardrails for future agents
+
+- Preserve the replay-mode controls in `apps/web/src/routes/dev.tsx`.
+- Preserve exporter + script contract in `apps/sim/scripts/export-web-replay.ts` and `apps/sim/package.json`.
+- Keep this file-based bridge as the default local-dev visualization path unless explicitly superseded.

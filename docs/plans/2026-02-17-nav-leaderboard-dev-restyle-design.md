@@ -54,3 +54,49 @@ The board rendering is identical to the spectator page — same component, same 
 - `apps/web/src/routes/leaderboard.tsx` — full restyle
 - `apps/web/src/routes/dev.tsx` — rewrite to mirror spectator layout
 - `apps/web/src/index.css` — add leaderboard styles, dev panel styles, shared nav styles
+
+---
+
+## Addendum (2026-02-18): Dev Tab API Replay Tools
+
+This section captures **implemented changes after this design was written** so downstream agents do not regress the new `/dev` workflow.
+
+### What changed on `/dev`
+
+The dev page now supports two modes:
+
+- `Sandbox` (existing behavior): local random/burst simulation.
+- `API Replay` (new): load and replay real API-lane artifacts exported to a web JSON bundle.
+
+### New `/dev` capabilities
+
+- Replay source URL input (default: `/dev-replay/latest.json`).
+- `Load Replay` and `Load Latest` actions.
+- Match selector (choose a specific API match from the bundle).
+- Replay controls: `Reset Match`, `Step`, `Play/Pause`, configurable step interval (`Step ms`).
+- Action log panel (latest 200 actions) with concrete move text.
+- Board animation path remains the same (`useArenaAnimator` + `HexBoard`) so visuals match spectator behavior.
+
+### New data bridge from sim -> web
+
+A new exporter script converts API benchmark artifacts into replay JSON for the web dev page:
+
+- Script: `apps/sim/scripts/export-web-replay.ts`
+- Output: `apps/web/public/dev-replay/latest.json`
+- Source: latest (or specified) `apps/sim/results/benchmark_v2_*/api_lane/**/artifacts/*.json`
+
+### New commands
+
+In `apps/sim/package.json`:
+
+- `pnpm -C apps/sim run export:web-replay`
+- `pnpm -C apps/sim run benchmark:v2:api_full:viz`
+- `pnpm -C apps/sim run benchmark:v2:api_smoke:viz`
+
+`*:viz` commands run the lane and then publish replay JSON for `/dev`.
+
+### Notes for future implementers
+
+- This addendum does **not** replace the core visual restyle goals in this document.
+- The replay workflow is intentionally file-based for simplicity and reliability in local dev.
+- Live `agent_thought` streaming is still a separate server-side concern and not part of this replay bridge.
