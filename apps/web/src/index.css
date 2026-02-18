@@ -214,22 +214,75 @@
 	overflow: hidden;
 }
 
-/* ── Thought panel placeholders ──────────────────────── */
+/* ── Thought panels ──────────────────────────────────── */
 
-.thought-panel-placeholder {
+.thought-panel {
 	background: rgba(5, 11, 16, 0.85);
-	padding: 12px;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 	font-family: var(--mono);
 	font-size: 0.7rem;
-	overflow: hidden;
 }
 
 .thought-panel-left {
 	border-right: 1px dashed var(--spectator-border);
+	padding: 12px 10px 12px 12px;
 }
 
 .thought-panel-right {
 	border-left: 1px dashed var(--spectator-border);
+	padding: 12px 12px 12px 10px;
+}
+
+.thought-panel-label {
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	margin-bottom: 8px;
+	flex-shrink: 0;
+}
+
+.thought-panel-content {
+	flex: 1;
+	overflow-y: auto;
+	scrollbar-width: none;
+	mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 100%);
+	-webkit-mask-image: linear-gradient(
+		to bottom,
+		transparent 0%,
+		black 15%,
+		black 100%
+	);
+}
+
+.thought-panel-content::-webkit-scrollbar {
+	display: none;
+}
+
+.thought-line {
+	line-height: 1.5;
+	margin-bottom: 4px;
+}
+
+.thought-placeholder {
+	color: var(--spectator-muted);
+	font-style: italic;
+}
+
+.thought-cursor {
+	color: var(--spectator-accent);
+	animation: blink 800ms step-end infinite;
+}
+
+@keyframes blink {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0;
+	}
 }
 
 /* ── Player colors ───────────────────────────────────── */

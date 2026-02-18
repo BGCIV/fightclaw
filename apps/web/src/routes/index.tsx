@@ -10,6 +10,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { HexBoard } from "@/components/arena/hex-board";
+import { ThoughtPanel } from "@/components/arena/thought-panel";
 import {
 	type EngineEventsEnvelopeV1,
 	useArenaAnimator,
@@ -54,6 +55,10 @@ function SpectatorLanding() {
 	>("idle");
 	const replayFollowStarted = useRef(false);
 	const [replayShouldFollowLive, setReplayShouldFollowLive] = useState(false);
+	const [thoughtsA, setThoughtsA] = useState<string[]>([]);
+	const [thoughtsB, setThoughtsB] = useState<string[]>([]);
+	const [isThinkingA, setIsThinkingA] = useState(false);
+	const [isThinkingB, setIsThinkingB] = useState(false);
 
 	const matchId = replayMatchId ?? featured?.matchId ?? null;
 
@@ -106,6 +111,10 @@ function SpectatorLanding() {
 			resetAnimator();
 			setLatestState(null);
 			setConnectionStatus("idle");
+			setThoughtsA([]);
+			setThoughtsB([]);
+			setIsThinkingA(false);
+			setIsThinkingB(false);
 			return;
 		}
 
@@ -113,6 +122,10 @@ function SpectatorLanding() {
 		resetAnimator();
 		setLatestState(null);
 		setConnectionStatus("connecting");
+		setThoughtsA([]);
+		setThoughtsB([]);
+		setIsThinkingA(false);
+		setIsThinkingB(false);
 
 		const fetchState = async () => {
 			try {
@@ -174,10 +187,29 @@ function SpectatorLanding() {
 			enqueueEngineEvents(payload);
 		};
 
+		const handleAgentThought = (event: MessageEvent<string>) => {
+			let payload: { player: "A" | "B"; text: string } | null = null;
+			try {
+				payload = JSON.parse(event.data) as { player: "A" | "B"; text: string };
+			} catch {
+				return;
+			}
+			if (!payload) return;
+			if (!active) return;
+
+			const { player: p, text } = payload;
+			const setter = p === "A" ? setThoughtsA : setThoughtsB;
+			setter((prev) => [...prev, text]);
+		};
+
 		eventSource.addEventListener("state", handleStateEvent as EventListener);
 		eventSource.addEventListener(
 			"engine_events",
 			handleEngineEvents as EventListener,
+		);
+		eventSource.addEventListener(
+			"agent_thought",
+			handleAgentThought as EventListener,
 		);
 		eventSource.addEventListener("error", () => {
 			if (!active) return;
@@ -204,6 +236,10 @@ function SpectatorLanding() {
 		setFeatured({ matchId: replayMatchId, status: "replay", players: null });
 		setLatestState(null);
 		setConnectionStatus("connecting");
+		setThoughtsA([]);
+		setThoughtsB([]);
+		setIsThinkingA(false);
+		setIsThinkingB(false);
 
 		const runReplay = async () => {
 			try {
@@ -428,9 +464,11 @@ function SpectatorLanding() {
 
 			{/* Three-column layout: thought panel | board | thought panel */}
 			<div className="spectator-main">
-				<div className="thought-panel-placeholder thought-panel-left">
-					<span className="player-a-color">PLAYER A</span>
-				</div>
+				<ThoughtPanel
+					player="A"
+					thoughts={thoughtsA}
+					isThinking={isThinkingA}
+				/>
 
 				<div className="hex-board-container">
 					{latestState ? (
@@ -448,9 +486,11 @@ function SpectatorLanding() {
 					)}
 				</div>
 
-				<div className="thought-panel-placeholder thought-panel-right">
-					<span className="player-b-color">PLAYER B</span>
-				</div>
+				<ThoughtPanel
+					player="B"
+					thoughts={thoughtsB}
+					isThinking={isThinkingB}
+				/>
 			</div>
 		</div>
 	);
