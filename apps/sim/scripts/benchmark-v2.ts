@@ -390,12 +390,32 @@ function aggregateSummaries(
 function parseResultsJsonl(filePath: string): ApiGameResult[] {
 	try {
 		const content = readFileSync(filePath, "utf-8");
-		return content
-			.split("\n")
-			.map((line) => line.trim())
-			.filter((line) => line.length > 0)
-			.map((line) => JSON.parse(line) as ApiGameResult);
-	} catch {
+		const results: ApiGameResult[] = [];
+		let malformedLines = 0;
+		for (const [index, rawLine] of content.split("\n").entries()) {
+			const line = rawLine.trim();
+			if (line.length === 0) continue;
+			try {
+				results.push(JSON.parse(line) as ApiGameResult);
+			} catch (error) {
+				malformedLines += 1;
+				const message = error instanceof Error ? error.message : String(error);
+				console.warn(
+					`Skipping malformed API results JSONL line ${index + 1} in ${filePath}: ${message}`,
+				);
+			}
+		}
+		if (malformedLines > 0) {
+			console.warn(
+				`Skipped ${malformedLines} malformed JSONL line(s) in ${filePath}`,
+			);
+		}
+		return results;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.warn(
+			`Failed to read API results JSONL file ${filePath}: ${message}`,
+		);
 		return [];
 	}
 }

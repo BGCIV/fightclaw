@@ -59,7 +59,7 @@ describe("llmBot", () => {
 				loopState: {
 					noAttackStreak: 3,
 					noProgressStreak: 3,
-					noRecruitStreak: 2,
+					recruitStreak: 2,
 				},
 			},
 		);
@@ -109,7 +109,7 @@ describe("llmBot", () => {
 				loopState: {
 					noAttackStreak: 2,
 					noProgressStreak: 3,
-					noRecruitStreak: 2,
+					recruitStreak: 2,
 				},
 			},
 		);
@@ -139,7 +139,7 @@ describe("llmBot", () => {
 				loopState: {
 					noAttackStreak: 1,
 					noProgressStreak: 0,
-					noRecruitStreak: 1,
+					recruitStreak: 1,
 				},
 			},
 		);
@@ -166,7 +166,7 @@ describe("llmBot", () => {
 			loopState: {
 				noAttackStreak: 4,
 				noProgressStreak: 4,
-				noRecruitStreak: 2,
+				recruitStreak: 2,
 			},
 		});
 
