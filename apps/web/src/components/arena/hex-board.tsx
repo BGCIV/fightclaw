@@ -2,7 +2,12 @@ import type { MatchState, Unit } from "@fightclaw/engine";
 import { AnimatePresence } from "framer-motion";
 import { memo, useMemo, useRef } from "react";
 import type { ArenaEffect, DamageNumberEntry } from "@/lib/arena-animator";
-import { boardViewBox, HEX_RADIUS, hexIdToPixel } from "@/lib/hex-geo";
+import {
+	boardViewBox,
+	HEX_RADIUS,
+	hexIdToPixel,
+	parseHexId,
+} from "@/lib/hex-geo";
 import { ArenaEffects } from "./arena-effects";
 import { DamageNumber } from "./damage-number";
 import { HexCell } from "./hex-cell";
@@ -29,7 +34,24 @@ export const HexBoard = memo(function HexBoard({
 	activePlayer,
 }: HexBoardProps) {
 	const R = HEX_RADIUS;
-	const viewBox = boardViewBox(R);
+	// Derive actual board dimensions from state to centre the viewBox correctly
+	const boardCols = useMemo(() => {
+		let maxCol = 0;
+		for (const hex of state.board) {
+			const { col } = parseHexId(hex.id);
+			if (col > maxCol) maxCol = col;
+		}
+		return maxCol + 1;
+	}, [state.board]);
+	const boardRows = useMemo(() => {
+		let maxRow = 0;
+		for (const hex of state.board) {
+			const { row } = parseHexId(hex.id);
+			if (row > maxRow) maxRow = row;
+		}
+		return maxRow + 1;
+	}, [state.board]);
+	const viewBox = boardViewBox(R, 4, boardCols, boardRows);
 
 	// Keep a ref to the previous state's units so dying units remain visible
 	const prevUnitsRef = useRef<Map<string, Unit>>(new Map());
