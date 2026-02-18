@@ -66,6 +66,8 @@ function BoardPreview() {
 		unitAnimStates,
 		dyingUnitIds,
 		hudFx,
+		damageNumbers,
+		lungeTargets,
 		enqueue,
 		reset: resetAnimator,
 	} = useArenaAnimator({
@@ -215,6 +217,8 @@ function BoardPreview() {
 						effects={effects}
 						unitAnimStates={unitAnimStates}
 						dyingUnitIds={dyingUnitIds}
+						damageNumbers={damageNumbers}
+						lungeTargets={lungeTargets}
 					/>
 				</div>
 			</div>

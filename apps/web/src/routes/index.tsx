@@ -62,6 +62,8 @@ function SpectatorLanding() {
 		unitAnimStates,
 		dyingUnitIds,
 		hudFx,
+		damageNumbers,
+		lungeTargets,
 		isAnimating,
 		enqueue: enqueueEngineEvents,
 		reset: resetAnimator,
@@ -437,6 +439,8 @@ function SpectatorLanding() {
 							effects={effects}
 							unitAnimStates={unitAnimStates}
 							dyingUnitIds={dyingUnitIds}
+							damageNumbers={damageNumbers}
+							lungeTargets={lungeTargets}
 						/>
 					) : (
 						<div className="muted">Awaiting state stream...</div>

@@ -1,6 +1,6 @@
 import type { PlayerSide, Unit, UnitType } from "@fightclaw/engine";
 import { motion } from "framer-motion";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import { PLAYER_COLORS, UNIT_ASCII } from "@/lib/arena-theme";
 
 export type UnitAnimState =
@@ -18,9 +18,8 @@ export type UnitTokenProps = {
 	radius: number;
 	animState: UnitAnimState;
 	stackCount?: number;
+	lungeTarget?: { x: number; y: number };
 };
-
-const attackKeyframes = [1, 1.3, 1];
 
 export const UnitToken = memo(function UnitToken({
 	unit,
@@ -29,6 +28,7 @@ export const UnitToken = memo(function UnitToken({
 	radius,
 	animState,
 	stackCount,
+	lungeTarget,
 }: UnitTokenProps) {
 	const color = PLAYER_COLORS[unit.owner as PlayerSide] ?? PLAYER_COLORS.A;
 	const lines = UNIT_ASCII[unit.type as UnitType] ?? UNIT_ASCII.infantry;
@@ -43,6 +43,45 @@ export const UnitToken = memo(function UnitToken({
 	const hpBarHeight = radius * 0.08;
 	const hpBarY = radius * 0.42;
 
+	// Lunge animation: compute offset toward target
+	const lungeX =
+		animState === "attacking" && lungeTarget
+			? (() => {
+					const dx = lungeTarget.x - x;
+					const dy = lungeTarget.y - y;
+					const dist = Math.sqrt(dx * dx + dy * dy);
+					const scale = Math.min(8, dist * 0.3) / (dist || 1);
+					return [x, x + dx * scale, x];
+				})()
+			: x;
+	const lungeY =
+		animState === "attacking" && lungeTarget
+			? (() => {
+					const dx = lungeTarget.x - x;
+					const dy = lungeTarget.y - y;
+					const dist = Math.sqrt(dx * dx + dy * dy);
+					const scale = Math.min(8, dist * 0.3) / (dist || 1);
+					return [y, y + dy * scale, y];
+				})()
+			: y;
+
+	// Stable random offsets for death dissolve effect
+	const dissolveOffsets = useMemo(() => {
+		if (animState !== "dying") return null;
+		const offsets: { randX: number; randY: number }[] = [];
+		for (const line of lines) {
+			for (const _char of line) {
+				offsets.push({
+					randX: (Math.random() - 0.5) * radius * 1.5,
+					randY: (Math.random() - 0.5) * radius * 1.5,
+				});
+			}
+		}
+		return offsets;
+	}, [animState, lines, radius]);
+
+	const isDying = animState === "dying";
+
 	return (
 		<motion.g
 			initial={
@@ -51,34 +90,82 @@ export const UnitToken = memo(function UnitToken({
 					: { x, y, scale: 1, opacity: 1 }
 			}
 			animate={
-				animState === "attacking"
-					? { x, y, scale: attackKeyframes, opacity: 1 }
+				animState === "attacking" && lungeTarget
+					? { x: lungeX, y: lungeY, scale: 1, opacity: 1 }
 					: { x, y, scale: 1, opacity: 1 }
 			}
-			exit={{ scale: 0, opacity: 0, transition: { duration: 0.25 } }}
-			transition={{
-				x: { type: "spring", stiffness: 200, damping: 20 },
-				y: { type: "spring", stiffness: 200, damping: 20 },
-				scale: { type: "tween", duration: 0.3, ease: "easeInOut" },
-				opacity: { type: "tween", duration: 0.3, ease: "easeInOut" },
-			}}
+			exit={
+				isDying
+					? { opacity: 0, transition: { duration: 0.5 } }
+					: { scale: 0, opacity: 0, transition: { duration: 0.25 } }
+			}
+			transition={
+				animState === "attacking" && lungeTarget
+					? {
+							x: { type: "tween", duration: 0.25, ease: "easeInOut" },
+							y: { type: "tween", duration: 0.25, ease: "easeInOut" },
+							scale: { type: "tween", duration: 0.25, ease: "easeInOut" },
+							opacity: { type: "tween", duration: 0.25, ease: "easeInOut" },
+						}
+					: {
+							x: { type: "spring", stiffness: 200, damping: 20 },
+							y: { type: "spring", stiffness: 200, damping: 20 },
+							scale: { type: "tween", duration: 0.3, ease: "easeInOut" },
+							opacity: { type: "tween", duration: 0.3, ease: "easeInOut" },
+						}
+			}
 		>
-			{/* ASCII art unit */}
-			{lines.map((line, i) => (
-				<text
-					key={line}
-					x={0}
-					y={startY + i * lineHeight}
-					textAnchor="middle"
-					dominantBaseline="central"
-					fontFamily="monospace"
-					fontSize={fontSize}
-					fill={color.fill}
-					style={{ pointerEvents: "none" }}
-				>
-					{line}
-				</text>
-			))}
+			{/* ASCII art unit — dissolve individual chars when dying */}
+			{isDying && dissolveOffsets
+				? lines.flatMap((line, lineIdx) =>
+						line.split("").map((char, charIdx) => {
+							if (char === " ") return null;
+							const globalIdx = lineIdx * line.length + charIdx;
+							const charX = (charIdx - line.length / 2) * (fontSize * 0.6);
+							const charY = startY + lineIdx * lineHeight;
+							const offsets = dissolveOffsets[globalIdx];
+							if (!offsets) return null;
+							return (
+								<motion.text
+									key={`d-${unit.id}-${lineIdx}-${globalIdx}`}
+									initial={{ x: charX, y: charY, opacity: 1 }}
+									animate={{
+										x: charX + offsets.randX,
+										y: charY + offsets.randY,
+										opacity: 0,
+									}}
+									transition={{
+										duration: 0.4,
+										delay: globalIdx * 0.03,
+										ease: "easeOut",
+									}}
+									textAnchor="middle"
+									dominantBaseline="central"
+									fontFamily="monospace"
+									fontSize={fontSize}
+									fill={color.fill}
+									style={{ pointerEvents: "none" }}
+								>
+									{char}
+								</motion.text>
+							);
+						}),
+					)
+				: lines.map((line, i) => (
+						<text
+							key={line}
+							x={0}
+							y={startY + i * lineHeight}
+							textAnchor="middle"
+							dominantBaseline="central"
+							fontFamily="monospace"
+							fontSize={fontSize}
+							fill={color.fill}
+							style={{ pointerEvents: "none" }}
+						>
+							{line}
+						</text>
+					))}
 
 			{/* HP bar (only shown when damaged) */}
 			{showHpBar ? (

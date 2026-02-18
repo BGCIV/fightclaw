@@ -1,9 +1,10 @@
 import type { MatchState, Unit } from "@fightclaw/engine";
 import { AnimatePresence } from "framer-motion";
 import { memo, useMemo, useRef } from "react";
-import type { ArenaEffect } from "@/lib/arena-animator";
+import type { ArenaEffect, DamageNumberEntry } from "@/lib/arena-animator";
 import { boardViewBox, HEX_RADIUS, hexIdToPixel } from "@/lib/hex-geo";
 import { ArenaEffects } from "./arena-effects";
+import { DamageNumber } from "./damage-number";
 import { HexCell } from "./hex-cell";
 import type { UnitAnimState } from "./unit-token";
 import { UnitToken } from "./unit-token";
@@ -13,6 +14,8 @@ export type HexBoardProps = {
 	effects: ArenaEffect[];
 	unitAnimStates: Map<string, UnitAnimState>;
 	dyingUnitIds: Set<string>;
+	damageNumbers: DamageNumberEntry[];
+	lungeTargets: Map<string, { x: number; y: number }>;
 };
 
 export const HexBoard = memo(function HexBoard({
@@ -20,6 +23,8 @@ export const HexBoard = memo(function HexBoard({
 	effects,
 	unitAnimStates,
 	dyingUnitIds,
+	damageNumbers,
+	lungeTargets,
 }: HexBoardProps) {
 	const R = HEX_RADIUS;
 	const viewBox = boardViewBox(R);
@@ -111,7 +116,7 @@ export const HexBoard = memo(function HexBoard({
 				{/* Layer 3: Units (grouped by position for stacks) */}
 				<AnimatePresence>
 					{[...stacks.entries()].map(([position, units]) => {
-						const lead = units[0]!;
+						const lead = units[0] as Unit;
 						const pos = hexIdToPixel(position, R);
 						const animState = unitAnimStates.get(lead.id) ?? "idle";
 						return (
@@ -123,6 +128,23 @@ export const HexBoard = memo(function HexBoard({
 								radius={R}
 								animState={animState}
 								stackCount={units.length}
+								lungeTarget={lungeTargets.get(lead.id)}
+							/>
+						);
+					})}
+				</AnimatePresence>
+
+				{/* Layer 4: Damage numbers */}
+				<AnimatePresence>
+					{damageNumbers.map((dn) => {
+						const pos = hexIdToPixel(dn.hexId, R);
+						return (
+							<DamageNumber
+								key={dn.id}
+								id={dn.id}
+								x={pos.x}
+								y={pos.y - R * 0.3}
+								value={dn.value}
 							/>
 						);
 					})}

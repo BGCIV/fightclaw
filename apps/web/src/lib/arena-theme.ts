@@ -93,4 +93,5 @@ export const EFFECT_COLORS = {
 	recruit: "rgba(255,255,255,0.20)",
 	fortify: "rgba(255,255,255,0.20)",
 	pass: "rgba(255,255,255,0.15)",
+	"attack-tracer": "rgba(255,255,255,0.60)",
 } as const;
