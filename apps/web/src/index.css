@@ -127,6 +127,8 @@
 	}
 }
 
+/* ── Spectator shell ─────────────────────────────────── */
+
 .spectator-landing {
 	--spectator-bg: #050b10;
 	--spectator-panel: #0b151c;
@@ -135,7 +137,8 @@
 	--spectator-muted: #86a7a3;
 	--spectator-accent: #4de3c2;
 	--spectator-glow: rgba(77, 227, 194, 0.3);
-	min-height: 100%;
+	height: 100svh;
+	overflow: hidden;
 	background-color: var(--spectator-bg);
 	color: var(--spectator-text);
 	font-family:
@@ -144,7 +147,8 @@
 		monospace;
 	letter-spacing: 0.02em;
 	position: relative;
-	overflow: hidden;
+	display: flex;
+	flex-direction: column;
 }
 
 .spectator-landing::before {
@@ -171,88 +175,79 @@
 	opacity: 0.6;
 }
 
-.spectator-frame {
+/* ── Top bar ─────────────────────────────────────────── */
+
+.spectator-top-bar {
 	position: relative;
 	z-index: 1;
-	padding: 28px;
-	display: grid;
-	gap: 20px;
-}
-
-.spectator-header {
+	height: 36px;
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	justify-content: space-between;
-	gap: 16px;
+	padding: 0 16px;
+	font-family:
+		"JetBrains Mono", "IBM Plex Mono", "Source Code Pro", ui-monospace,
+		SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+		monospace;
+	font-size: 0.75rem;
+	border-bottom: 1px dashed var(--spectator-border);
+	background: var(--spectator-bg);
+	color: var(--spectator-muted);
+	flex-shrink: 0;
 }
 
-.spectator-title {
-	font-size: 1.1rem;
-	font-weight: 600;
-	text-transform: uppercase;
+.top-bar-center {
 	color: var(--spectator-accent);
-	text-shadow: 0 0 12px var(--spectator-glow);
 }
 
-.spectator-subtitle {
-	font-size: 0.8rem;
-	color: var(--spectator-muted);
-	margin-top: 4px;
-}
-
-.spectator-status {
-	font-size: 0.75rem;
-	line-height: 1.4;
-	text-align: right;
-	color: var(--spectator-muted);
-}
-
-.spectator-players {
-	font-size: 0.85rem;
-	padding: 6px 12px;
-	border: 1px solid var(--spectator-border);
-	background: rgba(11, 21, 28, 0.8);
-	width: fit-content;
-}
-
-.spectator-grid {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: 16px;
-}
-
-@media (min-width: 900px) {
-	.spectator-grid {
-		grid-template-columns: 1fr 1.4fr 1fr;
-	}
-}
-
-.spectator-panel {
-	border: 1px solid var(--spectator-border);
-	background: var(--spectator-panel);
-	padding: 16px;
-	min-height: 160px;
-	box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
-}
-
-.panel-title {
-	font-size: 0.75rem;
+.status-badge {
 	text-transform: uppercase;
-	color: var(--spectator-muted);
-	margin-bottom: 12px;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 }
 
-.panel-body {
-	font-size: 0.82rem;
-	line-height: 1.5;
-}
+/* ── Main three-column grid ──────────────────────────── */
 
-.panel-split {
+.spectator-main {
+	position: relative;
+	z-index: 1;
 	display: grid;
-	gap: 6px;
-	margin-top: 8px;
+	grid-template-columns: minmax(0, 10%) 1fr minmax(0, 10%);
+	height: calc(100svh - 36px);
+	overflow: hidden;
 }
+
+/* ── Thought panel placeholders ──────────────────────── */
+
+.thought-panel-placeholder {
+	background: rgba(5, 11, 16, 0.85);
+	padding: 12px;
+	font-family:
+		"JetBrains Mono", "IBM Plex Mono", "Source Code Pro", ui-monospace,
+		SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+		monospace;
+	font-size: 0.7rem;
+	overflow: hidden;
+}
+
+.thought-panel-left {
+	border-right: 1px dashed var(--spectator-border);
+}
+
+.thought-panel-right {
+	border-left: 1px dashed var(--spectator-border);
+}
+
+/* ── Player colors ───────────────────────────────────── */
+
+.player-a-color {
+	color: #ffffff;
+}
+
+.player-b-color {
+	color: #33ff66;
+}
+
+/* ── HUD effects (kept for animator) ─────────────────── */
 
 .hud-line {
 	transition:
@@ -278,38 +273,42 @@
 	}
 }
 
-.legend {
-	font-size: 0.7rem;
-	color: var(--spectator-muted);
-}
-
-.log-body {
-	display: grid;
-	gap: 6px;
-	max-height: 320px;
-	overflow-y: auto;
-}
-
-.log-line {
-	font-size: 0.72rem;
-	color: var(--spectator-text);
-}
-
 .muted {
 	color: var(--spectator-muted);
 }
 
+/* ── Hex board ───────────────────────────────────────── */
+
 .hex-board-container {
 	width: 100%;
+	height: 100%;
 	display: flex;
 	justify-content: center;
+	align-items: center;
 	overflow: hidden;
 }
 
 .hex-board-svg {
 	width: 100%;
-	max-height: 65vh;
+	height: 100%;
 	user-select: none;
 	-webkit-font-smoothing: none;
 	-moz-osx-font-smoothing: unset;
+}
+
+/* ── Dev route overrides ─────────────────────────────── */
+
+.dev-spectate-board .hex-board-container {
+	width: fit-content;
+	height: auto;
+	justify-content: flex-start;
+	overflow: visible;
+}
+
+.dev-spectate-board .hex-board-svg {
+	display: block;
+	width: auto;
+	height: min(78vh, 980px);
+	max-width: 100%;
+	max-height: none;
 }

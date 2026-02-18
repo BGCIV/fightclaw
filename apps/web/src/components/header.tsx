@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
 
-import { ModeToggle } from "./mode-toggle";
-
+/**
+ * Minimal nav header used by non-spectator routes.
+ * The spectator route renders its own game-aware top bar.
+ */
 export default function Header() {
 	const links = [
 		{ to: "/", label: "Spectate" },
@@ -10,22 +12,16 @@ export default function Header() {
 	] as const;
 
 	return (
-		<div>
-			<div className="flex flex-row items-center justify-between px-2 py-1">
-				<nav className="flex gap-4 text-lg">
-					{links.map(({ to, label }) => {
-						return (
-							<Link key={to} to={to}>
-								{label}
-							</Link>
-						);
-					})}
-				</nav>
-				<div className="flex items-center gap-2">
-					<ModeToggle />
-				</div>
-			</div>
-			<hr />
+		<div className="spectator-top-bar">
+			<nav className="flex gap-4">
+				{links.map(({ to, label }) => (
+					<Link key={to} to={to}>
+						{label}
+					</Link>
+				))}
+			</nav>
+			<span className="top-bar-center">WAR OF ATTRITION</span>
+			<span />
 		</div>
 	);
 }
