@@ -3,14 +3,17 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { playMatch } from "../src/match";
-import type { Bot, Move } from "../src/types";
+import type { Bot } from "../src/types";
 
 function makeDeterministicBot(id: string): Bot {
 	return {
 		id,
 		name: `Det_${id}`,
-		chooseMove: ({ legalMoves, rng }) =>
-			legalMoves[Math.floor(rng() * legalMoves.length)] as Move,
+		chooseMove: ({ legalMoves, rng }) => {
+			if (legalMoves.length === 0) return { action: "end_turn" };
+			const move = legalMoves[Math.floor(rng() * legalMoves.length)];
+			return move ?? { action: "end_turn" };
+		},
 		chooseTurn: async ({ legalMoves }) => {
 			const attack = legalMoves.find((m) => m.action === "attack");
 			if (attack) return [attack, { action: "end_turn" }];

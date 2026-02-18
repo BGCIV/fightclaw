@@ -164,14 +164,17 @@ export class ArtifactBuilder {
 		const ts = new Date().toISOString().replace(/[:.]/g, "-");
 		const file = path.join(outputDir, `match-${this.artifact.seed}-${ts}.json`);
 		const payload = stableStringify(this.artifact, 2);
-		if (Buffer.byteLength(payload, "utf8") > SOFT_ARTIFACT_CAP_BYTES) {
-			// Soft cap: keep deterministic replay fields, drop full texts.
-			for (const turn of this.artifact.turns) {
-				delete turn.prompt;
-				delete turn.rawOutput;
-			}
+		if (Buffer.byteLength(payload, "utf8") <= SOFT_ARTIFACT_CAP_BYTES) {
+			writeFileSync(file, payload);
+			return file;
 		}
-		writeFileSync(file, stableStringify(this.artifact, 2));
+		// Soft cap: keep deterministic replay fields, drop full texts.
+		for (const turn of this.artifact.turns) {
+			delete turn.prompt;
+			delete turn.rawOutput;
+		}
+		const truncatedPayload = stableStringify(this.artifact, 2);
+		writeFileSync(file, truncatedPayload);
 		return file;
 	}
 
@@ -192,10 +195,16 @@ export class ArtifactBuilder {
 		if (byteLen <= capBytes) {
 			return { value: text };
 		}
-		const sliced = Buffer.from(text, "utf8")
-			.subarray(0, capBytes)
-			.toString("utf8");
-		return { value: `${sliced}\n[TRUNCATED]` };
+		const chars: string[] = [];
+		let usedBytes = 0;
+		for (const char of text) {
+			const charBytes = Buffer.byteLength(char, "utf8");
+			if (usedBytes + charBytes > capBytes) break;
+			chars.push(char);
+			usedBytes += charBytes;
+		}
+		const truncated = chars.join("");
+		return { value: `${truncated}\n[TRUNCATED]` };
 	}
 }
 
@@ -236,7 +245,6 @@ function sortKeys(value: unknown): unknown {
 
 export function redactSecrets(input: string): string {
 	let output = input;
-	const original = output;
 
 	output = output.replace(
 		/Authorization\s*:\s*Bearer\s+[A-Za-z0-9._-]+/gi,
@@ -254,8 +262,5 @@ export function redactSecrets(input: string): string {
 		}
 	}
 
-	if (output !== original) {
-		return output;
-	}
 	return output;
 }

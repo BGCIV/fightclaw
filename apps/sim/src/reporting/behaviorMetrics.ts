@@ -40,7 +40,7 @@ type ArtifactTurn = {
 			estimatedWoodSpend?: number;
 		};
 	};
-	commandAttempts: Array<{
+	commandAttempts?: Array<{
 		accepted: boolean;
 		rejectionReason?: string;
 		move: {
@@ -357,6 +357,7 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 	let turnsWithPrompt = 0;
 	let turnsWithRawOutput = 0;
 	let turnsWithReasoningField = 0;
+	let parsedGames = 0;
 
 	for (const file of files) {
 		let artifact: Artifact;
@@ -369,6 +370,7 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 			);
 			continue;
 		}
+		parsedGames++;
 		const parsedIllegalMoves = artifact.result?.illegalMoves;
 		if (
 			typeof parsedIllegalMoves === "number" &&
@@ -418,11 +420,12 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 		for (let i = 0; i < artifact.turns.length; i++) {
 			const turn = artifact.turns[i];
 			if (!turn) continue;
+			const attempts = turn.commandAttempts ?? [];
 			turns++;
 			if (turn.prompt) turnsWithPrompt++;
 			if (turn.rawOutput?.trim()) turnsWithRawOutput++;
 			if (
-				turn.commandAttempts.some(
+				attempts.some(
 					(attempt) =>
 						typeof attempt.move?.reasoning === "string" &&
 						attempt.move.reasoning.length > 0,
@@ -442,7 +445,7 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 					gameFirstUpgradeTurn = i + 1;
 				}
 			} else {
-				const upgradesAcceptedFromAttempts = turn.commandAttempts.filter(
+				const upgradesAcceptedFromAttempts = attempts.filter(
 					(a) => a.accepted && a.move.action === "upgrade",
 				).length;
 				if (upgradesAcceptedFromAttempts > 0) {
@@ -475,7 +478,7 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 				}
 			}
 
-			const accepted = turn.commandAttempts.filter((a) => a.accepted);
+			const accepted = attempts.filter((a) => a.accepted);
 			const acceptedFortifies = accepted.filter(
 				(a) => a.move.action === "fortify",
 			);
@@ -571,9 +574,8 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 							turnAttackAttempts.length / Math.max(1, accepted.length);
 						const nextTurn = artifact.turns[nextSameSideIdx];
 						if (!nextTurn) continue;
-						const nextAccepted = nextTurn.commandAttempts.filter(
-							(a) => a.accepted,
-						);
+						const nextAttempts = nextTurn.commandAttempts ?? [];
+						const nextAccepted = nextAttempts.filter((a) => a.accepted);
 						const nextAttackShare =
 							nextAccepted.filter((a) => a.move.action === "attack").length /
 							Math.max(1, nextAccepted.length);
@@ -702,7 +704,7 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 		woodSpentEstimate > 0 ? damagePreventedEstimate / woodSpentEstimate : null;
 
 	return {
-		games: files.length,
+		games: parsedGames,
 		illegalMoves,
 		attackTimingQuality: {
 			attacks,
@@ -750,17 +752,16 @@ export function analyzeBehaviorFromArtifacts(input: string): BehaviorSummary {
 		},
 		upgradeEconomy: {
 			gamesWithUpgrade,
-			upgradeAdoptionRate:
-				files.length > 0 ? gamesWithUpgrade / files.length : 0,
+			upgradeAdoptionRate: parsedGames > 0 ? gamesWithUpgrade / parsedGames : 0,
 			totalUpgradesAccepted,
 			avgUpgradesPerGame:
-				files.length > 0 ? totalUpgradesAccepted / files.length : 0,
+				parsedGames > 0 ? totalUpgradesAccepted / parsedGames : 0,
 			meanFirstUpgradeTurn:
 				firstUpgradeTurns.length > 0 ? mean(firstUpgradeTurns) : null,
 			avgEstimatedUpgradeGoldSpendPerGame:
-				files.length > 0 ? totalEstimatedUpgradeGoldSpend / files.length : 0,
+				parsedGames > 0 ? totalEstimatedUpgradeGoldSpend / parsedGames : 0,
 			avgEstimatedUpgradeWoodSpendPerGame:
-				files.length > 0 ? totalEstimatedUpgradeWoodSpend / files.length : 0,
+				parsedGames > 0 ? totalEstimatedUpgradeWoodSpend / parsedGames : 0,
 		},
 		archetypeSeparation: {
 			actionMixSignal: normalizedAcceptedActions,

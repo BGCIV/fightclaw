@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { Anomaly, WinRateStats } from "../simulation/config";
+import { escapeHtml, formatTurnWithPrefix } from "./htmlUtils";
 
 export interface DashboardData {
 	summary: {
@@ -69,6 +70,7 @@ export class DashboardGenerator {
 	}
 
 	private generateHTML(data: DashboardData): string {
+		const serializedData = stringifyForInlineScript(data);
 		return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -393,8 +395,8 @@ export class DashboardGenerator {
 		</div>
 	</div>
 
-	<script>
-		const dashboardData = ${JSON.stringify(data)};
+		<script>
+			const dashboardData = ${serializedData};
 
 		function toggleTheme() {
 			const current = document.documentElement.getAttribute('data-theme');
@@ -522,12 +524,22 @@ export class DashboardGenerator {
 						.map((item) => `T${item.turn} (${(item.rate * 100).toFixed(1)}%)`)
 						.join(", ")
 				: "none observed";
+		const firstCommitmentMean = formatTurnWithPrefix(
+			data.firstCommitment.meanTurn,
+		);
+		const firstCommitmentMedian = formatTurnWithPrefix(
+			data.firstCommitment.medianTurn,
+		);
+		const decisiveSwingMean = formatTurnWithPrefix(data.decisiveSwing.meanTurn);
+		const decisiveSwingMedian = formatTurnWithPrefix(
+			data.decisiveSwing.medianTurn,
+		);
 
 		return [
 			`<div class="insight-row"><span class="insight-key">Opening choice:</span>${openingText}</div>`,
-			`<div class="insight-row"><span class="insight-key">First commitment:</span>mean T${formatTurn(data.firstCommitment.meanTurn)}, median T${formatTurn(data.firstCommitment.medianTurn)} (n=${data.firstCommitment.samples})</div>`,
+			`<div class="insight-row"><span class="insight-key">First commitment:</span>mean ${firstCommitmentMean}, median ${firstCommitmentMedian} (n=${data.firstCommitment.samples})</div>`,
 			`<div class="insight-row"><span class="insight-key">Power spike turns:</span>${spikes}</div>`,
-			`<div class="insight-row"><span class="insight-key">Decisive swing:</span>mean T${formatTurn(data.decisiveSwing.meanTurn)}, median T${formatTurn(data.decisiveSwing.medianTurn)} (n=${data.decisiveSwing.samples})</div>`,
+			`<div class="insight-row"><span class="insight-key">Decisive swing:</span>mean ${decisiveSwingMean}, median ${decisiveSwingMedian} (n=${data.decisiveSwing.samples})</div>`,
 		].join("");
 	}
 
@@ -586,18 +598,11 @@ export class DashboardGenerator {
 	}
 }
 
-function formatTurn(value: number | null): string {
-	if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
-	return value.toFixed(1);
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;");
+function stringifyForInlineScript(value: unknown): string {
+	return JSON.stringify(value)
+		.replace(/</g, "\\u003c")
+		.replace(/\u2028/g, "\\u2028")
+		.replace(/\u2029/g, "\\u2029");
 }
 
 export function generateDashboard(

@@ -213,11 +213,40 @@ async function playMatchLegacy(opts: {
 
 				const engineBatchMove = stripReasoning(batchMove);
 				const result = Engine.applyMove(state, engineBatchMove);
+				if (!result.ok) {
+					illegalMoves++;
+					if (!opts.autofixIllegal) {
+						if (opts.verbose) {
+							console.warn(
+								`[turn ${turn}] bot ${bot.name} produced invalid batch move application: ${short(engineBatchMove)}`,
+							);
+						}
+						const terminal: MatchResult = {
+							seed: opts.seed,
+							turns: turn - 1,
+							winner: null,
+							illegalMoves,
+							reason: "illegal",
+							log: logIfNeeded(),
+						};
+						if (opts.enableDiagnostics) {
+							getDiagnosticsCollector().endGame(
+								terminal.winner,
+								terminal.reason,
+							);
+						}
+						return terminal;
+					}
+					if (opts.verbose) {
+						console.warn(
+							`[turn ${turn}] batch move application skipped: ${short(engineBatchMove)}`,
+						);
+					}
+					continue;
+				}
 				engineEvents.push(...result.engineEvents);
 				moves.push(engineBatchMove);
-				if (result.ok) {
-					state = result.state;
-				}
+				state = result.state;
 
 				if (opts.verbose) {
 					console.log(`[turn ${turn}] ${bot.name} -> ${short(batchMove)}`);
@@ -438,5 +467,5 @@ function firstMismatchIndex(a: unknown[], b: unknown[]): number {
 
 function short(x: unknown): string {
 	const s = safeJson(x);
-	return s.length > 140 ? s.slice(0, 140) + "…" : s;
+	return s.length > 140 ? `${s.slice(0, 140)}…` : s;
 }

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
@@ -76,12 +76,12 @@ function parseBoolArg(name: string, fallback: boolean): boolean {
 	return fallback;
 }
 
-function runCmd(
+async function runCmd(
 	cwd: string,
 	args: string[],
 	dryRun: boolean,
 	policy?: RunPolicy,
-): boolean {
+): Promise<boolean> {
 	const pretty = `pnpm ${args.join(" ")}`;
 	console.log(pretty);
 	if (dryRun) return true;
@@ -90,11 +90,47 @@ function runCmd(
 	const timeoutMs = policy?.timeoutMs;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
-			execFileSync("pnpm", args, {
-				cwd,
-				stdio: "inherit",
-				timeout: timeoutMs,
-				killSignal: "SIGKILL",
+			await new Promise<void>((resolve, reject) => {
+				const child = spawn("pnpm", args, {
+					cwd,
+					stdio: "inherit",
+				});
+				let timedOut = false;
+				let killTimer: NodeJS.Timeout | null = null;
+				let graceTimer: NodeJS.Timeout | null = null;
+
+				if (typeof timeoutMs === "number" && timeoutMs > 0) {
+					killTimer = setTimeout(() => {
+						timedOut = true;
+						if (child.exitCode === null && child.signalCode === null) {
+							child.kill("SIGTERM");
+						}
+						graceTimer = setTimeout(() => {
+							if (child.exitCode === null && child.signalCode === null) {
+								child.kill("SIGKILL");
+							}
+						}, 5_000);
+					}, timeoutMs);
+				}
+
+				child.on("error", (error) => {
+					if (killTimer != null) clearTimeout(killTimer);
+					if (graceTimer != null) clearTimeout(graceTimer);
+					reject(error);
+				});
+
+				child.on("close", (code, signal) => {
+					if (killTimer != null) clearTimeout(killTimer);
+					if (graceTimer != null) clearTimeout(graceTimer);
+					if (code === 0) {
+						resolve();
+						return;
+					}
+					const exitPart =
+						signal != null ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+					const timeoutPart = timedOut ? " (timed out)" : "";
+					reject(new Error(`Command failed with ${exitPart}${timeoutPart}`));
+				});
 			});
 			return true;
 		} catch (error) {
@@ -161,9 +197,11 @@ function aggregateSummaries(laneDir: string): Aggregate {
 		aggregate.illegalMoves += illegalMoves;
 		weightedTurns += meanTurns * games;
 
-		const byScenario =
-			aggregate.byScenario[scenario] ??
-			({ games: 0, draws: 0, avgTurns: 0 } as const);
+		const byScenario = aggregate.byScenario[scenario] ?? {
+			games: 0,
+			draws: 0,
+			avgTurns: 0,
+		};
 		aggregate.byScenario[scenario] = {
 			games: byScenario.games + games,
 			draws: byScenario.draws + draws,
@@ -205,7 +243,7 @@ function shouldSkipCompletedMatchup(
 	}
 }
 
-function main() {
+async function main() {
 	const repoRoot = path.resolve(
 		path.dirname(fileURLToPath(import.meta.url)),
 		"..",
@@ -289,7 +327,7 @@ function main() {
 				fastLaneDirInSim,
 				`${matchup.scenario}__${matchup.bot1}_vs_${matchup.bot2}`,
 			);
-			runCmd(
+			await runCmd(
 				repoRoot,
 				[
 					"-C",
@@ -362,7 +400,7 @@ function main() {
 					apiSeed += 1;
 					continue;
 				}
-				const ok = runCmd(
+				const ok = await runCmd(
 					repoRoot,
 					[
 						"-C",
@@ -475,4 +513,8 @@ function main() {
 	console.log(`Summary: ${summaryPath}`);
 }
 
-main();
+main().catch((error) => {
+	const message = error instanceof Error ? error.message : String(error);
+	console.error(`benchmark-v1 failed: ${message}`);
+	process.exitCode = 1;
+});

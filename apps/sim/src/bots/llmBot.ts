@@ -25,7 +25,7 @@ const MIN_SAFE_FORCED_ATTACK_SCORE = -8;
 export type LoopState = {
 	noAttackStreak: number;
 	noProgressStreak: number;
-	noRecruitStreak: number;
+	recruitStreak: number;
 };
 
 export interface LlmBotConfig {
@@ -81,7 +81,7 @@ export function makeLlmBot(
 	let previousSeenState: MatchState | undefined;
 	let noAttackStreak = 0;
 	let noProgressStreak = 0;
-	let noRecruitStreak = 0;
+	let recruitStreak = 0;
 
 	return {
 		id,
@@ -100,11 +100,11 @@ export function makeLlmBot(
 				{
 					noAttackStreak,
 					noProgressStreak,
-					noRecruitStreak,
+					recruitStreak,
 				},
 			);
 			noAttackStreak = result.hadAttack ? 0 : noAttackStreak + 1;
-			noRecruitStreak = result.hadRecruit ? 0 : noRecruitStreak + 1;
+			recruitStreak = result.hadRecruit ? recruitStreak + 1 : 0;
 			noProgressStreak = result.progressObserved ? 0 : noProgressStreak + 1;
 			turnCount++;
 			previousSeenState = structuredClone(ctx.state);
@@ -121,11 +121,11 @@ export function makeLlmBot(
 				{
 					noAttackStreak,
 					noProgressStreak,
-					noRecruitStreak,
+					recruitStreak,
 				},
 			);
 			noAttackStreak = result.hadAttack ? 0 : noAttackStreak + 1;
-			noRecruitStreak = result.hadRecruit ? 0 : noRecruitStreak + 1;
+			recruitStreak = result.hadRecruit ? recruitStreak + 1 : 0;
 			noProgressStreak = result.progressObserved ? 0 : noProgressStreak + 1;
 			turnCount++;
 			previousSeenState = structuredClone(ctx.state);
@@ -450,7 +450,7 @@ function buildLoopPolicyHints(loopState?: LoopState, turn = 0): string[] {
 	const hints: string[] = [];
 	const noAttack = loopState?.noAttackStreak ?? 0;
 	const noProgress = loopState?.noProgressStreak ?? 0;
-	const noRecruit = loopState?.noRecruitStreak ?? 0;
+	const recruitStreak = loopState?.recruitStreak ?? 0;
 
 	hints.push(
 		"If ATTACKS are listed in LEGAL_MOVES, include at least one attack before end_turn.",
@@ -468,14 +468,14 @@ function buildLoopPolicyHints(loopState?: LoopState, turn = 0): string[] {
 			"If no favorable attack exists, make at least one move that reduces distance to the enemy stronghold.",
 		);
 	}
-	if (noRecruit >= 2) {
+	if (recruitStreak >= 2) {
 		hints.push(
 			"Do not recruit again this turn unless there are no legal attacks and no advancing moves.",
 		);
 	}
 	if (
 		turn >= LATE_MATCH_TURN &&
-		(noAttack >= 1 || noProgress >= 1 || noRecruit >= 1)
+		(noAttack >= 1 || noProgress >= 1 || recruitStreak >= 1)
 	) {
 		hints.push(
 			"Late game: avoid low-impact recruit/fortify cycles; choose attack or objective advance.",
@@ -662,7 +662,7 @@ export function applyLoopPressurePolicy(
 
 	const noAttack = loopState?.noAttackStreak ?? 0;
 	const noProgress = loopState?.noProgressStreak ?? 0;
-	const noRecruit = loopState?.noRecruitStreak ?? 0;
+	const recruitStreak = loopState?.recruitStreak ?? 0;
 	const lateGame = turn >= LATE_MATCH_TURN;
 	const pressure = computeLoopPressure(loopState, turn);
 	const hasRecruit = moves.some((move) => move.action === "recruit");
@@ -672,9 +672,9 @@ export function applyLoopPressurePolicy(
 		noProgress >= 2 ||
 		(lateGame && (noAttack >= 1 || noProgress >= 1));
 	const shouldBlockRecruitLoop =
-		noRecruit >= 2 ||
+		recruitStreak >= 2 ||
 		noProgress >= 3 ||
-		(lateGame && noRecruit >= 1 && noAttack >= 1);
+		(lateGame && recruitStreak >= 1 && noAttack >= 1);
 	const desperateMode =
 		pressure >= 6 || noProgress >= 5 || turn >= VERY_LATE_MATCH_TURN + 20;
 
@@ -712,14 +712,14 @@ function computeLoopPressure(
 ): number {
 	const noAttack = loopState?.noAttackStreak ?? 0;
 	const noProgress = loopState?.noProgressStreak ?? 0;
-	const noRecruit = loopState?.noRecruitStreak ?? 0;
+	const recruitStreak = loopState?.recruitStreak ?? 0;
 	let pressure = 0;
 
 	if (noAttack >= 2) pressure += 2;
 	if (noAttack >= 4) pressure += 1;
 	if (noProgress >= 2) pressure += 2;
 	if (noProgress >= 4) pressure += 2;
-	if (noRecruit >= 3) pressure += 1;
+	if (recruitStreak >= 3) pressure += 1;
 	if (turn >= LATE_MATCH_TURN) pressure += 1;
 	if (turn >= VERY_LATE_MATCH_TURN) pressure += 1;
 	if (turn >= LATE_MATCH_TURN && (noAttack >= 1 || noProgress >= 1)) {
@@ -881,7 +881,9 @@ function scoreAttackMove(
 function parseHexId(hexId: string): { row: number; col: number } | undefined {
 	const match = /^([A-Za-z])(\d+)$/.exec(hexId);
 	if (!match) return undefined;
-	const row = match[1]!.toUpperCase().charCodeAt(0) - 65;
+	const rowToken = match[1];
+	if (!rowToken) return undefined;
+	const row = rowToken.toUpperCase().charCodeAt(0) - 65;
 	const col = Number.parseInt(match[2] ?? "", 10) - 1;
 	if (!Number.isFinite(col) || col < 0 || row < 0) return undefined;
 	return { row, col };
