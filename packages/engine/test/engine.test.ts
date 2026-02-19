@@ -4,6 +4,7 @@ import {
 	bindEngineConfig,
 	createInitialState,
 	DEFAULT_CONFIG,
+	type EngineConfigInput,
 	type EngineEvent,
 	getEngineConfig,
 	type HexId,
@@ -16,14 +17,40 @@ import {
 } from "@fightclaw/engine";
 
 const players = ["agent-a", "agent-b"] as const;
+const LEGACY_TEST_CONFIG: EngineConfigInput = {
+	boardColumns: 21,
+	actionsPerTurn: 5,
+	turnLimit: 20,
+};
+
+function createLegacyState(
+	seed: number,
+	configInput?: EngineConfigInput,
+): MatchState {
+	return createInitialState(
+		seed,
+		{
+			...LEGACY_TEST_CONFIG,
+			...configInput,
+		},
+		[...players],
+	);
+}
 
 function cloneWithConfig(state: MatchState): MatchState {
 	return bindEngineConfig(structuredClone(state), getEngineConfig(state));
 }
 
-function hexIndex(id: HexId): number {
+function hexIndex(
+	id: HexId,
+	boardContext: number | MatchState = LEGACY_TEST_CONFIG.boardColumns ?? 21,
+): number {
 	const { row, col } = parseHexId(id);
-	return row * 21 + col;
+	const columns =
+		typeof boardContext === "number"
+			? boardContext
+			: getEngineConfig(boardContext).boardColumns;
+	return row * columns + col;
 }
 
 /** Remove all units from a state */
@@ -64,7 +91,7 @@ function addUnitToState(
 		...opts,
 	};
 	s.players[owner].units.push(unit);
-	const idx = hexIndex(position);
+	const idx = hexIndex(position, s);
 	const boardHex = s.board[idx];
 	if (boardHex) {
 		s.board[idx] = {
@@ -80,19 +107,29 @@ type AttackEvent = Extract<EngineEvent, { type: "attack" }>;
 describe("v2 engine - War of Attrition", () => {
 	// ---- Initial state correctness ----
 
-	test("initial state has 189 hexes", () => {
+	test("default config uses 17x9 board with 7 actions and 40 turn limit", () => {
 		const state = createInitialState(0, undefined, [...players]);
+		const config = getEngineConfig(state);
+		expect(config.boardColumns).toBe(17);
+		expect(config.actionsPerTurn).toBe(7);
+		expect(config.turnLimit).toBe(40);
+		expect(state.board.length).toBe(9 * 17);
+		expect(state.actionsRemaining).toBe(7);
+	});
+
+	test("initial state has 189 hexes", () => {
+		const state = createLegacyState(0);
 		expect(state.board.length).toBe(189);
 	});
 
 	test("initial state has 12 units (6 per side)", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		expect(state.players.A.units.length).toBe(6);
 		expect(state.players.B.units.length).toBe(6);
 	});
 
 	test("initial state has correct unit placements", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const aUnits = new Map(state.players.A.units.map((u) => [u.id, u]));
 		expect(aUnits.get("A-1")?.position).toBe("B2");
 		expect(aUnits.get("A-1")?.type).toBe("infantry");
@@ -108,7 +145,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("initial state has correct starting control", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const a1 = state.board[hexIndex("A1")];
 		expect(a1?.controlledBy).toBe("A");
 		expect(a1?.type).toBe("deploy_a");
@@ -123,7 +160,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("initial state has starting gold/wood plus Turn 1 stronghold income", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		// startingGold=15 + 2 strongholds * 2 gold each = 15 + 4 = 19
 		expect(state.players.A.gold).toBe(19);
 		// startingWood=5 + no lumber camps controlled = 5
@@ -136,7 +173,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("initial state has correct resource reserves on gold mines and lumber camps", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const b9 = state.board[hexIndex("B9")];
 		expect(b9?.type).toBe("gold_mine");
 		expect(b9?.reserve).toBe(20);
@@ -146,14 +183,14 @@ describe("v2 engine - War of Attrition", () => {
 		expect(c8?.reserve).toBe(15);
 	});
 
-	test("activePlayer is A and actionsRemaining is 5", () => {
-		const state = createInitialState(0, undefined, [...players]);
+	test("activePlayer is A and actionsRemaining is 5 (legacy config)", () => {
+		const state = createLegacyState(0);
 		expect(state.activePlayer).toBe("A");
 		expect(state.actionsRemaining).toBe(5);
 	});
 
 	test("units have hp and maxHp", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const infantry = state.players.A.units.find((u) => u.type === "infantry");
 		expect(infantry?.hp).toBe(3);
 		expect(infantry?.maxHp).toBe(3);
@@ -166,7 +203,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("board hexes use unitIds array", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const b2 = state.board[hexIndex("B2")];
 		expect(Array.isArray(b2?.unitIds)).toBe(true);
 		expect(b2?.unitIds.length).toBe(1);
@@ -179,7 +216,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Turn numbering ----
 
 	test("turn increments only after Player B ends", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		expect(state.turn).toBe(1);
 
 		let result = applyMove(state, { action: "end_turn" });
@@ -200,8 +237,8 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- end_turn vs pass equivalence ----
 
 	test("end_turn and pass are equivalent", () => {
-		const state1 = createInitialState(0, undefined, [...players]);
-		const state2 = createInitialState(0, undefined, [...players]);
+		const state1 = createLegacyState(0);
+		const state2 = createLegacyState(0);
 
 		const r1 = applyMove(state1, { action: "end_turn" });
 		const r2 = applyMove(state2, { action: "pass" });
@@ -224,7 +261,7 @@ describe("v2 engine - War of Attrition", () => {
 			{ action: "end_turn" },
 		];
 		const run = () => {
-			let state = createInitialState(1, undefined, [...players]);
+			let state = createLegacyState(1);
 			const events: EngineEvent[] = [];
 			for (const move of moves) {
 				const result = applyMove(state, move);
@@ -288,7 +325,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Move validation ----
 
 	test("illegal move rejection reason is stable", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const result = applyMove(state, {
 			action: "attack",
 			unitId: "A-1",
@@ -301,10 +338,11 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("unit cannot move twice in same turn", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		// A-1 is infantry at B2. Movement is now 2.
 		// Find an empty neighbor to move to
-		const nbrs = neighborsOf("B2");
+		const boardColumns = getEngineConfig(state).boardColumns;
+		const nbrs = neighborsOf("B2", boardColumns);
 		let moveTo: HexId | null = null;
 		for (const n of nbrs) {
 			const hex = state.board[hexIndex(n)];
@@ -326,7 +364,7 @@ describe("v2 engine - War of Attrition", () => {
 		state = r1.state;
 
 		// Try to move same unit again
-		const nbrs2 = neighborsOf(moveTo);
+		const nbrs2 = neighborsOf(moveTo, boardColumns);
 		let moveTo2: HexId | null = null;
 		for (const n of nbrs2) {
 			const hex = state.board[hexIndex(n)];
@@ -349,7 +387,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("unit cannot attack twice in same turn", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Cavalry ATK 4 + attacker bonus 1 = 5 vs infantry DEF 4 + 0 terrain = 4
 		// ATK > DEF → damage = 1, no counterattack
@@ -378,8 +416,8 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("recruited units cannot act same turn", () => {
-		let state = createInitialState(0, undefined, [...players]);
-		state = structuredClone(state);
+		let state = createLegacyState(0);
+		state = cloneWithConfig(state);
 		state.players.A.gold = 100;
 		// Move A-1 off B2 so we can recruit there
 		// biome-ignore lint/style/noNonNullAssertion: unit known to exist
@@ -421,8 +459,8 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Recruit validation ----
 
 	test("recruit at stronghold (valid)", () => {
-		let state = createInitialState(0, undefined, [...players]);
-		state = structuredClone(state);
+		let state = createLegacyState(0);
+		state = cloneWithConfig(state);
 		state.players.A.gold = 100;
 		// Move A-1 off B2
 		// biome-ignore lint/style/noNonNullAssertion: unit known to exist
@@ -456,7 +494,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("recruit at non-stronghold fails", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.gold = 100;
 
@@ -469,7 +507,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("recruit at enemy stronghold fails", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.gold = 100;
 
@@ -484,7 +522,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Fortify ----
 
 	test("fortify costs 2 wood and grants fortified status", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.wood = 3;
 
@@ -508,7 +546,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("fortify without wood fails", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.wood = 0;
 
@@ -520,11 +558,12 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("fortify after move fails", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.wood = 3;
 
-		const nbrs = neighborsOf("B2");
+		const boardColumns = getEngineConfig(state).boardColumns;
+		const nbrs = neighborsOf("B2", boardColumns);
 		let moveTo: HexId | null = null;
 		for (const n of nbrs) {
 			const hex = state.board[hexIndex(n)];
@@ -553,7 +592,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- HP-based combat ----
 
 	test("HP-based combat: attacker advantage deals damage without dying", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Cavalry ATK 4 + attacker bonus 2 = 6 vs infantry DEF 4 + 0 terrain (plains) = 4
 		// ATK > DEF → damage to defenders = 1, damage to attackers = 0
@@ -586,7 +625,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("HP-based combat: repeated attacks kill a unit", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Cavalry ATK 4 + 1 = 5 vs archer DEF 1 + 0 - 1 melee vuln = 0
 		// ATK > DEF → damage = 5, archer HP = 2 → dies in one hit
@@ -610,7 +649,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("HP-based combat: weaker attacker still deals minimum 1 damage", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Infantry ATK 2 + 1 attacker = 3 vs infantry DEF 4 + 1 (hills) = 5
 		// ATK < DEF → damage to defenders = 1, damage to attackers = 1 (melee counterattack)
@@ -652,7 +691,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("HP-based combat: equal ATK/DEF deals 1 damage to defender, 0 to attacker", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Need ATK == DEF.
 		// Infantry ATK 2 + 2 attacker = 4, cavalry DEF 2 + 1 (hills) = 3
@@ -678,7 +717,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("ranged attack: no counterattack when ATK < DEF", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Archer ATK 3 + 1 attacker = 4 vs infantry DEF 4 + 1 (crown) = 5
 		// ATK < DEF, ranged → damage to attackers = 0
@@ -704,7 +743,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- VP for kills ----
 
 	test("VP awarded for killing enemy units", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Cavalry ATK 4 + 1 = 5 vs archer DEF 1 + 0 - 1 = 0 → damage 5, archer HP 2 → dead
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E10");
@@ -726,7 +765,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Cavalry Charge ----
 
 	test("cavalry charge grants +2 ATK when moved >= 2 on forest-free path", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "cavalry", "A", "B4");
 		state = addUnitToState(state, "B-1", "infantry", "B", "B7");
@@ -763,7 +802,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("cavalry charge denied when path goes through forest", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E3");
 		state = addUnitToState(state, "B-1", "infantry", "B", "E6");
@@ -784,7 +823,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("stacked cavalry uses initiating attacker charge eligibility", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Intentionally create stack order [A-2, A-1]
 		state = addUnitToState(state, "A-2", "cavalry", "A", "B4");
@@ -824,10 +863,11 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Shield Wall ----
 
 	test("shield wall +1 per adjacent hex with friendly infantry, max +1", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
-		const d10Neighbors = neighborsOf("D10");
+		const boardColumns = getEngineConfig(state).boardColumns;
+		const d10Neighbors = neighborsOf("D10", boardColumns);
 		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		const friendlyPos1 = d10Neighbors[0]!;
 		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
@@ -869,10 +909,11 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("shield wall caps at +1 even with 3+ adjacent infantry hexes", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "D10");
-		const d10Neighbors = neighborsOf("D10");
+		const boardColumns = getEngineConfig(state).boardColumns;
+		const d10Neighbors = neighborsOf("D10", boardColumns);
 		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
 		state = addUnitToState(state, "B-2", "infantry", "B", d10Neighbors[0]!);
 		// biome-ignore lint/style/noNonNullAssertion: hex always has neighbors
@@ -911,7 +952,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Archer melee vulnerability ----
 
 	test("archer melee vulnerability: -1 DEF at distance 1", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "E2");
 		state = addUnitToState(state, "B-1", "archer", "B", "E3");
@@ -937,7 +978,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Archer LoS ----
 
 	test("archer LoS blocked by forest on target hex", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "archer", "A", "C8");
 		expect(state.board[hexIndex("C10")]?.type).toBe("forest");
@@ -952,7 +993,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("archer LoS blocked by unit on mid hex (not on high ground)", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "archer", "A", "E9");
 		state = addUnitToState(state, "A-2", "infantry", "A", "E10");
@@ -967,7 +1008,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("archer LoS: high ground bypasses unit blocking", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		expect(state.board[hexIndex("D11")]?.type).toBe("high_ground");
 		expect(state.board[hexIndex("E11")]?.type).toBe("crown");
@@ -988,7 +1029,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Resource node reserve depletion ----
 
 	test("gold mine reserve depletes over turns", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		const b9Idx = hexIndex("B9");
 		// biome-ignore lint/style/noNonNullAssertion: valid board index
@@ -1015,7 +1056,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("lumber camp reserve depletes and yields wood", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		const c8Idx = hexIndex("C8");
 		// biome-ignore lint/style/noNonNullAssertion: valid board index
@@ -1037,7 +1078,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Crown VP accumulation ----
 
 	test("crown hex controlled yields VP", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		const e11Idx = hexIndex("E11");
 		// biome-ignore lint/style/noNonNullAssertion: valid board index
@@ -1056,7 +1097,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Stronghold income ----
 
 	test("stronghold gives +2 gold per controlled stronghold at start-of-turn", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		// startingGold=15 + 2 strongholds * 2 = 19
 		expect(state.players.A.gold).toBe(19);
 	});
@@ -1064,7 +1105,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Sticky control ----
 
 	test("empty hex keeps control (sticky)", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "A1");
 		state = addUnitToState(state, "B-1", "infantry", "B", "I21");
@@ -1083,7 +1124,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Victory conditions ----
 
 	test("ONE stronghold capture is enough to win", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Place A unit on just ONE of B's strongholds
 		state = addUnitToState(state, "A-1", "infantry", "A", "B20");
@@ -1103,7 +1144,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("elimination victory", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Cavalry ATK 4+1=5 vs archer DEF 1+0-1=0, damage=5, hp=2 → dead
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E10");
@@ -1126,16 +1167,16 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("turn limit victory with VP tiebreak", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "A1");
 		state = addUnitToState(state, "B-1", "infantry", "B", "I21");
 
-		state = structuredClone(state);
-		// Turn limit is now 20
-		state.turn = 20;
+		state = cloneWithConfig(state);
+		const config = getEngineConfig(state);
+		state.turn = config.turnLimit;
 		state.activePlayer = "B";
-		state.actionsRemaining = 5;
+		state.actionsRemaining = config.actionsPerTurn;
 		state.players.A.vp = 5;
 		state.players.B.vp = 3;
 
@@ -1152,15 +1193,16 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("turn limit draw when all tiebreakers equal", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "A1");
 		state = addUnitToState(state, "B-1", "infantry", "B", "I21");
 
-		state = structuredClone(state);
-		state.turn = 20;
+		state = cloneWithConfig(state);
+		const config = getEngineConfig(state);
+		state.turn = config.turnLimit;
 		state.activePlayer = "B";
-		state.actionsRemaining = 5;
+		state.actionsRemaining = config.actionsPerTurn;
 		state.players.A.vp = 0;
 		state.players.B.vp = 0;
 		for (let i = 0; i < state.board.length; i++) {
@@ -1183,7 +1225,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Melee capture (attacker moves in) ----
 
 	test("melee attacker moves into defender hex on kill", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E10");
 		state = addUnitToState(state, "B-1", "archer", "B", "E11");
@@ -1201,7 +1243,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("ranged attack does not move attacker", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// Archer ATK 3+1=4 vs infantry DEF 4+1(crown)=5. ATK < DEF, ranged.
 		state = addUnitToState(state, "A-1", "archer", "A", "E9");
@@ -1227,7 +1269,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- listLegalMoves includes end_turn ----
 
 	test("listLegalMoves always includes end_turn", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const moves = listLegalMoves(state);
 		const endTurns = moves.filter((m) => m.action === "end_turn");
 		expect(endTurns.length).toBe(1);
@@ -1236,7 +1278,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Fortify persists until start of owner's next turn ----
 
 	test("fortify is cleared at start of player's next turn", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.wood = 5;
 
@@ -1271,7 +1313,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Terrain defense bonus ----
 
 	test("stronghold gives +1 defense bonus", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "B-1", "infantry", "B", "B2");
 		state = addUnitToState(state, "A-1", "cavalry", "A", "B1");
@@ -1292,14 +1334,10 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("fortify bonus is configurable and stacks with terrain fortify bonuses", () => {
-		let state = createInitialState(
-			0,
-			{
-				abilities: { fortifyBonus: 2 },
-				fortifyDefenseBonusByTerrain: { hills: 2 },
-			},
-			[...players],
-		);
+		let state = createLegacyState(0, {
+			abilities: { fortifyBonus: 2 },
+			fortifyDefenseBonusByTerrain: { hills: 2 },
+		});
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "cavalry", "A", "E6");
 		state = addUnitToState(state, "B-1", "infantry", "B", "E7", {
@@ -1322,7 +1360,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("controlling multiple economy nodes grants long-horizon macro income", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		const b9Idx = hexIndex("B9");
 		const c8Idx = hexIndex("C8");
@@ -1347,7 +1385,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("comeback stipend applies when a player is behind on multiple axes", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = structuredClone(state);
 		state.players.A.vp = 5;
 		state.players.B.vp = 0;
@@ -1374,7 +1412,7 @@ describe("v2 engine - War of Attrition", () => {
 	// ---- Unit Stacking ----
 
 	test("same-type friendly units can stack on same hex", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "E10");
 		state = addUnitToState(state, "A-2", "infantry", "A", "E9");
@@ -1394,7 +1432,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("different-type friendly units cannot stack", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "E10");
 		state = addUnitToState(state, "A-2", "cavalry", "A", "E9");
@@ -1409,7 +1447,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("stack attack bonus increases ATK", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		// 2 infantry on same hex: ATK = 2 + 1 attacker + 1 stack = 4
 		state = addUnitToState(state, "A-1", "infantry", "A", "E10");
@@ -1433,7 +1471,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("moving a stacked unit moves entire stack", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		state = clearUnits(state);
 		state = addUnitToState(state, "A-1", "infantry", "A", "E10");
 		state = addUnitToState(state, "A-2", "infantry", "A", "E10");
@@ -1460,7 +1498,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("recruit requires empty stronghold (no stacking into stronghold)", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		// B2 has A-1 infantry on it already
 		const result = applyMove(state, {
 			action: "recruit",
@@ -1471,7 +1509,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("listLegalMoves includes upgrade for eligible base units", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const legalMoves = listLegalMoves(state);
 		expect(
 			legalMoves.some((m) => m.action === "upgrade" && m.unitId === "A-1"),
@@ -1479,7 +1517,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("upgrade converts base unit into tier 2 unit and spends resources", () => {
-		const state = createInitialState(0, undefined, [...players]);
+		const state = createLegacyState(0);
 		const beforeGold = state.players.A.gold;
 		const beforeWood = state.players.A.wood;
 		const result = applyMove(state, { action: "upgrade", unitId: "A-1" });
@@ -1500,7 +1538,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("cannot upgrade a tier 2 unit again", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		const first = applyMove(state, { action: "upgrade", unitId: "A-1" });
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
@@ -1510,7 +1548,7 @@ describe("v2 engine - War of Attrition", () => {
 	});
 
 	test("recruit does not allow tier 2 unit types", () => {
-		let state = createInitialState(0, undefined, [...players]);
+		let state = createLegacyState(0);
 		const moveOff = applyMove(state, {
 			action: "move",
 			unitId: "A-1",

@@ -15,6 +15,17 @@ beforeEach(async () => {
 });
 
 describe("error envelope contracts", () => {
+	it("auth-protected endpoints return { ok: false, error } when missing auth", async () => {
+		const res = await SELF.fetch("https://example.com/v1/queue/join", {
+			method: "POST",
+		});
+
+		expect(res.status).toBe(401);
+		const body = await res.json();
+		expectErrorEnvelope(body);
+		expect((body as Record<string, unknown>).code).toBe("unauthorized");
+	});
+
 	it("auth endpoints return { ok: false, error } on validation failures", async () => {
 		const res = await SELF.fetch("https://example.com/v1/auth/register", {
 			method: "POST",
