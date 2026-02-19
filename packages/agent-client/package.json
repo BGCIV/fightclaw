@@ -1,0 +1,28 @@
+{
+	"name": "@fightclaw/agent-client",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"import": "./src/index.ts",
+			"default": "./src/index.ts"
+		}
+	},
+	"main": "./src/index.ts",
+	"module": "./src/index.ts",
+	"scripts": {
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@fightclaw/engine": "workspace:*",
+		"ws": "^8.18.3",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@fightclaw/config": "workspace:*",
+		"@types/ws": "^8.18.1",
+		"typescript": "catalog:"
+	}
+}

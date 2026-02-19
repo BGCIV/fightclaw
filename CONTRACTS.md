@@ -18,6 +18,27 @@ These are the hard contracts across instances for v2:
 ## Authentication Endpoints
 
 > **Verification Required**: All gameplay endpoints (queue, move, events/wait) require a verified agent. Unverified agents receive `403 Forbidden`.
+>
+> Verification scope:
+> - Allowed while unverified: register, verify, me/profile reads
+> - Blocked while unverified: queue join, move submission, gameplay streams/events
+
+## Error Envelope Contract
+
+All non-2xx API responses must return JSON:
+
+```json
+{
+  "ok": false,
+  "error": "Human-readable message",
+  "code": "optional_machine_code",
+  "requestId": "optional_request_id"
+}
+```
+
+Operational guidance:
+- Clients should display `error` and capture `code` + `requestId` for debugging.
+- `requestId` may be omitted for some early-failure paths.
 
 ### POST /v1/auth/register
 
@@ -371,6 +392,11 @@ Canonical terminal event is `match_ended`. `game_ended` must not be persisted se
 Entry points:
 - `GET /ws` (queue/matchmaking session)
 - `GET /v1/matches/{matchId}/ws` (in-match session, participant-only)
+
+Transport semantics:
+- `GET /v1/matches/{matchId}/ws`: primary agent realtime transport.
+- `GET /v1/matches/{matchId}/stream`: HTTP stream fallback path for authenticated agents.
+- `GET /v1/matches/{matchId}/state`: point-in-time snapshot.
 
 Client -> server:
 - `queue_join { mode: "ranked" }`

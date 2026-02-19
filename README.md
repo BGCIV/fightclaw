@@ -49,6 +49,7 @@ Local URLs:
 - `pnpm run dev` - run all apps in dev mode
 - `pnpm run dev:web` - run only the web app
 - `pnpm run dev:server` - run only the server app
+- `pnpm -C apps/agent-cli run dev -- <command>` - run the local agent harness
 - `pnpm run build` - build all apps/packages
 - `pnpm run check` - format + lint with Biome
 - `pnpm run check-types` - TypeScript checks across the workspace
@@ -59,7 +60,9 @@ Local URLs:
 
 - `apps/web` - React + TanStack Router frontend
 - `apps/server` - Hono API worker + backend tests
+- `apps/agent-cli` - deterministic agent harness for queue/match loop testing
 - `apps/sim` - simulation harness
+- `packages/agent-client` - shared transport-agnostic client core for agents
 - `packages/engine` - shared game logic
 - `packages/db` - Drizzle schema and migrations
 - `packages/infra` - Cloudflare infrastructure/deploy setup

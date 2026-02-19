@@ -19,8 +19,16 @@ import { matchesRoutes } from "./routes/matches";
 import { internalPromptsRoutes, promptsRoutes } from "./routes/prompts";
 import { queueRoutes } from "./routes/queue";
 import { systemRoutes } from "./routes/system";
+import { sha256Hex } from "./utils/crypto";
 import { doFetchWithRetry } from "./utils/durable";
-import { forbidden, tooManyRequests } from "./utils/httpErrors";
+import {
+	badRequest,
+	forbidden,
+	notFound,
+	serviceUnavailable,
+	tooManyRequests,
+	unauthorized,
+} from "./utils/httpErrors";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
@@ -67,14 +75,45 @@ const getIpKey = (c: {
 	return `ip:${ip ?? "unknown"}`;
 };
 
-const getAgentKey = (c: {
+const getAgentKey = async (c: {
+	env: { API_KEY_PEPPER?: string };
 	req: { header: (name: string) => string | undefined };
 }) => {
 	const agentId = c.req.header("x-agent-id");
 	if (agentId) return `agent:${agentId}`;
 	const auth = c.req.header("authorization");
-	if (auth) return `auth:${auth}`;
+	if (auth) {
+		const pepper = c.env.API_KEY_PEPPER ?? "";
+		const hash = await sha256Hex(`${pepper}${auth}`);
+		return `auth:${hash.slice(0, 24)}`;
+	}
 	return getIpKey(c);
+};
+
+const isLocalHost = (host: string) => {
+	return (
+		host === "localhost" ||
+		host.startsWith("localhost:") ||
+		host === "127.0.0.1" ||
+		host.startsWith("127.0.0.1:") ||
+		host === "[::1]" ||
+		host.startsWith("[::1]:")
+	);
+};
+
+const isHttpsRequest = (c: {
+	req: {
+		url: string;
+		header: (name: string) => string | undefined;
+	};
+}) => {
+	const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim();
+	if (proto?.toLowerCase() === "https") return true;
+	try {
+		return new URL(c.req.url).protocol === "https:";
+	} catch {
+		return false;
+	}
 };
 
 const corsMiddleware = cors({
@@ -92,6 +131,15 @@ app.use("/*", async (c, next) => {
 	return corsMiddleware(c, next);
 });
 
+app.use("/*", async (c, next) => {
+	if (c.env.TEST_MODE) return next();
+	const host = c.req.header("host") ?? "";
+	if (isLocalHost(host) || isHttpsRequest(c)) {
+		return next();
+	}
+	return badRequest(c, "HTTPS is required.", { code: "https_required" });
+});
+
 app.options("/v1/internal/*", (c) => forbidden(c));
 
 // Internal runner protection contract (PR0).
@@ -102,7 +150,7 @@ app.use("/*", async (c, next) => {
 	const limiter = isRead ? c.env.READ_LIMIT : c.env.MOVE_SUBMIT_LIMIT;
 	if (!limiter) return next();
 
-	const key = isRead ? getIpKey(c) : getAgentKey(c);
+	const key = isRead ? getIpKey(c) : await getAgentKey(c);
 	const outcome = await limiter.limit({ key });
 	if (!outcome.success) return tooManyRequests(c);
 
@@ -154,15 +202,26 @@ app.get("/ws", async (c) => {
 	if (verifiedResponse) return verifiedResponse;
 
 	if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-		return c.text("Expected websocket upgrade.", 426);
+		return c.json(
+			{
+				ok: false,
+				error: "Expected websocket upgrade.",
+				code: "websocket_upgrade_required",
+				requestId: c.get("requestId"),
+			},
+			426,
+		);
 	}
 	const agentId = c.get("agentId");
-	if (!agentId) return c.text("Unauthorized", 401);
+	if (!agentId) return unauthorized(c);
 
 	const stub = getMatchmakerStub(c.env);
 	const upstream = await stub.fetch(c.req.raw);
 	if (upstream.status !== 101) {
-		return c.text(`WebSocket upgrade failed (${upstream.status}).`, 503);
+		return serviceUnavailable(
+			c,
+			`WebSocket upgrade failed (${upstream.status}).`,
+		);
 	}
 
 	return upstream;
@@ -173,12 +232,20 @@ app.get("/v1/matches/:id/ws", async (c) => {
 	if (verifiedResponse) return verifiedResponse;
 
 	if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-		return c.text("Expected websocket upgrade.", 426);
+		return c.json(
+			{
+				ok: false,
+				error: "Expected websocket upgrade.",
+				code: "websocket_upgrade_required",
+				requestId: c.get("requestId"),
+			},
+			426,
+		);
 	}
 
 	const agentId = c.get("agentId");
 	const matchId = c.req.param("id");
-	if (!agentId || !matchId) return c.text("Unauthorized", 401);
+	if (!agentId || !matchId) return unauthorized(c);
 
 	const matchmakerStub = getMatchmakerStub(c.env);
 	const queueStatusResp = await doFetchWithRetry(
@@ -191,13 +258,21 @@ app.get("/v1/matches/:id/ws", async (c) => {
 			},
 		},
 	);
-	if (!queueStatusResp.ok) return c.text("Forbidden", 403);
+	if (!queueStatusResp.ok) return forbidden(c);
 	const queueStatus = (await queueStatusResp.json()) as {
 		status?: string;
 		matchId?: string;
 	};
 	if (queueStatus.status !== "ready" || queueStatus.matchId !== matchId) {
-		return c.text("Agent is not currently matched to this match.", 409);
+		return c.json(
+			{
+				ok: false,
+				error: "Agent is not currently matched to this match.",
+				code: "agent_not_matched",
+				requestId: c.get("requestId"),
+			},
+			409,
+		);
 	}
 
 	const matchStub = getMatchStub(c.env, matchId);
@@ -207,7 +282,7 @@ app.get("/v1/matches/:id/ws", async (c) => {
 			"x-request-id": c.get("requestId"),
 		},
 	});
-	if (!stateResp.ok) return c.text("Match unavailable.", 404);
+	if (!stateResp.ok) return notFound(c, "Match unavailable.");
 	const statePayload = (await stateResp.json()) as {
 		state?: { players?: string[] } | null;
 	};
@@ -215,12 +290,15 @@ app.get("/v1/matches/:id/ws", async (c) => {
 		? statePayload.state?.players
 		: [];
 	if (!players.includes(agentId)) {
-		return c.text("Agent is not a participant in this match.", 403);
+		return forbidden(c);
 	}
 
 	const upstream = await matchStub.fetch(c.req.raw);
 	if (upstream.status !== 101) {
-		return c.text(`WebSocket upgrade failed (${upstream.status}).`, 503);
+		return serviceUnavailable(
+			c,
+			`WebSocket upgrade failed (${upstream.status}).`,
+		);
 	}
 
 	return upstream;
