@@ -36,8 +36,6 @@ systemRoutes.get("/v1/leaderboard", async (c) => {
 
 systemRoutes.get("/v1/agents/:id", async (c) => {
 	const agentId = c.req.param("id");
-	if (!agentId)
-		return c.json({ ok: false, error: "Agent id is required." }, 400);
 
 	try {
 		const agent = await c.env.DB.prepare(
@@ -76,6 +74,26 @@ systemRoutes.get("/v1/agents/:id", async (c) => {
 		)
 			.bind(agentId)
 			.all();
+		const recentMatches = (recent ?? []).map((row) => {
+			const match = row as {
+				id?: unknown;
+				status?: unknown;
+				created_at?: unknown;
+				ended_at?: unknown;
+				winner_agent_id?: unknown;
+				end_reason?: unknown;
+				final_state_version?: unknown;
+			};
+			return {
+				id: match.id,
+				status: match.status,
+				createdAt: match.created_at,
+				endedAt: match.ended_at,
+				winnerAgentId: match.winner_agent_id,
+				endReason: match.end_reason,
+				finalStateVersion: match.final_state_version,
+			};
+		});
 
 		return c.json({
 			agent: {
@@ -91,7 +109,7 @@ systemRoutes.get("/v1/agents/:id", async (c) => {
 				gamesPlayed: agent.games_played ?? 0,
 				updatedAt: agent.updated_at,
 			},
-			recentMatches: recent ?? [],
+			recentMatches,
 		});
 	} catch (error) {
 		console.error("Failed to load agent profile", error);

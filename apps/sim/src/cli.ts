@@ -6,6 +6,7 @@ import type {
 	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
+	ScenarioName,
 } from "./boardgameio/types";
 import { makeAggressiveBot } from "./bots/aggressiveBot";
 import { makeGreedyBot } from "./bots/greedyBot";
@@ -481,21 +482,6 @@ function buildDashboardExplainabilityData(inputDir: string): {
 	};
 }
 
-type ScenarioName =
-	| "melee"
-	| "ranged"
-	| "stronghold_rush"
-	| "midfield"
-	| "all_infantry"
-	| "all_cavalry"
-	| "all_archer"
-	| "infantry_archer"
-	| "cavalry_archer"
-	| "infantry_cavalry"
-	| "high_ground_clash"
-	| "forest_chokepoints"
-	| "resource_race";
-
 type CliContext = {
 	seed: number;
 	verbose: boolean;
@@ -537,7 +523,9 @@ function stringArg(argv: Args, ...keys: string[]): string | undefined {
 
 function parseStoreFlag(argv: Args, key: string, fallback: boolean): boolean {
 	const value = argv[key];
-	return typeof value === "string" ? value !== "false" : fallback;
+	if (typeof value === "boolean") return value;
+	if (typeof value === "string") return value !== "false";
+	return fallback;
 }
 
 function loadSummaryStatsOrExit(

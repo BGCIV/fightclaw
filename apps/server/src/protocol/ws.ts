@@ -25,7 +25,7 @@ export const moveSubmitSchema = z
 	.object({
 		type: z.literal("move_submit"),
 		matchId: z.string().uuid(),
-		moveId: z.string().min(1),
+		moveId: z.string().uuid(),
 		expectedVersion: z.number().int(),
 		move: MoveSchema,
 	})

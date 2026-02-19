@@ -425,8 +425,15 @@ function requireState(
 	if (!state) {
 		throw new Error("boardgame client state is null");
 	}
-	bindHarnessMatchState(state.G);
-	return state;
+	const matchState = bindHarnessMatchState(state.G);
+	if (state.G.matchState === matchState) return state;
+	return {
+		...state,
+		G: {
+			...state.G,
+			matchState,
+		},
+	};
 }
 
 function reportPlayerMappingDivergence(input: {

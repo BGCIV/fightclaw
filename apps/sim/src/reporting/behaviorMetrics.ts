@@ -312,7 +312,9 @@ function resolveArtifactsDir(input: string): string {
 	return direct;
 }
 
-type CommandAttempt = NonNullable<ArtifactTurn["commandAttempts"]>[number];
+type ArtifactCommandAttempt = NonNullable<
+	ArtifactTurn["commandAttempts"]
+>[number];
 type SideTurnEntry = { idx: number; state: ParsedState };
 type SideTurnIndex = Record<"A" | "B", SideTurnEntry[]>;
 type PhaseSpend = Record<"early" | "mid" | "late", number>;
@@ -351,18 +353,20 @@ function parseArtifactFile(filePath: string): Artifact | null {
 	}
 }
 
-function getAcceptedAttempts(attempts: CommandAttempt[]): CommandAttempt[] {
+function getAcceptedAttempts(
+	attempts: ArtifactCommandAttempt[],
+): ArtifactCommandAttempt[] {
 	return attempts.filter((attempt) => attempt.accepted);
 }
 
 function countAttemptsByAction(
-	attempts: CommandAttempt[],
+	attempts: ArtifactCommandAttempt[],
 	action: string,
 ): number {
 	return attempts.filter((attempt) => attempt.move.action === action).length;
 }
 
-function hasAnyReasoning(attempts: CommandAttempt[]): boolean {
+function hasAnyReasoning(attempts: ArtifactCommandAttempt[]): boolean {
 	return attempts.some(
 		(attempt) =>
 			typeof attempt.move?.reasoning === "string" &&
@@ -411,7 +415,7 @@ function addTurnResourceSpend(
 
 function accumulateTerrainInitiationMetrics(
 	before: ParsedState,
-	attackAttempts: CommandAttempt[],
+	attackAttempts: ArtifactCommandAttempt[],
 ): { fightsWithTerrainData: number; advantagedInitiations: number } {
 	if (attackAttempts.length === 0) {
 		return { fightsWithTerrainData: 0, advantagedInitiations: 0 };
@@ -444,8 +448,8 @@ function accumulateTerrainInitiationMetrics(
 function analyzeAttackSnapshotOutcome(
 	before: ParsedState,
 	after: ParsedState,
-	attackAttempts: CommandAttempt[],
-	acceptedAttempts: CommandAttempt[],
+	attackAttempts: ArtifactCommandAttempt[],
+	acceptedAttempts: ArtifactCommandAttempt[],
 ): AttackSnapshotOutcome {
 	let finisherOpportunities = 0;
 	let finisherSuccesses = 0;
@@ -493,7 +497,7 @@ function findNextSideTurnIndex(
 }
 
 function isAdaptedFollowup(
-	nextAcceptedAttempts: CommandAttempt[],
+	nextAcceptedAttempts: ArtifactCommandAttempt[],
 	currentAttackShare: number,
 ): boolean {
 	const nextAttackShare =
@@ -508,7 +512,7 @@ function isAdaptedFollowup(
 
 function maybeRecordUpgradeTurn(
 	turn: ArtifactTurn,
-	acceptedAttempts: CommandAttempt[],
+	acceptedAttempts: ArtifactCommandAttempt[],
 	turnNumber: number,
 	tracking: UpgradeTracking,
 ): void {

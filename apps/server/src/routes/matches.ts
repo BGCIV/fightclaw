@@ -4,6 +4,7 @@ import { createIdentity } from "../appContext";
 import type { AppBindings, AppVariables } from "../appTypes";
 import { requireAdminKey } from "../middleware/auth";
 import { withRequestId } from "../middleware/requestContext";
+import { parseBearerToken } from "../utils/auth";
 import { sha256Hex } from "../utils/crypto";
 import { doFetchWithRetry, isDurableObjectResetError } from "../utils/durable";
 import {
@@ -37,13 +38,6 @@ const parseJson = async (c: { req: { json: () => Promise<unknown> } }) => {
 	} catch {
 		return { ok: false as const, data: null };
 	}
-};
-
-const parseBearerToken = (authorization?: string) => {
-	if (!authorization) return null;
-	const [scheme, token] = authorization.split(" ");
-	if (scheme?.toLowerCase() !== "bearer" || !token) return null;
-	return token.trim();
 };
 
 const getMatchmakerStub = (c: { env: AppBindings }) => {
@@ -176,7 +170,10 @@ matchesRoutes.post("/v1/matches/:id/finish", requireAdminKey, async (c) => {
 		}
 	}
 	if (!agentId) {
-		return badRequest(c, "x-agent-id header is required.");
+		return badRequest(
+			c,
+			"Either x-agent-id header or Bearer token in Authorization header is required.",
+		);
 	}
 
 	const jsonResult = await parseJson(c);

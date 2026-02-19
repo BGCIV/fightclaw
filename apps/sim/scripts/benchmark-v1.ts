@@ -103,7 +103,8 @@ function parseStringArg(name: string, fallback: string): string {
 }
 
 function parseIntArg(name: string, fallback: number): number {
-	return Number.parseInt(parseStringArg(name, String(fallback)), 10);
+	const parsed = Number.parseInt(parseStringArg(name, String(fallback)), 10);
+	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function hasFlag(name: string): boolean {

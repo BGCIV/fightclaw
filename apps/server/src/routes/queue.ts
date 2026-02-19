@@ -17,7 +17,7 @@ const queueJoin = async (c: AppContext) => {
 	const agentId = c.get("agentId");
 	if (!agentId) return unauthorized(c);
 
-	let mode = "ranked" as const;
+	const mode = "ranked" as const;
 	try {
 		const contentType = c.req.header("content-type") ?? "";
 		if (contentType.includes("application/json")) {
@@ -29,7 +29,6 @@ const queueJoin = async (c: AppContext) => {
 						400,
 					);
 				}
-				mode = "ranked";
 			}
 		}
 	} catch {

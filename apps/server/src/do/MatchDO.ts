@@ -28,6 +28,7 @@ import {
 	type AgentWsOutbound,
 	agentWsInboundSchema,
 } from "../protocol/ws";
+import { parseBearerToken } from "../utils/auth";
 import { sha256Hex } from "../utils/crypto";
 import { isRecord } from "../utils/typeGuards";
 
@@ -107,13 +108,6 @@ const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const WS_DISCONNECT_GRACE_MS = 15_000;
 const ELO_K = 32;
 const DISCONNECT_DEADLINE_PREFIX = "disconnect:";
-
-const parseBearerToken = (authorization?: string | null) => {
-	if (!authorization) return null;
-	const [scheme, token] = authorization.split(" ");
-	if (scheme?.toLowerCase() !== "bearer" || !token) return null;
-	return token.trim();
-};
 
 const initPayloadSchema = z
 	.object({
@@ -470,7 +464,9 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		const direct = request.headers.get("x-agent-id");
 		if (direct) return direct;
 
-		const token = parseBearerToken(request.headers.get("authorization"));
+		const token = parseBearerToken(
+			request.headers.get("authorization") ?? undefined,
+		);
 		if (!token || !this.env.API_KEY_PEPPER) return null;
 		const hash = await sha256Hex(`${this.env.API_KEY_PEPPER}${token}`);
 		const row = await this.env.DB.prepare(

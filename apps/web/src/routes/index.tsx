@@ -1,6 +1,7 @@
 import {
 	applyMove,
 	createInitialState,
+	DEFAULT_CONFIG,
 	type EngineConfigInput,
 	type EngineEvent,
 	type MatchState,
@@ -533,13 +534,43 @@ function parseReplayEngineConfig(
 	input: unknown,
 ): EngineConfigInput | undefined {
 	if (!isRecord(input)) return undefined;
-	const boardColumns = input.boardColumns;
-	if (
-		boardColumns !== undefined &&
-		boardColumns !== 17 &&
-		boardColumns !== 21
-	) {
+	const sanitized = sanitizeEngineConfigInput(input, DEFAULT_CONFIG);
+	return sanitized as EngineConfigInput | undefined;
+}
+
+function sanitizeEngineConfigInput(
+	input: unknown,
+	template: unknown,
+	path = "",
+): unknown | undefined {
+	if (typeof template === "number") {
+		if (typeof input !== "number" || !Number.isFinite(input)) {
+			return undefined;
+		}
+		if (path === "boardColumns" && input !== 17 && input !== 21) {
+			return undefined;
+		}
+		return input;
+	}
+	if (!isRecord(template) || Array.isArray(template)) {
 		return undefined;
 	}
-	return input as EngineConfigInput;
+	if (!isRecord(input)) {
+		return undefined;
+	}
+	const out: Record<string, unknown> = {};
+	for (const key of Object.keys(template)) {
+		if (!(key in input)) continue;
+		const nextPath = path ? `${path}.${key}` : key;
+		const sanitized = sanitizeEngineConfigInput(
+			input[key],
+			(template as Record<string, unknown>)[key],
+			nextPath,
+		);
+		if (sanitized === undefined) {
+			return undefined;
+		}
+		out[key] = sanitized;
+	}
+	return out;
 }

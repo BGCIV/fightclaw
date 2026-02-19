@@ -260,7 +260,8 @@ function DevLayout() {
 
 		const step = selectedMatch.steps[replayPly];
 		if (!step) return;
-		const replayState = replayStateRef.current ?? selectedMatch.initialState;
+		const replayState =
+			replayStateRef.current ?? bindReplayState(selectedMatch);
 		const result = applyMove(replayState, step.move);
 		if (!result.ok) {
 			setActionLog((prev) =>
@@ -288,7 +289,7 @@ function DevLayout() {
 			[`[${replayPly}] ${step.playerID}: ${moveText}`, ...prev].slice(0, 200),
 		);
 		setReplayPly((p) => p + 1);
-	}, [selectedMatch, replayPly, enqueue]);
+	}, [selectedMatch, replayPly, bindReplayState, enqueue]);
 
 	useEffect(() => {
 		if (mode !== "replay" || !selectedMatch) {

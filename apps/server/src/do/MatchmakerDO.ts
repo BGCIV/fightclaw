@@ -10,6 +10,7 @@ import {
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
 import { type AgentWsOutbound, agentWsInboundSchema } from "../protocol/ws";
+import { parseBearerToken } from "../utils/auth";
 import { sha256Hex } from "../utils/crypto";
 import { doFetchWithRetry } from "../utils/durable";
 import { isRecord } from "../utils/typeGuards";
@@ -26,6 +27,7 @@ const ACTIVE_MATCH_PREFIX = "activeMatch:";
 const RECENT_PREFIX = "recent:";
 const QUEUE_TTL_MS = 10 * 60 * 1000;
 const FEATURED_STREAM_INTERVAL_MS = 1000;
+const WS_QUEUE_LEAVE_GRACE_MS = 15_000;
 
 type MatchmakerEnv = {
 	DB: D1Database;
@@ -65,16 +67,13 @@ type FeaturedSnapshot = {
 };
 type FeaturedCache = FeaturedSnapshot & { checkedAt: number };
 
-const parseBearerToken = (authorization?: string | null) => {
-	if (!authorization) return null;
-	const [scheme, token] = authorization.split(" ");
-	if (scheme?.toLowerCase() !== "bearer" || !token) return null;
-	return token.trim();
-};
-
 export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	private waiters = new Map<string, Set<(event: MatchmakerEvent) => void>>();
 	private sessions = new Map<string, Set<WebSocket>>();
+	private pendingQueueLeaveTimers = new Map<
+		string,
+		ReturnType<typeof setTimeout>
+	>();
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
@@ -92,6 +91,10 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			await this.ctx.storage.deleteAll();
 			this.waiters.clear();
 			this.sessions.clear();
+			for (const timeout of this.pendingQueueLeaveTimers.values()) {
+				clearTimeout(timeout);
+			}
+			this.pendingQueueLeaveTimers.clear();
 			return Response.json({ ok: true });
 		}
 
@@ -259,7 +262,9 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		const direct = request.headers.get("x-agent-id");
 		if (direct) return direct;
 
-		const token = parseBearerToken(request.headers.get("authorization"));
+		const token = parseBearerToken(
+			request.headers.get("authorization") ?? undefined,
+		);
 		if (!token || !this.env.API_KEY_PEPPER) return null;
 		const hash = await sha256Hex(`${this.env.API_KEY_PEPPER}${token}`);
 		const row = await this.env.DB.prepare(
@@ -298,6 +303,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		if (!agentId) return new Response("Agent id is required.", { status: 400 });
 
 		socket.accept();
+		this.clearPendingQueueLeave(agentId);
 		const existing = this.sessions.get(agentId) ?? new Set<WebSocket>();
 		existing.add(socket);
 		this.sessions.set(agentId, existing);
@@ -368,6 +374,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			}
 
 			if (envelope.data.type === "queue_join") {
+				this.clearPendingQueueLeave(agentId);
 				void this.handleQueueJoin(
 					new Request("https://do/queue/join", {
 						method: "POST",
@@ -424,12 +431,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			sockets.delete(socket);
 			if (sockets.size === 0) {
 				this.sessions.delete(agentId);
-				void this.handleQueueLeave(
-					new Request("https://do/queue/leave", {
-						method: "DELETE",
-						headers: { "x-agent-id": agentId },
-					}),
-				);
+				this.schedulePendingQueueLeave(agentId);
 			}
 		};
 		socket.addEventListener("close", cleanup);
@@ -678,6 +680,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 					{ status: 400 },
 				);
 			}
+			this.clearPendingQueueLeave(agentId);
 
 			const activeMatch = await this.resolveActiveMatch(agentId);
 			if (activeMatch) {
@@ -855,6 +858,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 					{ status: 400 },
 				);
 			}
+			this.clearPendingQueueLeave(agentId);
 
 			const activeMatch = await this.resolveActiveMatch(agentId);
 			if (activeMatch) {
@@ -1286,5 +1290,32 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		if (waiters.size === 0) {
 			this.waiters.delete(agentId);
 		}
+	}
+
+	private clearPendingQueueLeave(agentId: string): void {
+		const timeout = this.pendingQueueLeaveTimers.get(agentId);
+		if (!timeout) return;
+		clearTimeout(timeout);
+		this.pendingQueueLeaveTimers.delete(agentId);
+	}
+
+	private schedulePendingQueueLeave(agentId: string): void {
+		this.clearPendingQueueLeave(agentId);
+		const timeout = setTimeout(() => {
+			void this.withQueueMutex(async () => {
+				this.pendingQueueLeaveTimers.delete(agentId);
+				const sockets = this.sessions.get(agentId);
+				if (sockets && sockets.size > 0) {
+					return;
+				}
+				await this.handleQueueLeave(
+					new Request("https://do/queue/leave", {
+						method: "DELETE",
+						headers: { "x-agent-id": agentId },
+					}),
+				);
+			});
+		}, WS_QUEUE_LEAVE_GRACE_MS);
+		this.pendingQueueLeaveTimers.set(agentId, timeout);
 	}
 }

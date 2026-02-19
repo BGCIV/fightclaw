@@ -218,8 +218,18 @@ const BOARD_17_CANONICAL_COL_MAP = [
 ] as const;
 
 function inferBoardColumnsFromBoard(board: HexState[]): 17 | 21 {
+	if (board.length % ROWS !== 0) {
+		throw new Error(
+			`Invalid board length=${board.length}; expected multiple of ROWS=${ROWS}`,
+		);
+	}
 	const inferred = board.length / ROWS;
-	return inferred === 17 ? 17 : 21;
+	if (inferred !== 17 && inferred !== 21) {
+		throw new Error(
+			`Invalid inferred board columns=${inferred} from board length=${board.length}`,
+		);
+	}
+	return inferred;
 }
 
 // ---------------------------------------------------------------------------
