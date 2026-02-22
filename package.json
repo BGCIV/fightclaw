@@ -35,12 +35,6 @@
 		"test": "turbo -F server test",
 		"test:durable": "turbo -F server test:durable"
 	},
-	"dependencies": {
-		"@fightclaw/env": "workspace:*",
-		"alchemy": "^0.83.1",
-		"dotenv": "catalog:",
-		"zod": "catalog:"
-	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.0",
 		"@cloudflare/workers-types": "catalog:",
