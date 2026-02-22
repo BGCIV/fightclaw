@@ -9,4 +9,19 @@ Do **not** run `pnpm -C apps/server exec wrangler deploy ...` or any other direc
 
 ## Drift Audits and Legacy Cleanup
 
-Run `pnpm run audit:cloudflare` (`scripts/cloudflare-audit-workers.sh`) whenever you want to prove the canonical deployment is reachable and the legacy `fightclaw-server` worker/service stays deleted. That script uses Wrangler to query deployments status, curls the production `/v1/system/version`, and ensures the legacy workers.dev endpoint responds with `404`.
+Run `pnpm run audit:cloudflare` (`scripts/cloudflare-audit-workers.sh`) whenever you want to prove the production surface remains hardened.
+
+The audit enforces:
+
+- Canonical worker deployment is present and has an active version.
+- Deployed bindings/vars/secrets include the required production set.
+- Secret inventory has no extras beyond the expected production keys.
+- Production `/v1/system/version` reports `environment=production`.
+- `/v1/queue/status` is `401` and `/v1/admin/agents/:id/disable` is `403` unauthenticated.
+- Legacy `fightclaw-server` workers.dev endpoint is `404`.
+- Canonical `fightclaw-server-production` workers.dev endpoint is `404` (`workers_dev = false`).
+- Legacy worker service is absent.
+
+Optional (CI-friendly) Pages inventory check:
+
+- Set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` and the audit will assert exactly one Pages project named `fightclaw` exists in the account.
