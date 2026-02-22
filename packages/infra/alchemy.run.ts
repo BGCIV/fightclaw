@@ -3,7 +3,6 @@ import {
 	AnalyticsEngineDataset,
 	D1Database,
 	DurableObjectNamespace,
-	RateLimit,
 	VersionMetadata,
 	Worker,
 } from "alchemy/cloudflare";
@@ -28,30 +27,14 @@ const match = DurableObjectNamespace("match", {
 	sqlite: true,
 });
 
-const moveSubmitLimit = RateLimit({
-	namespace_id: 1001,
-	simple: {
-		limit: 30,
-		period: 10,
-	},
-});
-
-const readLimit = RateLimit({
-	namespace_id: 1002,
-	simple: {
-		limit: 300,
-		period: 60,
-	},
-});
-
 const obs = AnalyticsEngineDataset("obs", {
-	dataset: "FIGHTCLAW_METRICS",
+	dataset: "FIGHTCLAW_OBS",
 });
 
 const versionMetadata = VersionMetadata();
 
 export const server = await Worker("server", {
-	name: "fightclaw-server",
+	name: "fightclaw-server-production",
 	cwd: "../../apps/server",
 	entrypoint: "src/index.ts",
 	compatibility: "node",
@@ -64,17 +47,12 @@ export const server = await Worker("server", {
 		PROMPT_ENCRYPTION_KEY: alchemy.secret(
 			process.env.PROMPT_ENCRYPTION_KEY ?? "",
 		),
-		SENTRY_DSN: alchemy.secret(process.env.SENTRY_DSN ?? ""),
-		SENTRY_ENVIRONMENT: app.stage,
-		SENTRY_TRACES_SAMPLE_RATE:
-			process.env.SENTRY_TRACES_SAMPLE_RATE ??
-			(app.stage === "production" ? "0.1" : "1.0"),
+		SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT ?? "production",
+		SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0",
 		CF_VERSION_METADATA: versionMetadata,
 		OBS: obs,
 		MATCHMAKER: matchmaker,
 		MATCH: match,
-		MOVE_SUBMIT_LIMIT: moveSubmitLimit,
-		READ_LIMIT: readLimit,
 	},
 	dev: {
 		port: 3000,
