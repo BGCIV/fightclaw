@@ -16,8 +16,8 @@ if ! command -v jq >/dev/null 2>&1; then
 	exit 1
 fi
 
-echo "Deploying $WORKER_NAME..."
-pnpm -C apps/server exec wrangler deploy --env production --name "$WORKER_NAME"
+echo "Deploying canonical stack via pnpm run deploy..."
+pnpm run deploy
 
 echo "Running post-deploy checks..."
 VERSION_JSON="$(curl -fsS "$BASE_URL/v1/system/version")"

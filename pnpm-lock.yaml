@@ -28,19 +28,6 @@ catalogs:
 importers:
 
   .:
-    dependencies:
-      '@fightclaw/env':
-        specifier: workspace:*
-        version: link:packages/env
-      alchemy:
-        specifier: ^0.83.1
-        version: 0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0))
-      dotenv:
-        specifier: 'catalog:'
-        version: 17.2.3
-      zod:
-        specifier: 'catalog:'
-        version: 4.3.6
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.2.0
@@ -4174,64 +4161,6 @@ packages:
       vite:
         optional: true
 
-  alchemy@0.83.2:
-    resolution: {integrity: sha512-WElJnaPthrLI4feBX2t4mgVL2BTHDe+SfzBrTxIPb9GS+xQwdBNcBuleB0x0GQbHFINUSlbt/YSr9uz6SnUp/Q==}
-    hasBin: true
-    peerDependencies:
-      '@astrojs/cloudflare': ^12.6.4
-      '@aws-sdk/client-dynamodb': ^3.0.0
-      '@aws-sdk/client-iam': ^3.0.0
-      '@aws-sdk/client-lambda': ^3.0.0
-      '@aws-sdk/client-s3': ^3.0.0
-      '@aws-sdk/client-sesv2': ^3.0.0
-      '@aws-sdk/client-sqs': ^3.0.0
-      '@aws-sdk/client-ssm': ^3.0.0
-      '@aws-sdk/client-sts': ^3.0.0
-      '@cloudflare/vite-plugin': ^1.21.2
-      '@coinbase/cdp-sdk': ^0.10.0
-      '@libsql/client': ^0.15.12
-      '@opennextjs/cloudflare': ^1.6.5
-      astro: ^5.13.2
-      rwsdk: ^1.0.0-beta.51
-      stripe: ^18.5.0
-      vite: '>=6.0.0'
-      wrangler: ^4.60.0
-    peerDependenciesMeta:
-      '@astrojs/cloudflare':
-        optional: true
-      '@aws-sdk/client-dynamodb':
-        optional: true
-      '@aws-sdk/client-iam':
-        optional: true
-      '@aws-sdk/client-lambda':
-        optional: true
-      '@aws-sdk/client-s3':
-        optional: true
-      '@aws-sdk/client-sesv2':
-        optional: true
-      '@aws-sdk/client-sqs':
-        optional: true
-      '@aws-sdk/client-ssm':
-        optional: true
-      '@aws-sdk/client-sts':
-        optional: true
-      '@cloudflare/vite-plugin':
-        optional: true
-      '@coinbase/cdp-sdk':
-        optional: true
-      '@libsql/client':
-        optional: true
-      '@opennextjs/cloudflare':
-        optional: true
-      astro:
-        optional: true
-      rwsdk:
-        optional: true
-      stripe:
-        optional: true
-      vite:
-        optional: true
-
   ansi-escapes@6.2.1:
     resolution: {integrity: sha512-4nJ3yixlEthEJ9Rk4vPcdBRkZvQZlYyu8j4/Mqz5sgIkddmEnH2Yj2ZrnP9S3tQOvSNRUIgVNF/1yPpRAGNRig==}
     engines: {node: '>=14.16'}
@@ -5792,14 +5721,8 @@ packages:
   libsodium-wrappers@0.7.16:
     resolution: {integrity: sha512-Gtr/WBx4dKjvRL1pvfwZqu7gO6AfrQ0u9vFL+kXihtHf6NfkROR8pjYWn98MFDI3jN19Ii1ZUfPR9afGiPyfHg==}
 
-  libsodium-wrappers@0.8.2:
-    resolution: {integrity: sha512-VFLmfxkxo+U9q60tjcnSomQBRx2UzlRjKWJqvB4K1pUqsMQg4cu3QXA2nrcsj9A1qRsnJBbi2Ozx1hsiDoCkhw==}
-
   libsodium@0.7.16:
     resolution: {integrity: sha512-3HrzSPuzm6Yt9aTYCDxYEG8x8/6C0+ag655Y7rhhWZM9PT4NpdnbqlzXhGZlDnkgR6MeSTnOt/VIyHLs9aSf+Q==}
-
-  libsodium@0.8.2:
-    resolution: {integrity: sha512-TsnGYMoZtpweT+kR+lOv5TVsnJ/9U0FZOsLFzFOMWmxqOAYXjX3fsrPAW+i1LthgDKXJnI9A8dWEanT1tnJKIw==}
 
   libsql@0.5.22:
     resolution: {integrity: sha512-NscWthMQt7fpU8lqd7LXMvT9pi+KhhmTHAJWUB/Lj6MWa0MKFv0F2V4C6WKKpjCVZl0VwcDz4nOI3CyaT1DDiA==}
@@ -11922,74 +11845,6 @@ snapshots:
       - utf-8-validate
       - workerd
 
-  alchemy@0.83.2(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)(vite@6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))(workerd@1.20260131.0)(wrangler@4.62.0(@cloudflare/workers-types@4.20260203.0)):
-    dependencies:
-      '@aws-sdk/credential-providers': 3.982.0
-      '@cloudflare/unenv-preset': 2.7.7(unenv@2.0.0-rc.21)(workerd@1.20260131.0)
-      '@cloudflare/workers-types': 4.20260203.0
-      '@iarna/toml': 2.2.5
-      '@octokit/rest': 21.1.1
-      '@smithy/node-config-provider': 4.3.8
-      '@smithy/types': 4.12.0
-      aws4fetch: 1.0.20
-      drizzle-orm: 0.45.1(@cloudflare/workers-types@4.20260203.0)(@libsql/client@0.15.15)(@opentelemetry/api@1.9.0)(bun-types@1.3.9)
-      env-paths: 3.0.0
-      esbuild: 0.25.12
-      execa: 9.6.1
-      fast-json-patch: 3.1.1
-      fast-xml-parser: 5.3.4
-      find-process: 2.0.0
-      glob: 10.5.0
-      jszip: 3.10.1
-      libsodium-wrappers: 0.8.2
-      miniflare: 4.20260131.0
-      neverthrow: 8.2.0
-      open: 10.2.0
-      openapi-types: 12.1.3
-      pathe: 2.0.3
-      picocolors: 1.1.1
-      proper-lockfile: 4.1.2
-      signal-exit: 4.1.0
-      unenv: 2.0.0-rc.21
-      wrangler: 4.62.0(@cloudflare/workers-types@4.20260203.0)
-      ws: 8.19.0
-      yaml: 2.8.2
-    optionalDependencies:
-      '@libsql/client': 0.15.15
-      vite: 6.4.1(@types/node@22.19.8)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
-    transitivePeerDependencies:
-      - '@aws-sdk/client-rds-data'
-      - '@electric-sql/pglite'
-      - '@libsql/client-wasm'
-      - '@neondatabase/serverless'
-      - '@op-engineering/op-sqlite'
-      - '@opentelemetry/api'
-      - '@planetscale/database'
-      - '@prisma/client'
-      - '@tidbcloud/serverless'
-      - '@types/better-sqlite3'
-      - '@types/pg'
-      - '@types/sql.js'
-      - '@upstash/redis'
-      - '@vercel/postgres'
-      - '@xata.io/client'
-      - aws-crt
-      - better-sqlite3
-      - bufferutil
-      - bun-types
-      - expo-sqlite
-      - gel
-      - knex
-      - kysely
-      - mysql2
-      - pg
-      - postgres
-      - prisma
-      - sql.js
-      - sqlite3
-      - utf-8-validate
-      - workerd
-
   ansi-escapes@6.2.1: {}
 
   ansi-regex@5.0.1: {}
@@ -13640,13 +13495,7 @@ snapshots:
     dependencies:
       libsodium: 0.7.16
 
-  libsodium-wrappers@0.8.2:
-    dependencies:
-      libsodium: 0.8.2
-
   libsodium@0.7.16: {}
-
-  libsodium@0.8.2: {}
 
   libsql@0.5.22:
     dependencies:
