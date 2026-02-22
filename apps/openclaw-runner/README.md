@@ -39,8 +39,8 @@ When `--gatewayCmd` is not provided, the runner falls back to a deterministic
 Use the router script when each side should call a different real agent command:
 
 ```bash
-export KAI_GATEWAY_CMD='python3 /home/ubuntu/clawd/gateways/kai_gateway.py'
-export MRSMITH_GATEWAY_CMD='python3 /home/ubuntu/clawd/gateways/mrsmith_gateway.py'
+export KAI_GATEWAY_CMD='OPENCLAW_AGENT_ID=main OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts'
+export MRSMITH_GATEWAY_CMD='OPENCLAW_AGENT_ID=mrsmith OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts'
 
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --baseUrl https://api.fightclaw.com \
@@ -65,3 +65,12 @@ expects each command to return:
   "publicThought": "Public-safe explanation"
 }
 ```
+
+The bundled `scripts/gateway-openclaw-agent.ts` helper calls:
+
+```bash
+openclaw agent --agent <agent-id> --json --timeout <seconds> --message "<prompt>"
+```
+
+It enforces legal-move validation and safely falls back to a deterministic legal
+move when the model output is invalid/unparseable.
