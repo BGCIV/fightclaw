@@ -147,7 +147,7 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
-			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
+			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
 };
@@ -218,6 +218,7 @@ const invokeGateway = async (
 	command: string,
 	input: {
 		agentId: string;
+		agentName: string;
 		matchId: string;
 		stateVersion: number;
 		state: unknown;
@@ -281,6 +282,7 @@ const fallbackMove: Move = {
 const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
+	agentName: string,
 	gatewayCmd?: string,
 ): MoveProvider => ({
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
@@ -288,6 +290,7 @@ const createMoveProvider = (
 		if (gatewayCmd) {
 			const gateway = await invokeGateway(gatewayCmd, {
 				agentId,
+				agentName,
 				matchId,
 				stateVersion,
 				state,
@@ -329,6 +332,8 @@ const runDuel = async (args: ArgMap) => {
 	const strategyA = asString(args.strategyA);
 	const strategyB = asString(args.strategyB);
 	const gatewayCmd = asString(args.gatewayCmd);
+	const gatewayCmdA = asString(args.gatewayCmdA) ?? gatewayCmd;
+	const gatewayCmdB = asString(args.gatewayCmdB) ?? gatewayCmd;
 	const moveTimeoutMs = asInt(args.moveTimeoutMs, 4_000);
 
 	if (!adminKey) throw new Error("--adminKey or ADMIN_KEY is required.");
@@ -399,12 +404,14 @@ const runDuel = async (args: ArgMap) => {
 	const moveProviderA = createMoveProvider(
 		runnerClientA,
 		registeredA.agentId,
-		gatewayCmd,
+		nameA,
+		gatewayCmdA,
 	);
 	const moveProviderB = createMoveProvider(
 		runnerClientB,
 		registeredB.agentId,
-		gatewayCmd,
+		nameB,
+		gatewayCmdB,
 	);
 
 	const [resultA, resultB]: [RunMatchResult, RunMatchResult] =
