@@ -4,6 +4,7 @@ set -euo pipefail
 WORKER_NAME="${WORKER_NAME:-fightclaw-server-production}"
 BASE_URL="${BASE_URL:-https://api.fightclaw.com}"
 EXPECTED_ENV="${EXPECTED_ENV:-production}"
+DUMMY_AGENT_ID="${DUMMY_AGENT_ID:-00000000-0000-0000-0000-000000000000}"
 
 if [[ "$WORKER_NAME" != "fightclaw-server-production" ]]; then
 	echo "Refusing deploy: WORKER_NAME must be fightclaw-server-production." >&2
@@ -33,9 +34,9 @@ if [[ "$QUEUE_CODE" != "401" ]]; then
 	exit 1
 fi
 
-ADMIN_CODE="$(curl -s -o /tmp/fightclaw_admin_agents.json -w '%{http_code}' "$BASE_URL/v1/admin/agents")"
+ADMIN_CODE="$(curl -s -o /tmp/fightclaw_admin_agents.json -w '%{http_code}' -X POST "$BASE_URL/v1/admin/agents/$DUMMY_AGENT_ID/disable")"
 if [[ "$ADMIN_CODE" != "403" ]]; then
-	echo "Unexpected /v1/admin/agents code: $ADMIN_CODE (expected 403)." >&2
+	echo "Unexpected /v1/admin/agents/:id/disable code: $ADMIN_CODE (expected 403)." >&2
 	exit 1
 fi
 
