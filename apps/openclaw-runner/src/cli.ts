@@ -8,6 +8,7 @@ import {
 	runMatch,
 } from "@fightclaw/agent-client";
 import type { Move } from "@fightclaw/engine";
+import { MatchContextStore } from "./match-context";
 
 type ArgMap = Record<string, string | boolean>;
 
@@ -147,7 +148,7 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
-			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
+			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000] [--singleActionTurns 1]",
 		].join("\n"),
 	);
 };
@@ -222,6 +223,8 @@ const invokeGateway = async (
 		matchId: string;
 		stateVersion: number;
 		state: unknown;
+		strategyPrompt: string;
+		turnContext?: unknown;
 	},
 ): Promise<GatewayMoveResult | null> => {
 	return await new Promise((resolve, reject) => {
@@ -283,17 +286,45 @@ const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
 	agentName: string,
+	strategyPrompt: string,
+	matchContextStore: MatchContextStore,
 	gatewayCmd?: string,
+	options?: { singleActionTurns?: boolean },
 ): MoveProvider => ({
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
 		const state = await client.getMatchState(matchId);
+		const game = (state.state?.game ?? null) as {
+			actionsRemaining?: number;
+		} | null;
+		if (
+			options?.singleActionTurns &&
+			typeof game?.actionsRemaining === "number" &&
+			game.actionsRemaining <= 5
+		) {
+			return {
+				action: "end_turn",
+				reasoning: "Ending turn after one action for stable realtime cadence.",
+			};
+		}
 		if (gatewayCmd) {
+			let turnContext: unknown;
+			try {
+				turnContext = await matchContextStore.buildTurnContext({
+					matchId,
+					agentId,
+					state,
+				});
+			} catch {
+				turnContext = undefined;
+			}
 			const gateway = await invokeGateway(gatewayCmd, {
 				agentId,
 				agentName,
 				matchId,
 				stateVersion,
 				state,
+				strategyPrompt,
+				...(turnContext === undefined ? {} : { turnContext }),
 			});
 			if (gateway?.move) {
 				const thought =
@@ -335,6 +366,7 @@ const runDuel = async (args: ArgMap) => {
 	const gatewayCmdA = asString(args.gatewayCmdA) ?? gatewayCmd;
 	const gatewayCmdB = asString(args.gatewayCmdB) ?? gatewayCmd;
 	const moveTimeoutMs = asInt(args.moveTimeoutMs, 4_000);
+	const singleActionTurns = asString(args.singleActionTurns) === "1";
 
 	if (!adminKey) throw new Error("--adminKey or ADMIN_KEY is required.");
 	if (!runnerKey)
@@ -400,18 +432,31 @@ const runDuel = async (args: ArgMap) => {
 		runnerId,
 		registeredB.agentId,
 	);
+	const matchContextStore = new MatchContextStore({
+		baseUrl,
+		adminKey,
+		onError: (error) => {
+			console.warn(error.message);
+		},
+	});
 
 	const moveProviderA = createMoveProvider(
 		runnerClientA,
 		registeredA.agentId,
 		nameA,
+		strategyA,
+		matchContextStore,
 		gatewayCmdA,
+		{ singleActionTurns },
 	);
 	const moveProviderB = createMoveProvider(
 		runnerClientB,
 		registeredB.agentId,
 		nameB,
+		strategyB,
+		matchContextStore,
 		gatewayCmdB,
+		{ singleActionTurns },
 	);
 
 	const [resultA, resultB]: [RunMatchResult, RunMatchResult] =

@@ -296,6 +296,18 @@ export const runMatch = async (
 						}
 
 						if (!response.ok) {
+							// Keep trying within the same turn on non-terminal rejections
+							// (e.g. invalid/stale move), otherwise one bad move can deadlock
+							// the runner waiting for another your_turn event that never comes.
+							const currentVersion =
+								typeof response.stateVersion === "number"
+									? response.stateVersion
+									: expectedVersion;
+							if (currentVersion >= expectedVersion) {
+								expectedVersion = currentVersion;
+								actionsApplied += 1;
+								continue;
+							}
 							break;
 						}
 

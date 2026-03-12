@@ -69,8 +69,66 @@ expects each command to return:
 The bundled `scripts/gateway-openclaw-agent.ts` helper calls:
 
 ```bash
-openclaw agent --agent <agent-id> --json --timeout <seconds> --message "<prompt>"
+openclaw agent --agent <agent-id> [--local | --channel <channel>] --session-id <match-session-id> --json --timeout <seconds> --message "<prompt>"
 ```
 
 It enforces legal-move validation and safely falls back to a deterministic legal
 move when the model output is invalid/unparseable.
+
+It also uses per-match persistent sessions (`--session-id`) and sends heavy
+setup instructions only once per match session, then continues with compact
+turn payload messages.
+
+## Local Kai vs MrSmith (No WhatsApp)
+
+Run the full local duel flow in one command:
+
+```bash
+./scripts/run-local-openclaw-duel.sh
+```
+
+What this does:
+
+- loads `apps/server/.env` (if present) for `ADMIN_KEY` and `INTERNAL_RUNNER_KEY`
+- defaults to local API `http://127.0.0.1:3000`
+- routes Kai and MrSmith through `gateway-openclaw-router.ts`
+- invokes per-side OpenClaw agent commands via `gateway-openclaw-agent.ts`
+- uses internal move submission only (no WhatsApp channel required)
+
+Useful overrides:
+
+```bash
+BASE_URL=http://127.0.0.1:3000 \
+RUNNER_ID=openclaw-local-01 \
+OPENCLAW_SSH_TARGET=user@remote-host \
+KAI_OPENCLAW_AGENT_ID=main \
+MRSMITH_OPENCLAW_AGENT_ID=mrsmith \
+KAI_NAME=Kai-local \
+MRSMITH_NAME=MrSmith-local \
+STRATEGY_A="Hold center and trade efficiently." \
+STRATEGY_B="Pressure stronghold flanks and force tempo." \
+./scripts/run-local-openclaw-duel.sh
+```
+
+If `OPENCLAW_SSH_TARGET` is unset, the gateway uses the local `openclaw`
+binary. If set, agent calls are routed over SSH.
+
+`run-local-openclaw-duel.sh` fails fast when SSH target is unreachable and
+auto-raises low `MOVE_TIMEOUT_MS` values to prevent timed safety fallback loops.
+
+Advanced: set `KAI_GATEWAY_CMD` and/or `MRSMITH_GATEWAY_CMD` explicitly to
+override per-side gateway commands (useful for deterministic smoke tests or
+custom model routes).
+
+Optional gateway helper env vars:
+
+- `OPENCLAW_AGENT_LOCAL`:
+  - defaults to `0` in `run-local-openclaw-duel.sh`
+  - when enabled, uses `openclaw agent --local` (channel-independent turn calls)
+- `OPENCLAW_AGENT_CHANNEL`:
+  - defaults to `last`
+  - only used when `OPENCLAW_AGENT_LOCAL` is disabled
+- `OPENCLAW_SESSION_ID`:
+  - force a custom session id (otherwise derives from `matchId + agent`)
+- `OPENCLAW_BOOTSTRAP_CACHE_DIR`:
+  - directory used to store one-time bootstrap markers (defaults to OS tmp dir)
