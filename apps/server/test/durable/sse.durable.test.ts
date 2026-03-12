@@ -3,6 +3,7 @@ import { currentPlayer, listLegalMoves } from "@fightclaw/engine";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
 	bindRunnerAgent,
+	openSse,
 	readSseUntil,
 	resetDb,
 	runnerHeaders,
@@ -14,6 +15,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	await resetDb();
 	// Allow stream aborts to propagate and DOs to settle before next test.
 	await new Promise((resolve) => setTimeout(resolve, 100));
 });
@@ -21,24 +23,6 @@ afterEach(async () => {
 const SSE_TIMEOUT_MS = 15000;
 const SSE_MAX_BYTES = 1_000_000;
 const TEST_TIMEOUT_MS = SSE_TIMEOUT_MS + 5000;
-
-const openSse = async (url: string, headers?: Record<string, string>) => {
-	const controller = new AbortController();
-	const res = await SELF.fetch(url, {
-		headers,
-		signal: controller.signal,
-	});
-	const close = async () => {
-		if (!controller.signal.aborted) controller.abort();
-		try {
-			await res.body?.cancel();
-		} catch {
-			// ignore
-		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	};
-	return { res, controller, close };
-};
 
 // Note: Additional SSE tests (your_turn isolation, game_ended events) were removed
 // due to workerd teardown instability. See TEST_SUITE_REVISION.md Priority 4.
@@ -63,6 +47,7 @@ it(
 				{
 					throwOnTimeout: true,
 					label: "events initial state",
+					abortController: stream.controller,
 				},
 			);
 			text = result.text;
@@ -91,7 +76,11 @@ it(
 				(value) => value.includes("event: engine_events"),
 				SSE_TIMEOUT_MS,
 				SSE_MAX_BYTES,
-				{ throwOnTimeout: true, label: "engine_events" },
+				{
+					throwOnTimeout: true,
+					label: "engine_events",
+					abortController: stream.controller,
+				},
 			);
 
 			const stateRes = await SELF.fetch(
@@ -167,7 +156,11 @@ it(
 				(value) => value.includes("event: agent_thought"),
 				SSE_TIMEOUT_MS,
 				SSE_MAX_BYTES,
-				{ throwOnTimeout: true, label: "agent_thought" },
+				{
+					throwOnTimeout: true,
+					label: "agent_thought",
+					abortController: stream.controller,
+				},
 			);
 
 			const stateRes = await SELF.fetch(

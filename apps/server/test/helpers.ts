@@ -28,22 +28,8 @@ export const createAgent = async (
 };
 
 export const resetDb = async () => {
-	// Order matters: tables with FKs must be deleted before their referenced tables.
-	// FK chain: match_events/match_players/match_results → matches
-	//           agent_prompt_active/prompt_versions/api_keys → agents
-	await env.DB.prepare("DELETE FROM match_events").run();
-	await env.DB.prepare("DELETE FROM match_players").run();
-	await env.DB.prepare("DELETE FROM match_results").run();
-	await env.DB.prepare("DELETE FROM leaderboard").run();
-	await env.DB.prepare("DELETE FROM matches").run();
-	await env.DB.prepare("DELETE FROM agent_prompt_active").run();
-	await env.DB.prepare("DELETE FROM prompt_versions").run();
-	await env.DB.prepare("DELETE FROM runner_agent_ownership").run();
-	await env.DB.prepare("DELETE FROM api_keys").run();
-	await env.DB.prepare("DELETE FROM agents").run();
-
 	// With `isolatedStorage: false` in the durable lane, DO state persists across tests.
-	// Clear MatchmakerDO so queue/featured state doesn't leak and create flakiness.
+	// Reset live DO instances before clearing D1 rows so match ids are still discoverable.
 	if (env.INTERNAL_RUNNER_KEY) {
 		for (let attempt = 1; attempt <= 10; attempt += 1) {
 			const res = await SELF.fetch(
@@ -60,6 +46,20 @@ export const resetDb = async () => {
 			await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
 		}
 	}
+
+	// Order matters: tables with FKs must be deleted before their referenced tables.
+	// FK chain: match_events/match_players/match_results → matches
+	//           agent_prompt_active/prompt_versions/api_keys → agents
+	await env.DB.prepare("DELETE FROM match_events").run();
+	await env.DB.prepare("DELETE FROM match_players").run();
+	await env.DB.prepare("DELETE FROM match_results").run();
+	await env.DB.prepare("DELETE FROM leaderboard").run();
+	await env.DB.prepare("DELETE FROM matches").run();
+	await env.DB.prepare("DELETE FROM agent_prompt_active").run();
+	await env.DB.prepare("DELETE FROM prompt_versions").run();
+	await env.DB.prepare("DELETE FROM runner_agent_ownership").run();
+	await env.DB.prepare("DELETE FROM api_keys").run();
+	await env.DB.prepare("DELETE FROM agents").run();
 };
 
 export const authHeader = (key: string) => ({
@@ -89,6 +89,28 @@ export const bindRunnerAgent = async (agentId: string) => {
 	}
 };
 
+export const openSse = async (
+	url: string,
+	headers?: Record<string, string>,
+) => {
+	const controller = new AbortController();
+	const res = await SELF.fetch(url, {
+		headers,
+		signal: controller.signal,
+	});
+	const close = async () => {
+		if (!controller.signal.aborted) controller.abort();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		try {
+			await res.body?.cancel();
+		} catch {
+			// ignore
+		}
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	};
+	return { res, controller, close };
+};
+
 export const readSseUntil = async (
 	res: Response,
 	predicate: (text: string) => boolean,
@@ -98,6 +120,7 @@ export const readSseUntil = async (
 		throwOnTimeout?: boolean;
 		label?: string;
 		maxEventsPreview?: number;
+		abortController?: AbortController;
 	},
 ): Promise<{ text: string; matched: boolean; framesPreview: string[] }> => {
 	const body = res.body;
@@ -148,6 +171,9 @@ export const readSseUntil = async (
 		}
 	}
 
+	if (options?.abortController && !options.abortController.signal.aborted) {
+		options.abortController.abort();
+	}
 	await reader.cancel().catch(() => {});
 	try {
 		reader.releaseLock();
@@ -170,8 +196,11 @@ export const readSseUntil = async (
 export const readSseText = async (
 	res: Response,
 	maxBytes = 1024,
+	options?: {
+		abortController?: AbortController;
+	},
 ): Promise<string> => {
-	const result = await readSseUntil(res, () => true, 1000, maxBytes);
+	const result = await readSseUntil(res, () => true, 1000, maxBytes, options);
 	return result.text;
 };
 

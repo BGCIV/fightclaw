@@ -293,7 +293,7 @@ Internal-only endpoint:
 Endpoint: `POST /v1/internal/matches/{matchId}/move` (runner-key + agent-id)
 
 Runner-only request additions:
-- `publicThought?: string` (optional public-safe summary for spectators, per accepted move)
+- `publicThought?: string` (optional public-safe summary for spectators, per accepted move; max `280` chars)
 - Header `x-runner-id` is required and validated.
 
 Runner security requirements:
@@ -494,6 +494,10 @@ Live spectator endpoint:
 
 Historical replay endpoint:
 - `GET /v1/matches/{matchId}/log` (ordered persisted events, paginated via `afterId` + `limit`)
+- Response includes:
+  - `events` (ordered ascending by event `id`)
+  - `hasMore` (`true` when additional pages exist)
+  - `nextAfterId` (cursor to use for the next page; `null` when no events returned)
 
 Rules:
 - The first event on connect is always `state`.
@@ -501,8 +505,10 @@ Rules:
 - `agent_thought.stateVersion` MUST equal the accepted move post-state `stateVersion`.
 - Terminal event is `match_ended` (`game_ended` alias may also be emitted for compatibility).
 - Payloads must be public metadata only (no prompts or private strategy text).
+- Replay clients MUST page until `hasMore === false` (or no events returned) to reconstruct full delayed replay data.
 - `agent_thought.text` is a public-safe summary only.
 - `agent_thought.player` is derived server-side from match participant mapping (runner cannot set it).
+- Inbound `publicThought` longer than `280` characters MUST be rejected by request validation.
 - Persisted and broadcast thought text is sanitized text only; raw inbound `publicThought` must not be stored.
 - `agent_thought` is emitted only for accepted moves; never for rejects or forfeits (including timeout/disconnect forfeits).
 

@@ -13,6 +13,10 @@ import {
 	notFound,
 	unauthorized,
 } from "../utils/httpErrors";
+import {
+	getMatchmakerShardCountForRequest,
+	listMatchmakerShardNames,
+} from "../utils/matchmakerShards";
 import { parseUuidParam } from "../utils/params";
 import { adaptDoErrorEnvelope } from "../utils/responseAdapters";
 
@@ -23,7 +27,7 @@ const movePayloadSchema = z
 		moveId: z.string().min(1),
 		expectedVersion: z.number().int(),
 		move: z.unknown(),
-		publicThought: z.string().max(2_000).optional(),
+		publicThought: z.string().max(280).optional(),
 	})
 	.strict();
 
@@ -41,8 +45,8 @@ const parseJson = async (c: { req: { json: () => Promise<unknown> } }) => {
 	}
 };
 
-const getMatchmakerStub = (c: { env: AppBindings }) => {
-	const id = c.env.MATCHMAKER.idFromName("global");
+const getMatchmakerStub = (c: { env: AppBindings }, shardName = "global") => {
+	const id = c.env.MATCHMAKER.idFromName(shardName);
 	return c.env.MATCHMAKER.get(id);
 };
 
@@ -190,15 +194,52 @@ matchesRoutes.post("/v1/internal/__test__/reset", async (c) => {
 
 	for (let attempt = 1; attempt <= 10; attempt += 1) {
 		try {
-			const stub = getMatchmakerStub(c);
-			const resp = await stub.fetch("https://do/__test__/reset", {
-				method: "POST",
-				headers: withRequestId(c, {
-					"x-runner-key": expected,
-					"x-runner-id": "test-runner",
-				}),
-			});
-			if (resp.ok) return c.json({ ok: true });
+			const matchRows = await c.env.DB.prepare("SELECT id FROM matches").all<{
+				id: string | null;
+			}>();
+			const matchIds = (matchRows.results ?? [])
+				.map((row) => row.id)
+				.filter((value): value is string => typeof value === "string");
+			const shardCount = getMatchmakerShardCountForRequest(
+				c.env,
+				c.req.header("x-fc-test-matchmaker-shards"),
+			);
+			const shardNames = listMatchmakerShardNames(shardCount);
+			let allOk = true;
+			for (const shardName of shardNames) {
+				const stub = getMatchmakerStub(c, shardName);
+				const resp = await doFetchWithRetry(stub, "https://do/__test__/reset", {
+					method: "POST",
+					headers: withRequestId(c, {
+						"x-runner-key": expected,
+						"x-runner-id": "test-runner",
+					}),
+				});
+				if (!resp.ok) {
+					allOk = false;
+					break;
+				}
+			}
+			for (const matchId of matchIds) {
+				const matchStub = getMatchStub(c, matchId);
+				const resp = await doFetchWithRetry(
+					matchStub,
+					"https://do/__test__/reset",
+					{
+						method: "POST",
+						headers: withRequestId(c, {
+							"x-runner-key": expected,
+							"x-runner-id": "test-runner",
+							"x-match-id": matchId,
+						}),
+					},
+				);
+				if (!resp.ok) {
+					allOk = false;
+					break;
+				}
+			}
+			if (allOk) return c.json({ ok: true });
 		} catch (error) {
 			if (!isDurableObjectResetError(error)) throw error;
 		}
@@ -317,7 +358,11 @@ matchesRoutes.get("/v1/matches/:id/log", async (c) => {
 			"LIMIT ?",
 		].join(" "),
 	)
-		.bind(matchIdResult.value, Number.isFinite(afterId) ? afterId : 0, limit)
+		.bind(
+			matchIdResult.value,
+			Number.isFinite(afterId) ? afterId : 0,
+			limit + 1,
+		)
 		.all<{
 			id: number;
 			match_id: string;
@@ -327,7 +372,10 @@ matchesRoutes.get("/v1/matches/:id/log", async (c) => {
 			payload_json: string;
 		}>();
 
-	const events = (results ?? []).map((row) => {
+	const rows = results ?? [];
+	const hasMore = rows.length > limit;
+	const pageRows = hasMore ? rows.slice(0, limit) : rows;
+	const events = pageRows.map((row) => {
 		let payload: unknown | null = null;
 		let payloadParseError: true | undefined;
 		try {
@@ -346,8 +394,15 @@ matchesRoutes.get("/v1/matches/:id/log", async (c) => {
 			...(payloadParseError ? { payloadParseError } : {}),
 		};
 	});
+	const nextAfterId =
+		events.length > 0 ? (events[events.length - 1]?.id ?? null) : null;
 
-	return c.json({ matchId: matchIdResult.value, events });
+	return c.json({
+		matchId: matchIdResult.value,
+		events,
+		hasMore,
+		nextAfterId,
+	});
 });
 
 matchesRoutes.get("/v1/matches/:id/stream", async (c) => {

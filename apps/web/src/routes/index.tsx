@@ -256,14 +256,37 @@ function SpectatorLanding() {
 
 		const runReplay = async () => {
 			try {
-				const res = await fetch(
-					`${env.VITE_SERVER_URL}/v1/matches/${replayMatchId}/log?limit=5000`,
-				);
-				if (!res.ok) {
-					throw new Error(`Log request failed (${res.status})`);
+				const pageLimit = 1000;
+				let afterId = 0;
+				let pageMatchId: string | null = null;
+				const allEvents: MatchLogRowV1[] = [];
+				for (let page = 0; page < 100; page += 1) {
+					const res = await fetch(
+						`${env.VITE_SERVER_URL}/v1/matches/${replayMatchId}/log?limit=${pageLimit}&afterId=${afterId}`,
+					);
+					if (!res.ok) {
+						throw new Error(`Log request failed (${res.status})`);
+					}
+					const pageJson = (await res.json()) as MatchLogResponseV1;
+					pageMatchId = pageJson.matchId;
+					if (pageJson.events.length === 0) break;
+					allEvents.push(...pageJson.events);
+					const nextAfterId =
+						typeof pageJson.nextAfterId === "number"
+							? pageJson.nextAfterId
+							: (pageJson.events[pageJson.events.length - 1]?.id ?? null);
+					if (nextAfterId === null || nextAfterId <= afterId) break;
+					afterId = nextAfterId;
+					const hasMore =
+						typeof pageJson.hasMore === "boolean"
+							? pageJson.hasMore
+							: pageJson.events.length >= pageLimit;
+					if (!hasMore) break;
 				}
-
-				const json = (await res.json()) as MatchLogResponseV1;
+				const json: MatchLogResponseV1 = {
+					matchId: pageMatchId ?? replayMatchId,
+					events: allEvents,
+				};
 				if (!active) return;
 
 				const started = json.events.find(
@@ -543,6 +566,8 @@ type MatchLogRowV1 = {
 type MatchLogResponseV1 = {
 	matchId: string;
 	events: MatchLogRowV1[];
+	hasMore?: boolean;
+	nextAfterId?: number | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

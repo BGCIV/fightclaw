@@ -107,6 +107,7 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
+const TEST_STREAM_MAX_LIFETIME_MS = 2000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const WS_DISCONNECT_GRACE_MS = 15_000;
 const ELO_K = 32;
@@ -233,14 +234,11 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		await this.scheduleNextAlarm(disconnectChecked);
 	}
 
-	private turnTimeoutMs() {
+	private turnTimeoutMs(): number {
 		const raw = this.env.TURN_TIMEOUT_SECONDS;
 		const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-		if (Number.isNaN(parsed)) {
+		if (Number.isNaN(parsed) || parsed <= 0) {
 			return DEFAULT_TURN_TIMEOUT_SECONDS * 1000;
-		}
-		if (parsed <= 0) {
-			return null;
 		}
 		const seconds = parsed;
 		return seconds * 1000;
@@ -314,19 +312,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 		const nowMs = Date.now();
 		const timeoutMs = this.turnTimeoutMs();
-		if (timeoutMs === null) {
-			if (typeof nextState.turnExpiresAtMs === "number") {
-				const next: MatchState = {
-					...nextState,
-					turnExpiresAtMs: undefined,
-				};
-				await this.ctx.storage.put("state", next);
-				await this.scheduleNextAlarm(next);
-				nextState = next;
-			}
-			return nextState;
-		}
-
 		const expiresAt = nextState.turnExpiresAtMs;
 		if (
 			typeof expiresAt !== "number" ||
@@ -707,6 +692,17 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			return this.handleAgentWs(request);
 		}
 
+		if (request.method === "POST" && url.pathname === "/__test__/reset") {
+			if (!this.env.TEST_MODE)
+				return new Response("Not found", { status: 404 });
+			const runnerKey = request.headers.get("x-runner-key");
+			if (!runnerKey || runnerKey !== this.env.INTERNAL_RUNNER_KEY) {
+				return new Response("Unauthorized", { status: 401 });
+			}
+			await this.resetForTest();
+			return Response.json({ ok: true });
+		}
+
 		if (request.method === "POST" && url.pathname === "/init") {
 			const body = await request.json().catch(() => null);
 			const parsed = initPayloadSchema.safeParse(body);
@@ -731,8 +727,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				parsed.data.mode ?? "ranked",
 			);
 			const timeoutMs = this.turnTimeoutMs();
-			nextState.turnExpiresAtMs =
-				timeoutMs === null ? undefined : Date.now() + timeoutMs;
+			nextState.turnExpiresAtMs = Date.now() + timeoutMs;
 			if (this.matchId) {
 				await this.ctx.storage.put(MATCH_ID_KEY, this.matchId);
 			}
@@ -921,7 +916,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				const baseMs = Date.parse(nextState.updatedAt);
 				const nowMs = Number.isFinite(baseMs) ? baseMs : Date.now();
 				const timeoutMs = this.turnTimeoutMs();
-				const expiresAtMs = timeoutMs === null ? undefined : nowMs + timeoutMs;
+				const expiresAtMs = nowMs + timeoutMs;
 				nextState = { ...nextState, turnExpiresAtMs: expiresAtMs };
 			}
 			await this.ctx.storage.put("state", nextState);
@@ -1082,10 +1077,22 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 			const { readable, writer, close } = this.createStream();
 			this.registerAgentStream(agentId, writer);
-			this.handleAbort(request, () => {
+			let cleanedUp = false;
+			let testTimeout: ReturnType<typeof setTimeout> | null = null;
+			const cleanup = () => {
+				if (cleanedUp) return;
+				cleanedUp = true;
+				if (testTimeout !== null) {
+					clearTimeout(testTimeout);
+					testTimeout = null;
+				}
 				this.unregisterAgentStream(agentId, writer);
 				void close();
-			});
+			};
+			if (this.env.TEST_MODE) {
+				testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+			}
+			this.handleAbort(request, cleanup);
 
 			if (state) {
 				const matchId = await this.resolveMatchId();
@@ -1102,7 +1109,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				this.sendYourTurnIfActive(state, agentId, writer);
 			}
 
-			return this.streamResponse(readable);
+			return this.streamResponse(readable, cleanup);
 		}
 
 		if (request.method === "GET" && url.pathname === "/spectate") {
@@ -1140,8 +1147,43 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		request.signal.addEventListener("abort", onAbort, { once: true });
 	}
 
-	private streamResponse(readable: ReadableStream<Uint8Array>) {
-		return new Response(readable, {
+	private streamResponse(
+		readable: ReadableStream<Uint8Array>,
+		onClose?: () => void,
+	) {
+		let settled = false;
+		const settle = () => {
+			if (settled) return;
+			settled = true;
+			onClose?.();
+		};
+		const reader = readable.getReader();
+		const wrapped = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				try {
+					const { done, value } = await reader.read();
+					if (done) {
+						settle();
+						controller.close();
+						return;
+					}
+					if (value) controller.enqueue(value);
+				} catch (error) {
+					settle();
+					controller.error(error);
+				}
+			},
+			async cancel(reason) {
+				try {
+					await reader.cancel(reason);
+				} catch {
+					// ignore
+				} finally {
+					settle();
+				}
+			},
+		});
+		return new Response(wrapped, {
 			headers: {
 				"content-type": "text/event-stream",
 				"cache-control": "no-cache",
@@ -1561,10 +1603,22 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 		const { readable, writer, close } = this.createStream();
 		this.spectators.add(writer);
-		this.handleAbort(request, () => {
+		let cleanedUp = false;
+		let testTimeout: ReturnType<typeof setTimeout> | null = null;
+		const cleanup = () => {
+			if (cleanedUp) return;
+			cleanedUp = true;
+			if (testTimeout !== null) {
+				clearTimeout(testTimeout);
+				testTimeout = null;
+			}
 			this.spectators.delete(writer);
 			void close();
-		});
+		};
+		if (this.env.TEST_MODE) {
+			testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+		}
+		this.handleAbort(request, cleanup);
 
 		if (state) {
 			const matchId = await this.resolveMatchId();
@@ -1598,7 +1652,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 		}
 
-		return this.streamResponse(readable);
+		return this.streamResponse(readable, cleanup);
 	}
 
 	private async notifyFeaturedEnded(matchId: string) {
@@ -1652,6 +1706,38 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			return stored;
 		}
 		return null;
+	}
+
+	private async resetForTest() {
+		await this.ctx.storage.deleteAlarm();
+		for (const writer of this.spectators) {
+			try {
+				await writer.close();
+			} catch {
+				// ignore
+			}
+		}
+		this.spectators.clear();
+		for (const [agentId, writers] of this.agentStreams.entries()) {
+			for (const writer of writers) {
+				try {
+					await writer.close();
+				} catch {
+					// ignore
+				}
+			}
+			this.agentStreams.delete(agentId);
+		}
+		for (const sockets of this.agentSockets.values()) {
+			for (const socket of sockets) {
+				try {
+					socket.close(1000, "test_reset");
+				} catch {
+					// ignore
+				}
+			}
+		}
+		this.agentSockets.clear();
 	}
 }
 

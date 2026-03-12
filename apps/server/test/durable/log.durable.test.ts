@@ -77,3 +77,61 @@ it("exposes match_events log for active featured match with engineEvents payload
 	expect(typeof payload?.moveId).toBe("string");
 	expect(Array.isArray(payload?.engineEvents)).toBe(true);
 });
+
+it("provides pagination metadata for replay log consumers", async () => {
+	const { matchId, agentA } = await setupMatch();
+
+	const stateRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/state`,
+	);
+	const stateJson = (await stateRes.json()) as {
+		state: { stateVersion: number } | null;
+	};
+	const expectedVersion = stateJson.state?.stateVersion ?? 0;
+
+	await SELF.fetch(`https://example.com/v1/matches/${matchId}/move`, {
+		method: "POST",
+		headers: {
+			authorization: `Bearer ${agentA.key}`,
+			"content-type": "application/json",
+		},
+		body: JSON.stringify({
+			moveId: crypto.randomUUID(),
+			expectedVersion,
+			move: { action: "fortify", unitId: "A-1" },
+		}),
+	});
+
+	const firstPageRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/log?limit=1`,
+	);
+	expect(firstPageRes.ok).toBe(true);
+	const firstPage = (await firstPageRes.json()) as {
+		matchId: string;
+		events: Array<{ id: number }>;
+		hasMore?: boolean;
+		nextAfterId?: number | null;
+	};
+	expect(firstPage.matchId).toBe(matchId);
+	expect(firstPage.events.length).toBe(1);
+	expect(firstPage.hasMore).toBe(true);
+	expect(typeof firstPage.nextAfterId).toBe("number");
+
+	const cursor = firstPage.nextAfterId as number;
+	const secondPageRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/log?limit=2&afterId=${cursor}`,
+	);
+	expect(secondPageRes.ok).toBe(true);
+	const secondPage = (await secondPageRes.json()) as {
+		events: Array<{ id: number }>;
+		hasMore?: boolean;
+		nextAfterId?: number | null;
+	};
+	expect(secondPage.events.length).toBeGreaterThan(0);
+	expect(secondPage.events[0]?.id).toBeGreaterThan(cursor);
+	expect(typeof secondPage.hasMore).toBe("boolean");
+	expect(
+		secondPage.nextAfterId === null ||
+			typeof secondPage.nextAfterId === "number",
+	).toBe(true);
+});

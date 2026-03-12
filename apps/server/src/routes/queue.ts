@@ -3,15 +3,67 @@ import { type Context, Hono } from "hono";
 import type { AppBindings, AppVariables } from "../appTypes";
 import { doFetchWithRetry } from "../utils/durable";
 import { unauthorized } from "../utils/httpErrors";
+import {
+	getMatchmakerShardCountForRequest,
+	resolveMatchmakerShardName,
+} from "../utils/matchmakerShards";
 import { adaptDoErrorEnvelope } from "../utils/responseAdapters";
 import { isRecord } from "../utils/typeGuards";
 
-const getMatchmakerStub = (c: { env: AppBindings }) => {
-	const id = c.env.MATCHMAKER.idFromName("global");
+const getMatchmakerStub = (c: { env: AppBindings }, shardName = "global") => {
+	const id = c.env.MATCHMAKER.idFromName(shardName);
 	return c.env.MATCHMAKER.get(id);
 };
 
+const getAgentQueueMatchmakerStub = (
+	c: {
+		env: AppBindings;
+		req: { header: (name: string) => string | undefined };
+	},
+	agentId: string,
+) => {
+	const shardCount = getMatchmakerShardCountForRequest(
+		c.env,
+		c.req.header("x-fc-test-matchmaker-shards"),
+	);
+	const shardName = resolveMatchmakerShardName(agentId, shardCount);
+	return getMatchmakerStub(c, shardName);
+};
+
 type AppContext = Context<{ Bindings: AppBindings; Variables: AppVariables }>;
+
+const cacheJsonReadThrough = async (
+	c: AppContext,
+	ttlSeconds: number,
+	fetchFresh: () => Promise<Response>,
+) => {
+	if (c.env.TEST_MODE) return await fetchFresh();
+	if (ttlSeconds <= 0) return await fetchFresh();
+
+	const cache = caches.default;
+	const cacheKey = new Request(c.req.url, { method: "GET" });
+	const cached = await cache.match(cacheKey);
+	if (cached) return cached;
+
+	const fresh = await fetchFresh();
+	if (!fresh.ok) return fresh;
+	const contentType = fresh.headers.get("content-type") ?? "";
+	if (!contentType.toLowerCase().includes("application/json")) {
+		return fresh;
+	}
+
+	const headers = new Headers(fresh.headers);
+	headers.set(
+		"cache-control",
+		`public, max-age=${ttlSeconds}, s-maxage=${ttlSeconds}`,
+	);
+	const cacheable = new Response(fresh.body, {
+		status: fresh.status,
+		headers,
+	});
+	await cache.put(cacheKey, cacheable.clone());
+	return cacheable;
+};
 
 const queueJoin = async (c: AppContext) => {
 	const agentId = c.get("agentId");
@@ -35,7 +87,7 @@ const queueJoin = async (c: AppContext) => {
 		return c.json({ ok: false, error: "Invalid JSON body." }, 400);
 	}
 
-	const stub = getMatchmakerStub(c);
+	const stub = getAgentQueueMatchmakerStub(c, agentId);
 	const response = await doFetchWithRetry(stub, "https://do/queue/join", {
 		method: "POST",
 		headers: {
@@ -52,7 +104,7 @@ const queueStatus = async (c: AppContext) => {
 	const agentId = c.get("agentId");
 	if (!agentId) return unauthorized(c);
 
-	const stub = getMatchmakerStub(c);
+	const stub = getAgentQueueMatchmakerStub(c, agentId);
 	const response = await doFetchWithRetry(stub, "https://do/queue/status", {
 		headers: {
 			"x-agent-id": agentId,
@@ -66,7 +118,7 @@ const queueLeave = async (c: AppContext) => {
 	const agentId = c.get("agentId");
 	if (!agentId) return unauthorized(c);
 
-	const stub = getMatchmakerStub(c);
+	const stub = getAgentQueueMatchmakerStub(c, agentId);
 	const response = await doFetchWithRetry(stub, "https://do/queue/leave", {
 		method: "DELETE",
 		headers: {
@@ -110,7 +162,7 @@ queueRoutes.get("/v1/events/wait", async (c) => {
 	const agentId = c.get("agentId");
 	if (!agentId) return unauthorized(c);
 
-	const stub = getMatchmakerStub(c);
+	const stub = getAgentQueueMatchmakerStub(c, agentId);
 	const timeout = c.req.query("timeout");
 	const qs = timeout ? `?timeout=${encodeURIComponent(timeout)}` : "";
 	const response = await doFetchWithRetry(stub, `https://do/events/wait${qs}`, {
@@ -123,23 +175,27 @@ queueRoutes.get("/v1/events/wait", async (c) => {
 });
 
 queueRoutes.get("/v1/featured", async (c) => {
-	const stub = getMatchmakerStub(c);
-	const response = await doFetchWithRetry(stub, "https://do/featured", {
-		headers: {
-			"x-request-id": c.get("requestId"),
-		},
+	return await cacheJsonReadThrough(c, 5, async () => {
+		const stub = getMatchmakerStub(c);
+		const response = await doFetchWithRetry(stub, "https://do/featured", {
+			headers: {
+				"x-request-id": c.get("requestId"),
+			},
+		});
+		return await adaptDoErrorEnvelope(response);
 	});
-	return adaptDoErrorEnvelope(response);
 });
 
 queueRoutes.get("/v1/live", async (c) => {
-	const stub = getMatchmakerStub(c);
-	const response = await doFetchWithRetry(stub, "https://do/live", {
-		headers: {
-			"x-request-id": c.get("requestId"),
-		},
+	return await cacheJsonReadThrough(c, 5, async () => {
+		const stub = getMatchmakerStub(c);
+		const response = await doFetchWithRetry(stub, "https://do/live", {
+			headers: {
+				"x-request-id": c.get("requestId"),
+			},
+		});
+		return await adaptDoErrorEnvelope(response);
 	});
-	return adaptDoErrorEnvelope(response);
 });
 
 queueRoutes.get("/v1/featured/stream", async (c) => {

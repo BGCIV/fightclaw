@@ -28,6 +28,7 @@ const ACTIVE_MATCH_PREFIX = "activeMatch:";
 const RECENT_PREFIX = "recent:";
 const QUEUE_TTL_MS = 10 * 60 * 1000;
 const FEATURED_STREAM_INTERVAL_MS = 1000;
+const TEST_STREAM_MAX_LIFETIME_MS = 2000;
 const WS_QUEUE_LEAVE_GRACE_MS = 15_000;
 
 type MatchmakerEnv = {
@@ -448,22 +449,32 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 	private async handleFeaturedStream(request: Request): Promise<Response> {
 		const encoder = new TextEncoder();
+		let closeStream: (() => void) | null = null;
 		const stream = new ReadableStream<Uint8Array>({
 			start: async (controller) => {
 				let closed = false;
 				let lastFeaturedId: string | null = null;
 				let lastStateVersion: number | null = null;
 				let endedAnnouncedFor: string | null = null;
+				let testTimeout: ReturnType<typeof setTimeout> | null = null;
 
 				const close = () => {
 					if (closed) return;
 					closed = true;
+					if (testTimeout !== null) {
+						clearTimeout(testTimeout);
+						testTimeout = null;
+					}
 					try {
 						controller.close();
 					} catch {
 						// noop
 					}
 				};
+				closeStream = close;
+				if (this.env.TEST_MODE) {
+					testTimeout = setTimeout(close, TEST_STREAM_MAX_LIFETIME_MS);
+				}
 
 				if (request.signal.aborted) {
 					close();
@@ -559,7 +570,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 				}
 			},
 			cancel: () => {
-				// noop
+				closeStream?.();
 			},
 		});
 

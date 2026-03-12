@@ -33,11 +33,21 @@ import {
 	unauthorized,
 	upgradeRequired,
 } from "./utils/httpErrors";
+import {
+	getMatchmakerShardCountForRequest,
+	resolveMatchmakerShardName,
+} from "./utils/matchmakerShards";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
 
-const getMatchmakerStub = (env: AppBindings) => {
-	const id = env.MATCHMAKER.idFromName("global");
+const getMatchmakerStubForAgent = (
+	env: AppBindings,
+	agentId: string,
+	testHeaderOverride?: string,
+) => {
+	const shardCount = getMatchmakerShardCountForRequest(env, testHeaderOverride);
+	const shardName = resolveMatchmakerShardName(agentId, shardCount);
+	const id = env.MATCHMAKER.idFromName(shardName);
 	return env.MATCHMAKER.get(id);
 };
 
@@ -211,7 +221,11 @@ app.get("/ws", async (c) => {
 	const agentId = c.get("agentId");
 	if (!agentId) return unauthorized(c);
 
-	const stub = getMatchmakerStub(c.env);
+	const stub = getMatchmakerStubForAgent(
+		c.env,
+		agentId,
+		c.req.header("x-fc-test-matchmaker-shards"),
+	);
 	const upstream = await stub.fetch(c.req.raw);
 	if (upstream.status !== 101) {
 		return serviceUnavailable(
@@ -235,7 +249,11 @@ app.get("/v1/matches/:id/ws", async (c) => {
 	const matchId = c.req.param("id");
 	if (!agentId || !matchId) return unauthorized(c);
 
-	const matchmakerStub = getMatchmakerStub(c.env);
+	const matchmakerStub = getMatchmakerStubForAgent(
+		c.env,
+		agentId,
+		c.req.header("x-fc-test-matchmaker-shards"),
+	);
 	const queueStatusResp = await doFetchWithRetry(
 		matchmakerStub,
 		"https://do/queue/status",
@@ -310,4 +328,13 @@ export const MatchmakerDO = Sentry.instrumentDurableObjectWithSentry(
 	MatchmakerDOBase as any,
 );
 
-export default Sentry.withSentry(sentryOptions, app);
+const sentryApp = Sentry.withSentry(sentryOptions, app);
+
+export default {
+	fetch(request: Request, env: AppBindings, executionCtx: ExecutionContext) {
+		if (env.TEST_MODE) {
+			return app.fetch(request, env, executionCtx);
+		}
+		return sentryApp.fetch(request, env, executionCtx);
+	},
+};
