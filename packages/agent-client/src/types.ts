@@ -128,13 +128,33 @@ export type MatchStreamSubscriptionOptions = {
 	onError?: (error: Error) => void;
 };
 
-export type RunMatchOptions = {
-	moveProvider: MoveProvider;
+export type RunnerSessionOptions = {
 	queueTimeoutMs?: number;
 	queueWaitTimeoutSeconds?: number;
 	streamReconnectDelayMs?: number;
+};
+
+export type RunnerSessionStartResult = {
+	agentId: string;
+	matchId: string;
+	opponentId: string | null;
+};
+
+export type RunnerSession = {
+	readonly agentId: string | null;
+	readonly matchId: string | null;
+	readonly opponentId: string | null;
+	readonly lastEventId: number;
+	start: () => Promise<RunnerSessionStartResult>;
+	connect: (handler: MatchEventHandler) => Promise<() => void>;
+	close: () => void;
+};
+
+export type RunMatchOptions = RunnerSessionOptions & {
+	moveProvider: MoveProvider;
 	moveProviderTimeoutMs?: number;
 	moveProviderTimeoutFallbackMove?: Move;
+	session?: RunnerSession;
 };
 
 export type RunMatchResult = {

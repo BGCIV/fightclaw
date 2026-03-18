@@ -4,10 +4,13 @@ import type { MatchEventEnvelope } from "@fightclaw/protocol";
 import type { ArenaClient } from "./client";
 import { ArenaHttpError } from "./errors";
 import type {
+	MatchEventHandler,
 	MoveSubmitResponse,
 	QueueWaitEvent,
 	RunMatchOptions,
 	RunMatchResult,
+	RunnerSession,
+	RunnerSessionOptions,
 } from "./types";
 
 const DEFAULT_TIMEOUT_FALLBACK_MOVE: Move = {
@@ -116,24 +119,177 @@ const asTerminalResult = (
 	};
 };
 
+export const createRunnerSession = (
+	client: ArenaClient,
+	options: RunnerSessionOptions = {},
+): RunnerSession => {
+	const queueWaitTimeoutSeconds = options.queueWaitTimeoutSeconds ?? 30;
+	const queueTimeoutMs = options.queueTimeoutMs ?? 10 * 60 * 1000;
+	const streamReconnectDelayMs = options.streamReconnectDelayMs ?? 250;
+
+	let agentId: string | null = null;
+	let matchId: string | null = null;
+	let opponentId: string | null = null;
+	let lastEventId = 0;
+	let startPromise: Promise<{
+		agentId: string;
+		matchId: string;
+		opponentId: string | null;
+	}> | null = null;
+	let stopStream: (() => void) | null = null;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let closed = false;
+
+	const clearReconnectTimer = () => {
+		if (!reconnectTimer) return;
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	};
+
+	const stopActiveStream = () => {
+		if (!stopStream) return;
+		const stop = stopStream;
+		stopStream = null;
+		stop();
+	};
+
+	const close = () => {
+		closed = true;
+		clearReconnectTimer();
+		stopActiveStream();
+	};
+
+	const start = async () => {
+		if (startPromise) return await startPromise;
+		startPromise = (async () => {
+			const me = await client.me();
+			agentId = me.agentId;
+
+			const joined = await client.queueJoin();
+			matchId = joined.matchId;
+			opponentId = joined.opponentId ?? null;
+
+			if (joined.status !== "ready") {
+				const startedAt = Date.now();
+				while (true) {
+					if (Date.now() - startedAt > queueTimeoutMs) {
+						throw new Error("Timed out waiting for queue match.");
+					}
+					const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					const queueEvent = parseQueueEvent(waited.events);
+					if (!queueEvent) continue;
+					matchId = queueEvent.matchId;
+					opponentId = queueEvent.opponentId;
+					break;
+				}
+			}
+
+			if (!matchId) {
+				throw new Error("Runner session did not resolve a matchId.");
+			}
+
+			return {
+				agentId,
+				matchId,
+				opponentId,
+			};
+		})().catch((error) => {
+			startPromise = null;
+			throw error;
+		});
+
+		return await startPromise;
+	};
+
+	const connect = async (handler: MatchEventHandler): Promise<() => void> => {
+		const started = await start();
+		closed = false;
+		clearReconnectTimer();
+		stopActiveStream();
+
+		const scheduleReconnect = () => {
+			if (closed || reconnectTimer) return;
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				void connectStream();
+			}, streamReconnectDelayMs);
+		};
+
+		const connectStream = async () => {
+			if (closed) return;
+			try {
+				const nextStop = await client.subscribeMatchStream(
+					started.matchId,
+					async (event) => {
+						lastEventId = Math.max(lastEventId, event.eventId);
+						await handler(event);
+					},
+					{
+						afterId: lastEventId,
+						onClose: () => {
+							if (closed) return;
+							scheduleReconnect();
+						},
+					},
+				);
+				if (closed) {
+					nextStop();
+					return;
+				}
+				stopStream = nextStop;
+			} catch (error) {
+				if (shouldFailStreamConnect(error)) {
+					throw error;
+				}
+				scheduleReconnect();
+			}
+		};
+
+		await connectStream();
+		return () => close();
+	};
+
+	return {
+		get agentId() {
+			return agentId;
+		},
+		get matchId() {
+			return matchId;
+		},
+		get opponentId() {
+			return opponentId;
+		},
+		get lastEventId() {
+			return lastEventId;
+		},
+		start,
+		connect,
+		close,
+	};
+};
+
 export const runMatch = async (
 	client: ArenaClient,
 	options: RunMatchOptions,
 ): Promise<RunMatchResult> => {
-	const queueWaitTimeoutSeconds = options.queueWaitTimeoutSeconds ?? 30;
-	const queueTimeoutMs = options.queueTimeoutMs ?? 10 * 60 * 1000;
-	const streamReconnectDelayMs = options.streamReconnectDelayMs ?? 250;
 	const moveProviderTimeoutMs = options.moveProviderTimeoutMs;
 	const moveProviderTimeoutFallbackMove =
 		options.moveProviderTimeoutFallbackMove ?? DEFAULT_TIMEOUT_FALLBACK_MOVE;
-
-	const me = await client.me();
-	let matchId = "";
-	let opponentId: string | null = null;
+	const session =
+		options.session ??
+		createRunnerSession(client, {
+			queueTimeoutMs: options.queueTimeoutMs,
+			queueWaitTimeoutSeconds: options.queueWaitTimeoutSeconds,
+			streamReconnectDelayMs: options.streamReconnectDelayMs,
+		});
+	const started = await session.start();
+	const agentId = started.agentId;
+	const matchId = started.matchId;
+	const opponentId = started.opponentId;
 
 	const resolveMove = async (stateVersion: number): Promise<Move> => {
 		const moveContext = {
-			agentId: me.agentId,
+			agentId,
 			matchId,
 			stateVersion,
 		};
@@ -160,70 +316,25 @@ export const runMatch = async (
 		}
 	};
 
-	const joined = await client.queueJoin();
-	matchId = joined.matchId;
-	opponentId = joined.opponentId ?? null;
-
-	if (joined.status !== "ready") {
-		const startedAt = Date.now();
-		while (true) {
-			if (Date.now() - startedAt > queueTimeoutMs) {
-				throw new Error("Timed out waiting for queue match.");
-			}
-			const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
-			const queueEvent = parseQueueEvent(waited.events);
-			if (!queueEvent) continue;
-			matchId = queueEvent.matchId;
-			opponentId = queueEvent.opponentId;
-			break;
-		}
-	}
-
-	let lastEventId = 0;
 	let lastObservedVersion = -1;
 	const handledTurns = new Set<number>();
 	let turnLoopInFlight = false;
-	let stopStream: (() => void) | null = null;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let settled = false;
-
-	const clearReconnectTimer = () => {
-		if (!reconnectTimer) return;
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
-	};
-
-	const closeStream = () => {
-		if (!stopStream) return;
-		const stop = stopStream;
-		stopStream = null;
-		stop();
-	};
 
 	try {
 		return await new Promise<RunMatchResult>((resolve, reject) => {
 			const fail = (error: Error) => {
 				if (settled) return;
 				settled = true;
-				clearReconnectTimer();
-				closeStream();
+				session.close();
 				reject(error);
 			};
 
 			const finish = (result: RunMatchResult) => {
 				if (settled) return;
 				settled = true;
-				clearReconnectTimer();
-				closeStream();
+				session.close();
 				resolve(result);
-			};
-
-			const scheduleReconnect = () => {
-				if (settled || reconnectTimer) return;
-				reconnectTimer = setTimeout(() => {
-					reconnectTimer = null;
-					void connectStream();
-				}, streamReconnectDelayMs);
 			};
 
 			const handleTurn = async (event: MatchEventEnvelope) => {
@@ -265,7 +376,7 @@ export const runMatch = async (
 
 						const terminalFromMove = resolveTerminalFromMove(
 							response,
-							me.agentId,
+							agentId,
 							opponentId,
 						);
 						if (terminalFromMove) {
@@ -286,7 +397,7 @@ export const runMatch = async (
 						}
 
 						const activeAgentId = getActiveAgentIdFromGame(response.state.game);
-						if (activeAgentId !== me.agentId) {
+						if (activeAgentId !== agentId) {
 							break;
 						}
 
@@ -301,7 +412,6 @@ export const runMatch = async (
 			};
 
 			const handleEvent = async (event: MatchEventEnvelope) => {
-				lastEventId = Math.max(lastEventId, event.eventId);
 				if (
 					typeof event.stateVersion === "number" &&
 					event.stateVersion > lastObservedVersion
@@ -309,12 +419,7 @@ export const runMatch = async (
 					lastObservedVersion = event.stateVersion;
 				}
 
-				const terminal = asTerminalResult(
-					event,
-					matchId,
-					me.agentId,
-					opponentId,
-				);
+				const terminal = asTerminalResult(event, matchId, agentId, opponentId);
 				if (terminal) {
 					finish(terminal);
 					return;
@@ -330,29 +435,11 @@ export const runMatch = async (
 				}
 			};
 
-			const connectStream = async () => {
-				if (settled) return;
-				try {
-					stopStream = await client.subscribeMatchStream(matchId, handleEvent, {
-						afterId: lastEventId,
-						onClose: () => {
-							if (settled) return;
-							scheduleReconnect();
-						},
-					});
-				} catch (error) {
-					if (shouldFailStreamConnect(error)) {
-						fail(error instanceof Error ? error : new Error(String(error)));
-						return;
-					}
-					scheduleReconnect();
-				}
-			};
-
-			void connectStream();
+			void session.connect(handleEvent).catch((error) => {
+				fail(error instanceof Error ? error : new Error(String(error)));
+			});
 		});
 	} finally {
-		clearReconnectTimer();
-		closeStream();
+		session.close();
 	}
 };

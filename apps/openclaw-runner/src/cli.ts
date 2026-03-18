@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	ArenaClient,
+	createRunnerSession,
 	type MoveProvider,
 	type MoveProviderContext,
 	type RunMatchResult,
@@ -150,20 +151,6 @@ const usage = () => {
 			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
-};
-
-const waitForMatchId = async (client: ArenaClient, initialMatchId: string) => {
-	let matchId = initialMatchId;
-	for (let i = 0; i < 120; i += 1) {
-		const waited = await client.waitForMatch(5);
-		for (const event of waited.events) {
-			if (event.event === "match_found" && typeof event.matchId === "string") {
-				matchId = event.matchId;
-				return matchId;
-			}
-		}
-	}
-	throw new Error("Timed out waiting for match assignment.");
 };
 
 const bindRunnerAgent = async (
@@ -361,31 +348,6 @@ const runDuel = async (args: ArgMap) => {
 	await setStrategyPrompt(baseUrl, registeredA.apiKey, strategyA);
 	await setStrategyPrompt(baseUrl, registeredB.apiKey, strategyB);
 
-	const queueClientA = new ArenaClient({
-		baseUrl,
-		agentApiKey: registeredA.apiKey,
-		requestIdProvider: () => randomUUID(),
-	});
-	const queueClientB = new ArenaClient({
-		baseUrl,
-		agentApiKey: registeredB.apiKey,
-		requestIdProvider: () => randomUUID(),
-	});
-
-	const joinedA = await queueClientA.queueJoin();
-	const joinedB = await queueClientB.queueJoin();
-	const matchA =
-		joinedA.status === "ready"
-			? joinedA.matchId
-			: await waitForMatchId(queueClientA, joinedA.matchId);
-	const matchB =
-		joinedB.status === "ready"
-			? joinedB.matchId
-			: await waitForMatchId(queueClientB, joinedB.matchId);
-	if (matchA !== matchB) {
-		throw new Error(`Agent queues diverged: ${matchA} vs ${matchB}`);
-	}
-
 	const runnerClientA = new InternalRunnerClient(
 		baseUrl,
 		registeredA.apiKey,
@@ -400,6 +362,23 @@ const runDuel = async (args: ArgMap) => {
 		runnerId,
 		registeredB.agentId,
 	);
+
+	const sessionA = createRunnerSession(runnerClientA, {
+		queueWaitTimeoutSeconds: 5,
+	});
+	const sessionB = createRunnerSession(runnerClientB, {
+		queueWaitTimeoutSeconds: 5,
+	});
+
+	const [startedA, startedB] = await Promise.all([
+		sessionA.start(),
+		sessionB.start(),
+	]);
+	if (startedA.matchId !== startedB.matchId) {
+		throw new Error(
+			`Agent queues diverged: ${startedA.matchId} vs ${startedB.matchId}`,
+		);
+	}
 
 	const moveProviderA = createMoveProvider(
 		runnerClientA,
@@ -419,17 +398,19 @@ const runDuel = async (args: ArgMap) => {
 			runMatch(runnerClientA, {
 				moveProvider: moveProviderA,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				session: sessionA,
 			}),
 			runMatch(runnerClientB, {
 				moveProvider: moveProviderB,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				session: sessionB,
 			}),
 		]);
 
 	console.log(
 		JSON.stringify(
 			{
-				matchId: matchA,
+				matchId: startedA.matchId,
 				runnerId,
 				agents: [
 					{ id: registeredA.agentId, name: nameA },
