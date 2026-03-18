@@ -11,6 +11,8 @@ import { env } from "@fightclaw/env/web";
 import {
 	type AgentThoughtEvent,
 	type EngineEventsEvent,
+	type FeaturedSnapshot,
+	FeaturedStreamEnvelopeSchema,
 	type MatchEventEnvelope,
 	MatchEventEnvelopeSchema,
 	type MatchStartedEvent,
@@ -23,6 +25,10 @@ import {
 	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
+import {
+	applyFeaturedUpdate,
+	type FeaturedLiveState,
+} from "./featured-updates";
 
 export const Route = createFileRoute("/")({
 	component: SpectatorLanding,
@@ -33,12 +39,6 @@ export const Route = createFileRoute("/")({
 				: undefined,
 	}),
 });
-
-type FeaturedResponse = {
-	matchId: string | null;
-	status: string | null;
-	players: string[] | null;
-};
 
 type MatchLogResponse = {
 	matchId: string;
@@ -54,7 +54,10 @@ function SpectatorLanding() {
 	const search = Route.useSearch();
 	const replayMatchId = search.replayMatchId ?? null;
 
-	const [featured, setFeatured] = useState<FeaturedResponse | null>(null);
+	const [featuredState, setFeaturedState] = useState<FeaturedLiveState>({
+		featured: null,
+		hasSeenStream: false,
+	});
 	const [latestState, setLatestState] = useState<MatchState | null>(null);
 	const [connectionStatus, setConnectionStatus] = useState<
 		"idle" | "connecting" | "live" | "replay" | "error"
@@ -68,6 +71,7 @@ function SpectatorLanding() {
 	const [isThinkingB, setIsThinkingB] = useState(false);
 	const thoughtEventIdsRef = useRef(new Set<string>());
 
+	const featured = featuredState.featured;
 	const matchId = replayMatchId ?? featured?.matchId ?? null;
 
 	const {
@@ -132,10 +136,22 @@ function SpectatorLanding() {
 		}
 	});
 
+	const applyFeaturedLiveUpdate = useEffectEvent(
+		(source: "fetch" | "stream", snapshot: FeaturedSnapshot) => {
+			setFeaturedState((current) =>
+				applyFeaturedUpdate(current, source, snapshot),
+			);
+		},
+	);
+
 	useEffect(() => {
 		if (replayMatchId) return;
 		let active = true;
 		let source: EventSource | null = null;
+		setFeaturedState((current) => ({
+			featured: current.featured,
+			hasSeenStream: false,
+		}));
 
 		const fetchFeatured = async () => {
 			try {
@@ -143,12 +159,16 @@ function SpectatorLanding() {
 				if (!res.ok) {
 					throw new Error(`Featured request failed (${res.status})`);
 				}
-				const json = (await res.json()) as FeaturedResponse;
+				const json = (await res.json()) as FeaturedSnapshot;
 				if (!active) return;
-				setFeatured(json);
+				applyFeaturedLiveUpdate("fetch", json);
 			} catch {
 				if (!active) return;
-				setFeatured({ matchId: null, status: null, players: null });
+				applyFeaturedLiveUpdate("fetch", {
+					matchId: null,
+					status: null,
+					players: null,
+				});
 			}
 		};
 
@@ -156,21 +176,14 @@ function SpectatorLanding() {
 
 		source = new EventSource(`${env.VITE_SERVER_URL}/v1/featured/stream`);
 		source.addEventListener(
-			"featured_changed",
+			"featured_snapshot",
 			(message: MessageEvent<string>) => {
 				if (!active) return;
 				try {
-					const payload = JSON.parse(message.data) as { matchId?: unknown };
-					const nextMatchId =
-						typeof payload.matchId === "string" || payload.matchId === null
-							? payload.matchId
-							: null;
-					setFeatured((prev) => ({
-						matchId: nextMatchId,
-						status: prev?.status ?? null,
-						players: prev?.players ?? null,
-					}));
-					void fetchFeatured();
+					const parsed = FeaturedStreamEnvelopeSchema.parse(
+						JSON.parse(message.data),
+					);
+					applyFeaturedLiveUpdate("stream", parsed.payload);
 				} catch {
 					// Ignore malformed featured stream frames and rely on the next update.
 				}
@@ -259,7 +272,14 @@ function SpectatorLanding() {
 		setReplayShouldFollowLive(false);
 		replayAfterIdRef.current = 0;
 		resetAnimator();
-		setFeatured({ matchId: replayMatchId, status: "replay", players: null });
+		setFeaturedState({
+			featured: {
+				matchId: replayMatchId,
+				status: "replay",
+				players: null,
+			},
+			hasSeenStream: false,
+		});
 		setLatestState(null);
 		setConnectionStatus("connecting");
 		resetThoughts();
@@ -333,10 +353,13 @@ function SpectatorLanding() {
 					throw new Error("Replay missing match_started metadata.");
 				}
 
-				setFeatured({
-					matchId: pageMatchId ?? replayMatchId,
-					status: "replay",
-					players,
+				setFeaturedState({
+					featured: {
+						matchId: pageMatchId ?? replayMatchId,
+						status: "replay",
+						players,
+					},
+					hasSeenStream: false,
 				});
 
 				let state = createInitialState(seed, replayEngineConfig, players);
