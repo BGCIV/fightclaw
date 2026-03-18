@@ -177,7 +177,6 @@ app.use("/v1/matches/*", async (c, next) => {
 		c.req.method === "GET" &&
 		(path.endsWith("/state") ||
 			path.endsWith("/spectate") ||
-			path.endsWith("/events") ||
 			path.endsWith("/log"))
 	) {
 		return next();

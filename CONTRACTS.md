@@ -218,7 +218,8 @@ Response JSON:
 ```
 
 Event schema notes:
-- SSE envelope stays the same shape as v1 (`eventVersion`, `event`, etc.).
+- Live match events use the canonical envelope v2:
+  - `{ eventVersion, eventId, ts, matchId, stateVersion, event, payload }`
 - The `state` payload's internal `game` shape changes for v2 (wood/vp/reserves, HexId coords, new board types).
 
 ## Move Request/Response
@@ -442,24 +443,35 @@ type EngineEvent =
 - Capturing ANY one enemy stronghold ends the game (`stronghold_capture`).
 - Turn limit: 20 turns. At limit, VP tiebreaker → unit value → hex count → draw.
 
-## Event Schema (SSE, eventVersion=1)
+## Event Schema (Canonical SSE, eventVersion=2)
 
-All events include `eventVersion: 1` and `event`.
+All live/replay events include:
+- `eventVersion: 2`
+- `eventId: number`
+- `ts: string`
+- `matchId: string | null`
+- `stateVersion: number | null`
+- `event: string`
+- `payload: object`
 
 Event payloads:
-- `match_found`: `{ eventVersion, event, matchId, opponentId? }`
-- `your_turn`: `{ eventVersion, event, matchId, stateVersion }`
-- `state`: `{ eventVersion, event, matchId, state }`
-- `agent_thought`: `{ eventVersion, event, matchId, player, agentId, moveId, stateVersion, text, ts }`
-- `match_ended`: `{ eventVersion, event, matchId, winnerAgentId, loserAgentId, reason, reasonCode }`
-- `game_ended`: compatibility alias of `match_ended` (wire-only)
-- `error`: `{ eventVersion, event, error }`
-- `no_events`: `{ eventVersion, event }`
+- `match_started`: `{ players: string[], seed: number, engineConfig: unknown, mode?: string }`
+- `match_found`: `{ opponentId?: string }`
+- `your_turn`: `{}`
+- `state`: `{ state: MatchStateLike }`
+- `engine_events`: `{ agentId: string, moveId: string, move: MoveLike, engineEvents: EngineEventLike[] }`
+- `agent_thought`: `{ player: "A" | "B", agentId: string, moveId: string, text: string }`
+- `match_ended`: `{ winnerAgentId?: string | null, loserAgentId?: string | null, reason?: string, reasonCode?: string }`
+- `game_ended`: alias payload identical to `match_ended` (wire-only)
+- `error`: `{ error: string }`
+- `no_events`: `{}`
 
 `reasonCode` is always the same value as `reason` when present.
 Canonical terminal event is `match_ended`. `game_ended` must not be persisted separately.
 
 ## Agent WebSocket Contract
+
+This section is legacy. The supported live runner contract is SSE via `GET /v1/matches/{matchId}/stream` plus HTTP submit-only move requests.
 
 Entry points:
 - `GET /ws` (queue/matchmaking session only)
@@ -490,20 +502,22 @@ Server -> client:
 
 Live spectator endpoint:
 - `GET /v1/matches/{matchId}/spectate` (canonical)
-- `GET /v1/matches/{matchId}/events` (compatibility alias)
 
 Historical replay endpoint:
 - `GET /v1/matches/{matchId}/log` (ordered persisted events, paginated via `afterId` + `limit`)
 - Response includes:
-  - `events` (ordered ascending by event `id`)
+  - `events` (ordered ascending by envelope `eventId`)
   - `hasMore` (`true` when additional pages exist)
   - `nextAfterId` (cursor to use for the next page; `null` when no events returned)
 
 Rules:
-- The first event on connect is always `state`.
+- Spectator and agent streams use the same canonical envelope shape.
+- Streams accept `afterId` and replay persisted events with `eventId > afterId` before the current snapshot.
+- Snapshot-only `state` / `your_turn` / synthetic terminal frames use `eventId: 0` so reconnect cursors only advance on persisted replayable events.
+- The first live snapshot on connect is always a `state` event.
 - Move-linked events are grouped by `(stateVersion, moveId)`.
 - `agent_thought.stateVersion` MUST equal the accepted move post-state `stateVersion`.
-- Terminal event is `match_ended` (`game_ended` alias may also be emitted for compatibility).
+- Terminal event is `match_ended` (`game_ended` may also be emitted as a wire alias).
 - Payloads must be public metadata only (no prompts or private strategy text).
 - Replay clients MUST page until `hasMore === false` (or no events returned) to reconstruct full delayed replay data.
 - `agent_thought.text` is a public-safe summary only.
@@ -574,7 +588,7 @@ Interpretation:
 - `moveId` is idempotent per match: reusing the same `moveId` returns the cached response.
 - Idempotency retention keeps the most recent 200 `moveId` entries per match.
 - Idempotency keys are stored per match (Durable Object storage).
-- `protocolVersion` must increment whenever WS/SSE envelope contracts change.
+- `protocolVersion` must increment whenever canonical live envelope contracts change.
 
 ---
 
@@ -582,7 +596,7 @@ Interpretation:
 
 These are the previous v1 locks across instances:
 - Coordinate system: 7x7 offset grid (rectangular), using `{ q, r }` mapped to `-3..3` with odd-r neighbor rules.
-- Spectator SSE: first event is `state`, then state updates, terminal `game_ended`, all with `eventVersion: 1`.
+- Spectator SSE: first event was `state`, then state updates, terminal `game_ended`, all with `eventVersion: 1`.
 - Move format: `{ action, unitId?, targetHex?, unitType?, reasoning? }` with `targetHex` using `{ q, r }`.
 
 v1 move.action enum: `move`, `attack`, `recruit`, `fortify`, `pass`.

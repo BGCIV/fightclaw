@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SpectatorArenaMain } from "@/components/arena/spectator-arena";
 import {
-	type EngineEventsEnvelopeV1,
+	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
 
@@ -127,16 +127,19 @@ function DevLayout() {
 		const result = applyMove(boardState, move);
 		if (!result.ok) return;
 
-		const envelope: EngineEventsEnvelopeV1 = {
-			eventVersion: 1,
-			event: "engine_events",
+		const envelope: EngineEventsEnvelope = {
+			eventVersion: 2,
+			eventId: moveCount + 1,
+			ts: new Date().toISOString(),
 			matchId: "dev-preview",
 			stateVersion: moveCount + 1,
-			agentId: "dev",
-			moveId: `dev-${moveCount + 1}`,
-			move,
-			engineEvents: result.engineEvents,
-			ts: new Date().toISOString(),
+			event: "engine_events",
+			payload: {
+				agentId: "dev",
+				moveId: `dev-${moveCount + 1}`,
+				move,
+				engineEvents: result.engineEvents,
+			},
 		};
 		enqueue(envelope, { postState: result.state });
 		setMoveCount((n) => n + 1);
@@ -156,16 +159,19 @@ function DevLayout() {
 				state = result.state;
 				mc += 1;
 
-				const envelope: EngineEventsEnvelopeV1 = {
-					eventVersion: 1,
-					event: "engine_events",
+				const envelope: EngineEventsEnvelope = {
+					eventVersion: 2,
+					eventId: mc,
+					ts: new Date().toISOString(),
 					matchId: "dev-preview",
 					stateVersion: mc,
-					agentId: "dev",
-					moveId: `dev-${mc}`,
-					move,
-					engineEvents: result.engineEvents,
-					ts: new Date().toISOString(),
+					event: "engine_events",
+					payload: {
+						agentId: "dev",
+						moveId: `dev-${mc}`,
+						move,
+						engineEvents: result.engineEvents,
+					},
 				};
 				enqueue(envelope, { postState: state });
 			}
@@ -270,16 +276,19 @@ function DevLayout() {
 		}
 		replayStateRef.current = result.state;
 
-		const envelope: EngineEventsEnvelopeV1 = {
-			eventVersion: 1,
-			event: "engine_events",
+		const envelope: EngineEventsEnvelope = {
+			eventVersion: 2,
+			eventId: replayPly + 1,
+			ts: new Date().toISOString(),
 			matchId: selectedMatch.id,
 			stateVersion: replayPly + 1,
-			agentId: step.playerID,
-			moveId: `replay-${replayPly}`,
-			move: step.move,
-			engineEvents: result.engineEvents,
-			ts: new Date().toISOString(),
+			event: "engine_events",
+			payload: {
+				agentId: step.playerID,
+				moveId: `replay-${replayPly}`,
+				move: step.move,
+				engineEvents: result.engineEvents,
+			},
 		};
 		enqueue(envelope, { postState: result.state });
 

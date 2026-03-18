@@ -42,15 +42,20 @@ it("exposes match_events log for active featured match with engineEvents payload
 	expect(logRes.ok).toBe(true);
 	const logJson = (await logRes.json()) as {
 		matchId: string;
-		events: Array<{ eventType: string; payload: unknown }>;
+		events: Array<{
+			event: string;
+			eventId: number;
+			stateVersion: number | null;
+			payload: unknown;
+		}>;
 	};
 	expect(logJson.matchId).toBe(matchId);
 
 	const moveApplied = logJson.events.find(
-		(event) => event.eventType === "move_applied",
+		(event) => event.event === "engine_events",
 	);
 	const matchStarted = logJson.events.find(
-		(event) => event.eventType === "match_started",
+		(event) => event.event === "match_started",
 	);
 	expect(matchStarted).toBeTruthy();
 	const startedPayload = matchStarted?.payload as
@@ -65,16 +70,21 @@ it("exposes match_events log for active featured match with engineEvents payload
 	expect(startedPayload?.engineConfig?.boardColumns).toBe(17);
 
 	expect(moveApplied).toBeTruthy();
+	expect(typeof moveApplied?.eventId).toBe("number");
+	expect(
+		typeof moveApplied?.stateVersion === "number" ||
+			moveApplied?.stateVersion === null,
+	).toBe(true);
 	const payload = moveApplied?.payload as
 		| {
-				payloadVersion?: unknown;
 				moveId?: unknown;
+				move?: unknown;
 				engineEvents?: unknown;
 		  }
 		| undefined;
 
-	expect(payload?.payloadVersion).toBe(2);
 	expect(typeof payload?.moveId).toBe("string");
+	expect(payload?.move).toBeTruthy();
 	expect(Array.isArray(payload?.engineEvents)).toBe(true);
 });
 
@@ -108,7 +118,7 @@ it("provides pagination metadata for replay log consumers", async () => {
 	expect(firstPageRes.ok).toBe(true);
 	const firstPage = (await firstPageRes.json()) as {
 		matchId: string;
-		events: Array<{ id: number }>;
+		events: Array<{ eventId: number }>;
 		hasMore?: boolean;
 		nextAfterId?: number | null;
 	};
@@ -123,12 +133,12 @@ it("provides pagination metadata for replay log consumers", async () => {
 	);
 	expect(secondPageRes.ok).toBe(true);
 	const secondPage = (await secondPageRes.json()) as {
-		events: Array<{ id: number }>;
+		events: Array<{ eventId: number }>;
 		hasMore?: boolean;
 		nextAfterId?: number | null;
 	};
 	expect(secondPage.events.length).toBeGreaterThan(0);
-	expect(secondPage.events[0]?.id).toBeGreaterThan(cursor);
+	expect(secondPage.events[0]?.eventId).toBeGreaterThan(cursor);
 	expect(typeof secondPage.hasMore).toBe("boolean");
 	expect(
 		secondPage.nextAfterId === null ||

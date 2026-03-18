@@ -19,6 +19,7 @@ import {
 } from "../utils/matchmakerShards";
 import { parseUuidParam } from "../utils/params";
 import { adaptDoErrorEnvelope } from "../utils/responseAdapters";
+import { loadCanonicalLogPage, type RawMatchLogRow } from "./matchLog";
 
 type AppContext = Context<{ Bindings: AppBindings; Variables: AppVariables }>;
 
@@ -349,53 +350,24 @@ matchesRoutes.get("/v1/matches/:id/log", async (c) => {
 		}
 	}
 
-	const { results } = await c.env.DB.prepare(
-		[
-			"SELECT id, match_id, turn, ts, event_type, payload_json",
-			"FROM match_events",
-			"WHERE match_id = ? AND id > ?",
-			"ORDER BY id ASC",
-			"LIMIT ?",
-		].join(" "),
-	)
-		.bind(
-			matchIdResult.value,
-			Number.isFinite(afterId) ? afterId : 0,
-			limit + 1,
-		)
-		.all<{
-			id: number;
-			match_id: string;
-			turn: number;
-			ts: string;
-			event_type: string;
-			payload_json: string;
-		}>();
-
-	const rows = results ?? [];
-	const hasMore = rows.length > limit;
-	const pageRows = hasMore ? rows.slice(0, limit) : rows;
-	const events = pageRows.map((row) => {
-		let payload: unknown | null = null;
-		let payloadParseError: true | undefined;
-		try {
-			payload = JSON.parse(row.payload_json);
-		} catch {
-			payload = null;
-			payloadParseError = true;
-		}
-		return {
-			id: row.id,
-			matchId: row.match_id,
-			turn: row.turn,
-			ts: row.ts,
-			eventType: row.event_type,
-			payload,
-			...(payloadParseError ? { payloadParseError } : {}),
-		};
+	const { events, hasMore, nextAfterId } = await loadCanonicalLogPage({
+		afterId: Number.isFinite(afterId) ? afterId : 0,
+		limit,
+		loadRows: async (cursor, rawLimit) => {
+			const { results } = await c.env.DB.prepare(
+				[
+					"SELECT id, match_id, turn, ts, event_type, payload_json",
+					"FROM match_events",
+					"WHERE match_id = ? AND id > ?",
+					"ORDER BY id ASC",
+					"LIMIT ?",
+				].join(" "),
+			)
+				.bind(matchIdResult.value, cursor, rawLimit)
+				.all<RawMatchLogRow>();
+			return results ?? [];
+		},
 	});
-	const nextAfterId =
-		events.length > 0 ? (events[events.length - 1]?.id ?? null) : null;
 
 	return c.json({
 		matchId: matchIdResult.value,
@@ -413,7 +385,9 @@ matchesRoutes.get("/v1/matches/:id/stream", async (c) => {
 	if (!agentId) return unauthorized(c);
 
 	const stub = getMatchStub(c, matchIdResult.value);
-	const response = await stub.fetch("https://do/stream", {
+	const afterIdRaw = c.req.query("afterId");
+	const qs = afterIdRaw ? `?afterId=${encodeURIComponent(afterIdRaw)}` : "";
+	const response = await stub.fetch(`https://do/stream${qs}`, {
 		signal: c.req.raw.signal,
 		headers: {
 			"x-agent-id": agentId,
@@ -440,7 +414,9 @@ const handleSpectateStream = async (c: AppContext) => {
 	}
 
 	const stub = getMatchStub(c, matchIdResult.value);
-	const response = await stub.fetch("https://do/spectate", {
+	const afterIdRaw = c.req.query("afterId");
+	const qs = afterIdRaw ? `?afterId=${encodeURIComponent(afterIdRaw)}` : "";
+	const response = await stub.fetch(`https://do/spectate${qs}`, {
 		signal: c.req.raw.signal,
 		headers: {
 			"x-match-id": matchIdResult.value,
@@ -451,6 +427,3 @@ const handleSpectateStream = async (c: AppContext) => {
 };
 
 matchesRoutes.get("/v1/matches/:id/spectate", handleSpectateStream);
-
-// Backward-compatible alias of `/spectate`.
-matchesRoutes.get("/v1/matches/:id/events", handleSpectateStream);

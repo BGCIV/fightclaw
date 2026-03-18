@@ -895,11 +895,21 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 				await this.enqueueEvent(
 					opponent.agentId,
-					buildMatchFoundEvent(matchId, agentId),
+					buildMatchFoundEvent({
+						eventId: nowMs,
+						ts: new Date(nowMs).toISOString(),
+						matchId,
+						opponentId: agentId,
+					}),
 				);
 				await this.enqueueEvent(
 					agentId,
-					buildMatchFoundEvent(matchId, opponent.agentId),
+					buildMatchFoundEvent({
+						eventId: nowMs,
+						ts: new Date(nowMs).toISOString(),
+						matchId,
+						opponentId: opponent.agentId,
+					}),
 				);
 
 				const response: QueueJoinResponse = {
@@ -1306,17 +1316,18 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 	private async enqueueEvent(agentId: string, event: MatchmakerEvent) {
 		if (event.event === "match_found") {
+			const opponentId = event.payload.opponentId;
 			this.sendToAgentSession(agentId, {
 				type: "queue_status",
 				status: "matched",
-				matchId: event.matchId,
-				opponentAgentId: event.opponentId,
+				matchId: event.matchId ?? undefined,
+				opponentAgentId: opponentId,
 			});
-			if (typeof event.opponentId === "string") {
+			if (typeof event.matchId === "string" && typeof opponentId === "string") {
 				this.sendToAgentSession(agentId, {
 					type: "match_found",
 					matchId: event.matchId,
-					opponentAgentId: event.opponentId,
+					opponentAgentId: opponentId,
 					wsPath: `/v1/matches/${event.matchId}/ws`,
 				});
 			}
@@ -1360,7 +1371,13 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			let resolver: (event: MatchmakerEvent) => void;
 			const timer = setTimeout(() => {
 				this.removeWaiter(agentId, resolver);
-				resolve(buildNoEventsEvent());
+				resolve(
+					buildNoEventsEvent({
+						eventId: Date.now(),
+						ts: new Date().toISOString(),
+						matchId: null,
+					}),
+				);
 			}, timeoutMs);
 
 			resolver = (event: MatchmakerEvent) => {

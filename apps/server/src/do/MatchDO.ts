@@ -19,9 +19,11 @@ import {
 	buildAgentThoughtEvent,
 	buildEngineEventsEvent,
 	buildGameEndedAliasEvent,
+	buildLiveMatchEndedEvent,
+	buildLiveStateEvent,
+	buildLiveYourTurnEvent,
 	buildMatchEndedEvent,
-	buildStateEvent,
-	buildYourTurnEvent,
+	buildStoredMatchEventEnvelope,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
 import {
@@ -737,6 +739,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				players: nextState.players,
 				seed,
 				engineConfig: getEngineConfig(nextState.game),
+				stateVersion: nextState.stateVersion,
+				mode: nextState.mode,
 			});
 
 			// Emit match_started metric
@@ -749,7 +753,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 
 			await this.broadcastState(nextState);
-			this.broadcastYourTurn(nextState);
+			await this.broadcastYourTurn(nextState);
 			return Response.json({ ok: true, state: nextState });
 		}
 
@@ -933,30 +937,37 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				await this.finalizeMatch(nextState, "terminal");
 			}
 
-			await this.recordEvent(nextState, "move_applied", {
-				payloadVersion: 2,
-				agentId,
-				moveId: body.moveId,
-				move: moveParse.data,
-				stateVersion: nextState.stateVersion,
-				engineEvents: result.engineEvents,
-				ts: nextState.updatedAt,
-			});
+			const moveAppliedEventId = await this.recordEvent(
+				nextState,
+				"move_applied",
+				{
+					payloadVersion: 2,
+					agentId,
+					moveId: body.moveId,
+					move: moveParse.data,
+					stateVersion: nextState.stateVersion,
+					engineEvents: result.engineEvents,
+					ts: nextState.updatedAt,
+				},
+			);
 
 			await this.broadcastState(nextState);
 			{
 				const matchId = this.matchId ?? this.ctx.id.name;
 				if (matchId) {
+					const liveWriters = [...this.spectators, ...this.allAgentWriters()];
 					await this.broadcast(
-						[...this.spectators],
+						liveWriters,
 						"engine_events",
-						buildEngineEventsEvent(matchId, {
+						buildEngineEventsEvent({
+							eventId: moveAppliedEventId,
+							ts: nextState.updatedAt,
+							matchId,
 							stateVersion: nextState.stateVersion,
 							agentId,
 							moveId: body.moveId,
 							move: moveParse.data,
 							engineEvents: result.engineEvents,
-							ts: nextState.updatedAt,
 						}),
 					);
 					const safeThought = sanitizePublicThought(body.publicThought);
@@ -964,34 +975,37 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						getPlayerSideForAgent(nextState.game, agentId) ??
 						getPlayerSideForAgent(state.game, agentId);
 					if (safeThought && player) {
-						const thoughtPayload = buildAgentThoughtEvent(matchId, {
-							player,
-							agentId,
-							moveId: body.moveId,
-							stateVersion: nextState.stateVersion,
-							text: safeThought,
-							ts: nextState.updatedAt,
-						});
-						await this.recordEvent(nextState, "agent_thought", {
-							payloadVersion: 1,
-							player,
-							agentId,
-							moveId: body.moveId,
-							stateVersion: nextState.stateVersion,
-							text: safeThought,
-							ts: nextState.updatedAt,
-						});
-						await this.broadcast(
-							[...this.spectators],
+						const thoughtEventId = await this.recordEvent(
+							nextState,
 							"agent_thought",
-							thoughtPayload,
+							{
+								payloadVersion: 1,
+								player,
+								agentId,
+								moveId: body.moveId,
+								stateVersion: nextState.stateVersion,
+								text: safeThought,
+								ts: nextState.updatedAt,
+							},
 						);
+						const thoughtPayload = buildAgentThoughtEvent({
+							eventId: thoughtEventId,
+							ts: nextState.updatedAt,
+							matchId,
+							stateVersion: nextState.stateVersion,
+							player,
+							agentId,
+							moveId: body.moveId,
+							text: safeThought,
+						});
+						await this.broadcast(liveWriters, "agent_thought", thoughtPayload);
 					}
 				}
 			}
-			this.broadcastYourTurn(nextState);
+			await this.broadcastYourTurn(nextState);
 			if (nextState.status === "ended") {
 				await this.recordEvent(nextState, "match_ended", {
+					stateVersion: nextState.stateVersion,
 					winnerAgentId: nextState.winnerAgentId ?? null,
 					loserAgentId: nextState.loserAgentId ?? null,
 					reason: "terminal",
@@ -1099,24 +1113,45 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				if (!matchId) {
 					return new Response("Match id unavailable.", { status: 409 });
 				}
+				const afterId = this.parseAfterId(request);
+				if (afterId > 0) {
+					await this.replayRecordedEvents(writer, matchId, afterId);
+				}
 				void this.sendEvent(
 					writer,
 					"state",
-					buildStateEvent(matchId, state.game),
+					buildLiveStateEvent({
+						ts: state.updatedAt,
+						matchId,
+						stateVersion: state.stateVersion,
+						state: state.game,
+					}),
 				).catch(() => {
 					this.unregisterAgentStream(agentId, writer);
 				});
 				this.sendYourTurnIfActive(state, agentId, writer);
+				if (state.status === "ended") {
+					void this.sendEvent(
+						writer,
+						"match_ended",
+						buildLiveMatchEndedEvent({
+							ts: state.updatedAt,
+							matchId,
+							stateVersion: state.stateVersion,
+							winnerAgentId: state.winnerAgentId ?? null,
+							loserAgentId: state.loserAgentId ?? null,
+							reason: state.endReason ?? "ended",
+						}),
+					).catch(() => {
+						this.unregisterAgentStream(agentId, writer);
+					});
+				}
 			}
 
 			return this.streamResponse(readable, cleanup);
 		}
 
 		if (request.method === "GET" && url.pathname === "/spectate") {
-			return this.handleSpectate(request);
-		}
-
-		if (request.method === "GET" && url.pathname === "/events") {
 			return this.handleSpectate(request);
 		}
 
@@ -1209,13 +1244,75 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		await this.sendEventWithTimeout(writer, event, data, SSE_WRITE_TIMEOUT_MS);
 	}
 
+	private parseAfterId(request: Request) {
+		const raw = new URL(request.url).searchParams.get("afterId");
+		const parsed = raw ? Number.parseInt(raw, 10) : 0;
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+	}
+
+	private async getLatestRecordedEventId(matchId: string) {
+		const row = await this.env.DB.prepare(
+			"SELECT MAX(id) as id FROM match_events WHERE match_id = ?",
+		)
+			.bind(matchId)
+			.first<{ id: number | null }>();
+		return typeof row?.id === "number" ? row.id : 0;
+	}
+
+	private async replayRecordedEvents(
+		writer: StreamWriter,
+		matchId: string,
+		afterId: number,
+	) {
+		if (afterId <= 0) return;
+		const { results } = await this.env.DB.prepare(
+			[
+				"SELECT id, match_id, ts, event_type, payload_json",
+				"FROM match_events",
+				"WHERE match_id = ? AND id > ?",
+				"ORDER BY id ASC",
+				"LIMIT 5000",
+			].join(" "),
+		)
+			.bind(matchId, afterId)
+			.all<{
+				id: number;
+				match_id: string;
+				ts: string;
+				event_type: string;
+				payload_json: string;
+			}>();
+		for (const row of results ?? []) {
+			let payload: unknown = null;
+			try {
+				payload = JSON.parse(row.payload_json);
+			} catch {
+				payload = null;
+			}
+			const envelope = buildStoredMatchEventEnvelope({
+				eventId: row.id,
+				matchId: row.match_id,
+				ts: row.ts,
+				eventType: row.event_type,
+				payload,
+			});
+			if (!envelope) continue;
+			await this.sendEvent(writer, envelope.event, envelope);
+		}
+	}
+
 	private async broadcastState(state: MatchState) {
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
 		await this.broadcast(
 			[...this.spectators, ...this.allAgentWriters()],
 			"state",
-			buildStateEvent(matchId, state.game),
+			buildLiveStateEvent({
+				ts: state.updatedAt,
+				matchId,
+				stateVersion: state.stateVersion,
+				state: state.game,
+			}),
 		);
 		for (const agentId of state.players) {
 			this.sendWsToAgent(agentId, {
@@ -1227,7 +1324,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 	}
 
-	private broadcastYourTurn(state: MatchState) {
+	private async broadcastYourTurn(state: MatchState) {
 		if (state.status !== "active") return;
 		const active = getActiveAgentId(state.game);
 		if (!active) return;
@@ -1235,7 +1332,11 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		if (!writers) return;
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
-		const payload = buildYourTurnEvent(matchId, state.stateVersion);
+		const payload = buildLiveYourTurnEvent({
+			ts: state.updatedAt,
+			matchId,
+			stateVersion: state.stateVersion,
+		});
 		for (const writer of writers) {
 			void this.sendEvent(writer, "your_turn", payload).catch(() => {
 				writers.delete(writer);
@@ -1261,7 +1362,11 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		void this.sendEvent(
 			writer,
 			"your_turn",
-			buildYourTurnEvent(matchId, state.stateVersion),
+			buildLiveYourTurnEvent({
+				ts: state.updatedAt,
+				matchId,
+				stateVersion: state.stateVersion,
+			}),
 		);
 		this.sendWsToAgent(agentId, {
 			type: "your_turn",
@@ -1273,12 +1378,16 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	private async broadcastGameEnd(state: MatchState, reason: string) {
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
-		const payload = buildMatchEndedEvent(
+		const eventId = await this.getLatestRecordedEventId(matchId);
+		const payload = buildMatchEndedEvent({
+			eventId,
+			ts: state.updatedAt,
 			matchId,
-			state.winnerAgentId ?? null,
-			state.loserAgentId ?? null,
+			stateVersion: state.stateVersion,
+			winnerAgentId: state.winnerAgentId ?? null,
+			loserAgentId: state.loserAgentId ?? null,
 			reason,
-		);
+		});
 		await this.broadcast(
 			[...this.spectators, ...this.allAgentWriters()],
 			"match_ended",
@@ -1393,7 +1502,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		payload: unknown,
 	) {
 		const matchId = await this.resolveMatchId();
-		if (!matchId) return;
+		if (!matchId) return 0;
 		try {
 			if (eventType === "match_ended") {
 				await this.env.DB.prepare(
@@ -1413,7 +1522,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						matchId,
 					)
 					.run();
-				return;
+				return await this.getLatestRecordedEventId(matchId);
 			}
 			await this.env.DB.prepare(
 				"INSERT INTO match_events(match_id, turn, event_type, payload_json) VALUES (?, ?, ?, ?)",
@@ -1425,8 +1534,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					JSON.stringify(payload ?? null),
 				)
 				.run();
+			return await this.getLatestRecordedEventId(matchId);
 		} catch (error) {
 			console.error("Failed to record match event", error);
+			return 0;
 		}
 	}
 
@@ -1469,19 +1580,21 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		await Promise.all(
 			nextState.players.map((agentId) => this.clearDisconnectDeadline(agentId)),
 		);
-		await this.broadcastState(nextState);
-		await this.broadcastGameEnd(nextState, reason);
-		await this.finalizeMatch(nextState, reason);
 		await this.recordEvent(nextState, "move_forfeit", {
 			loserAgentId,
 			winnerAgentId: winnerAgentId ?? null,
 			reason,
+			stateVersion: nextState.stateVersion,
 		});
 		await this.recordEvent(nextState, "match_ended", {
+			stateVersion: nextState.stateVersion,
 			winnerAgentId: winnerAgentId ?? null,
 			loserAgentId,
 			reason,
 		});
+		await this.broadcastState(nextState);
+		await this.broadcastGameEnd(nextState, reason);
+		await this.finalizeMatch(nextState, reason);
 		return nextState;
 	}
 
@@ -1621,35 +1734,44 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		this.handleAbort(request, cleanup);
 
 		if (state) {
-			const matchId = await this.resolveMatchId();
-			if (!matchId) {
-				return new Response("Match id unavailable.", { status: 409 });
-			}
-			void this.sendEvent(
-				writer,
-				"state",
-				buildStateEvent(matchId, state.game),
-			).catch(() => {
-				this.spectators.delete(writer);
-			});
-			if (state.status === "ended") {
-				const endedPayload = buildMatchEndedEvent(
-					matchId,
-					state.winnerAgentId ?? null,
-					state.loserAgentId ?? null,
-					state.endReason ?? "ended",
+			const afterId = this.parseAfterId(request);
+			void (async () => {
+				const matchId = await this.resolveMatchId();
+				if (!matchId) {
+					cleanup();
+					return;
+				}
+				if (afterId > 0) {
+					await this.replayRecordedEvents(writer, matchId, afterId);
+				}
+				await this.sendEvent(
+					writer,
+					"state",
+					buildLiveStateEvent({
+						ts: state.updatedAt,
+						matchId,
+						stateVersion: state.stateVersion,
+						state: state.game,
+					}),
 				);
-				void this.sendEvent(writer, "match_ended", endedPayload).catch(() => {
-					this.spectators.delete(writer);
+				if (state.status !== "ended") return;
+				const endedPayload = buildLiveMatchEndedEvent({
+					ts: state.updatedAt,
+					matchId,
+					stateVersion: state.stateVersion,
+					winnerAgentId: state.winnerAgentId ?? null,
+					loserAgentId: state.loserAgentId ?? null,
+					reason: state.endReason ?? "ended",
 				});
-				void this.sendEvent(
+				await this.sendEvent(writer, "match_ended", endedPayload);
+				await this.sendEvent(
 					writer,
 					"game_ended",
 					buildGameEndedAliasEvent(endedPayload),
-				).catch(() => {
-					this.spectators.delete(writer);
-				});
-			}
+				);
+			})().catch(() => {
+				cleanup();
+			});
 		}
 
 		return this.streamResponse(readable, cleanup);

@@ -62,9 +62,9 @@ describe("auth", () => {
 		}
 	});
 
-	it("allows public events stream", async () => {
+	it("allows public spectate stream", async () => {
 		const stream = await openSse(
-			`https://example.com/v1/matches/${matchId}/events`,
+			`https://example.com/v1/matches/${matchId}/spectate`,
 		);
 		try {
 			expect(stream.res.status).toBe(200);

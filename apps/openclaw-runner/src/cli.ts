@@ -157,7 +157,7 @@ const waitForMatchId = async (client: ArenaClient, initialMatchId: string) => {
 	for (let i = 0; i < 120; i += 1) {
 		const waited = await client.waitForMatch(5);
 		for (const event of waited.events) {
-			if (event.event === "match_found") {
+			if (event.event === "match_found" && typeof event.matchId === "string") {
 				matchId = event.matchId;
 				return matchId;
 			}
@@ -418,14 +418,10 @@ const runDuel = async (args: ArgMap) => {
 		await Promise.all([
 			runMatch(runnerClientA, {
 				moveProvider: moveProviderA,
-				preferredTransport: "ws",
-				allowTransportFallback: true,
 				moveProviderTimeoutMs: moveTimeoutMs,
 			}),
 			runMatch(runnerClientB, {
 				moveProvider: moveProviderB,
-				preferredTransport: "ws",
-				allowTransportFallback: true,
 				moveProviderTimeoutMs: moveTimeoutMs,
 			}),
 		]);

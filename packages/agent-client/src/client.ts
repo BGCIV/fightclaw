@@ -1,11 +1,13 @@
-import { type SpectatorEvent, SpectatorEventSchema } from "@fightclaw/engine";
+import { MatchEventEnvelopeSchema } from "@fightclaw/protocol";
 import { z } from "zod";
 import { ArenaHttpError, asErrorEnvelope, isRecord } from "./errors";
 import { createRouteResolver } from "./routes";
 import type {
 	ArenaClientOptions,
 	ClientLogEvent,
+	MatchEventHandler,
 	MatchStateResponse,
+	MatchStreamSubscriptionOptions,
 	MeResponse,
 	MoveSubmitResponse,
 	QueueJoinResponse,
@@ -372,10 +374,15 @@ export class ArenaClient {
 			auth: "agent",
 		});
 		const parsed = queueWaitSchema.parse(payload);
-		const events: SpectatorEvent[] = [];
+		const events: QueueWaitResponse["events"] = [];
 		for (const raw of parsed.events) {
-			const event = SpectatorEventSchema.safeParse(raw);
-			if (event.success) events.push(event.data);
+			const event = MatchEventEnvelopeSchema.safeParse(raw);
+			if (
+				event.success &&
+				(event.data.event === "match_found" || event.data.event === "no_events")
+			) {
+				events.push(event.data);
+			}
 		}
 		return { events };
 	}
@@ -426,9 +433,19 @@ export class ArenaClient {
 
 	async subscribeMatchStream(
 		matchId: string,
-		handler: (event: SpectatorEvent) => Promise<void> | void,
+		handler: MatchEventHandler,
+		options?: MatchStreamSubscriptionOptions,
 	): Promise<() => void> {
 		const path = this.resolveRoute("match_stream", { matchId });
+		const url = new URL(`${this.baseUrl}${path}`);
+		const afterId = options?.afterId;
+		if (
+			typeof afterId === "number" &&
+			Number.isFinite(afterId) &&
+			afterId > 0
+		) {
+			url.searchParams.set("afterId", String(afterId));
+		}
 		const headers: Record<string, string> = {
 			accept: "text/event-stream",
 			...this.buildAgentAuthHeaders(),
@@ -437,7 +454,7 @@ export class ArenaClient {
 		if (requestId) headers["x-request-id"] = requestId;
 
 		const abortController = new AbortController();
-		const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+		const response = await this.fetchImpl(url.toString(), {
 			method: "GET",
 			headers,
 			signal: abortController.signal,
@@ -486,7 +503,7 @@ export class ArenaClient {
 						buffer = buffer.slice(boundary + 2);
 						const parsed = this.parseSseFrame(frame);
 						if (!parsed) continue;
-						const event = SpectatorEventSchema.safeParse(parsed);
+						const event = MatchEventEnvelopeSchema.safeParse(parsed);
 						if (event.success) await handler(event.data);
 					}
 				}
@@ -494,6 +511,9 @@ export class ArenaClient {
 				if (!closed) {
 					const message =
 						error instanceof Error ? error.message : String(error);
+					options?.onError?.(
+						error instanceof Error ? error : new Error(message),
+					);
 					this.log({
 						type: "runner",
 						message: "match_stream_pump_error",
@@ -508,6 +528,7 @@ export class ArenaClient {
 				}
 			} finally {
 				await closeStream();
+				options?.onClose?.();
 			}
 		};
 

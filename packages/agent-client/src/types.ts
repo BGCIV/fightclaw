@@ -1,4 +1,9 @@
-import type { Move, SpectatorEvent } from "@fightclaw/engine";
+import type { Move } from "@fightclaw/engine";
+import type {
+	MatchEventEnvelope,
+	MatchFoundEvent,
+	NoEventsEvent,
+} from "@fightclaw/protocol";
 import type { RouteTable } from "./routes";
 
 export type ErrorEnvelope = {
@@ -97,20 +102,11 @@ export type MatchStateResponse = {
 	} | null;
 };
 
-export type QueueWaitResponse = {
-	events: SpectatorEvent[];
-};
+export type QueueWaitEvent = MatchFoundEvent | NoEventsEvent;
 
-export type RunnerEvent =
-	| { type: "your_turn"; stateVersion: number }
-	| { type: "state"; stateVersion: number; payload: unknown }
-	| {
-			type: "match_ended";
-			reason?: string;
-			winnerAgentId?: string | null;
-			loserAgentId?: string | null;
-	  }
-	| { type: "error"; error: string };
+export type QueueWaitResponse = {
+	events: QueueWaitEvent[];
+};
 
 export type MoveProviderContext = {
 	agentId: string;
@@ -122,28 +118,28 @@ export type MoveProvider = {
 	nextMove: (context: MoveProviderContext) => Promise<Move>;
 };
 
-export type MatchEventHandler = (event: RunnerEvent) => Promise<void> | void;
+export type MatchEventHandler = (
+	event: MatchEventEnvelope,
+) => Promise<void> | void;
 
-export type MatchEventSource = {
-	kind: "ws" | "http";
-	start: (handler: MatchEventHandler) => Promise<() => void>;
+export type MatchStreamSubscriptionOptions = {
+	afterId?: number;
+	onClose?: () => void;
+	onError?: (error: Error) => void;
 };
 
 export type RunMatchOptions = {
 	moveProvider: MoveProvider;
-	preferredTransport?: "ws" | "http";
-	allowTransportFallback?: boolean;
-	wsOpenTimeoutMs?: number;
 	queueTimeoutMs?: number;
 	queueWaitTimeoutSeconds?: number;
-	httpPollIntervalMs?: number;
+	streamReconnectDelayMs?: number;
 	moveProviderTimeoutMs?: number;
 	moveProviderTimeoutFallbackMove?: Move;
 };
 
 export type RunMatchResult = {
 	matchId: string;
-	transport: "ws" | "http";
+	transport: "sse";
 	reason: string;
 	winnerAgentId: string | null;
 	loserAgentId: string | null;

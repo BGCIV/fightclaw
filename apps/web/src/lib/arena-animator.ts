@@ -4,22 +4,12 @@ import {
 	type Move,
 	parseHexId,
 } from "@fightclaw/engine";
+import type { EngineEventsEvent } from "@fightclaw/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnitAnimState } from "@/components/arena/unit-token";
 import { HEX_RADIUS, hexIdToPixel } from "@/lib/hex-geo";
 
-// Re-export unchanged envelope type for consumers
-export type EngineEventsEnvelopeV1 = {
-	eventVersion: 1;
-	event: "engine_events";
-	matchId: string;
-	stateVersion: number;
-	agentId: string;
-	moveId: string;
-	move: Move;
-	engineEvents: EngineEvent[];
-	ts: string;
-};
+export type EngineEventsEnvelope = EngineEventsEvent;
 
 export type ArenaEffect = {
 	id: string;
@@ -47,7 +37,7 @@ export type HudFx = {
 };
 
 type QueuedItem = {
-	envelope: EngineEventsEnvelopeV1;
+	envelope: EngineEventsEnvelope;
 	postState?: MatchState;
 };
 
@@ -170,12 +160,14 @@ export function useArenaAnimator(options?: {
 		async (item: QueuedItem, token: number) => {
 			const scale = scaleForQueue(queueRef.current.length);
 			const envelope = item.envelope;
+			const move = envelope.payload.move as Move;
+			const engineEvents = envelope.payload.engineEvents as EngineEvent[];
 
 			// Collect dying unit IDs from attack events BEFORE applying state
 			const dyingIds: string[] = [];
 
-			if (envelope.move.action === "attack") {
-				const ev = envelope.engineEvents.find((e) => e.type === "attack") as
+			if (move.action === "attack") {
+				const ev = engineEvents.find((e) => e.type === "attack") as
 					| Extract<EngineEvent, { type: "attack" }>
 					| undefined;
 				if (ev) {
@@ -200,8 +192,8 @@ export function useArenaAnimator(options?: {
 			// Clear previous effects
 			setEffects([]);
 
-			if (envelope.move.action === "move") {
-				const ev = envelope.engineEvents.find((e) => e.type === "move_unit") as
+			if (move.action === "move") {
+				const ev = engineEvents.find((e) => e.type === "move_unit") as
 					| Extract<EngineEvent, { type: "move_unit" }>
 					| undefined;
 				if (ev && isValidHex(ev.from) && isValidHex(ev.to)) {
@@ -218,8 +210,8 @@ export function useArenaAnimator(options?: {
 					await delay(scale(120));
 					if (runTokenRef.current !== token) return;
 				}
-			} else if (envelope.move.action === "attack") {
-				const ev = envelope.engineEvents.find((e) => e.type === "attack") as
+			} else if (move.action === "attack") {
+				const ev = engineEvents.find((e) => e.type === "attack") as
 					| Extract<EngineEvent, { type: "attack" }>
 					| undefined;
 				if (ev && isValidHex(ev.attackerFrom) && isValidHex(ev.targetHex)) {
@@ -283,8 +275,8 @@ export function useArenaAnimator(options?: {
 					await delay(scale(120));
 					if (runTokenRef.current !== token) return;
 				}
-			} else if (envelope.move.action === "recruit") {
-				const ev = envelope.engineEvents.find((e) => e.type === "recruit") as
+			} else if (move.action === "recruit") {
+				const ev = engineEvents.find((e) => e.type === "recruit") as
 					| Extract<EngineEvent, { type: "recruit" }>
 					| undefined;
 				if (ev && isValidHex(ev.at)) {
@@ -298,8 +290,8 @@ export function useArenaAnimator(options?: {
 					await delay(scale(120));
 					if (runTokenRef.current !== token) return;
 				}
-			} else if (envelope.move.action === "fortify") {
-				const ev = envelope.engineEvents.find((e) => e.type === "fortify") as
+			} else if (move.action === "fortify") {
+				const ev = engineEvents.find((e) => e.type === "fortify") as
 					| Extract<EngineEvent, { type: "fortify" }>
 					| undefined;
 				if (ev && isValidHex(ev.at)) {
@@ -311,11 +303,8 @@ export function useArenaAnimator(options?: {
 					clearUnitAnim(ev.unitId);
 					setEffects([]);
 				}
-			} else if (
-				envelope.move.action === "end_turn" ||
-				envelope.move.action === "pass"
-			) {
-				const side = inferSide(envelope.engineEvents) ?? "A";
+			} else if (move.action === "end_turn" || move.action === "pass") {
+				const side = inferSide(engineEvents) ?? "A";
 				const key = strongholdForSide(side);
 
 				setHudFx((prev) => ({ ...prev, passPulse: true }));
@@ -349,7 +338,7 @@ export function useArenaAnimator(options?: {
 	}, [animateEnvelope]);
 
 	const enqueue = useCallback(
-		(envelope: EngineEventsEnvelopeV1, opts?: { postState?: MatchState }) => {
+		(envelope: EngineEventsEnvelope, opts?: { postState?: MatchState }) => {
 			if (
 				typeof envelope.stateVersion === "number" &&
 				envelope.stateVersion <= lastSeenStateVersionRef.current
