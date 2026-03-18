@@ -1,3 +1,4 @@
+import { FeaturedStreamEnvelopeSchema } from "@fightclaw/protocol";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { openSse, readSseUntil, resetDb, setupMatch } from "../helpers";
 
@@ -10,7 +11,7 @@ afterEach(async () => {
 	await new Promise((resolve) => setTimeout(resolve, 100));
 });
 
-it("streams featured_changed and state events", async () => {
+it("streams typed featured_snapshot events", async () => {
 	await setupMatch();
 
 	const stream = await openSse("https://example.com/v1/featured/stream");
@@ -19,9 +20,7 @@ it("streams featured_changed and state events", async () => {
 	try {
 		const result = await readSseUntil(
 			stream.res,
-			(text) =>
-				text.includes("event: featured_changed") &&
-				text.includes("event: state"),
+			(text) => text.includes("event: featured_snapshot"),
 			5000,
 			200_000,
 			{
@@ -30,8 +29,25 @@ it("streams featured_changed and state events", async () => {
 				abortController: stream.controller,
 			},
 		);
-		expect(result.text).toContain("event: featured_changed");
-		expect(result.text).toContain("event: state");
+		expect(result.text).toContain("event: featured_snapshot");
+		expect(result.text).not.toContain("event: state");
+		expect(result.text).not.toContain("event: match_ended");
+		const frame =
+			result.framesPreview.find((value) =>
+				value.includes("event: featured_snapshot"),
+			) ?? null;
+		expect(frame).toBeTruthy();
+
+		const dataLine =
+			frame?.split("\n").find((line) => line.startsWith("data: ")) ?? null;
+		expect(dataLine).toBeTruthy();
+
+		const envelope = FeaturedStreamEnvelopeSchema.parse(
+			JSON.parse(String(dataLine).slice("data: ".length)),
+		);
+		expect(envelope.payload.matchId).toBeTruthy();
+		expect(envelope.payload.status).toBe("active");
+		expect(envelope.payload.players).toHaveLength(2);
 	} finally {
 		await stream.close();
 	}

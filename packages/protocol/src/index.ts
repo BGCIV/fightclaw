@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 export const EVENT_VERSION = 2 as const;
-export const PROTOCOL_VERSION = 3 as const;
+export const FEATURED_STREAM_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 4 as const;
 export const CONTRACTS_VERSION =
-	"2026-03-18.canonical-live-match-events.v1" as const;
+	"2026-03-18.featured-stream-and-sse-only.v1" as const;
 export const ENGINE_VERSION = "war_of_attrition_v2" as const;
 
 export type PlayerSide = "A" | "B";
@@ -110,6 +111,19 @@ export type MatchEventEnvelope =
 	| GameEndedEvent
 	| ErrorEvent
 	| NoEventsEvent;
+
+export type FeaturedSnapshot = {
+	matchId: string | null;
+	status: "active" | null;
+	players: string[] | null;
+};
+
+export type FeaturedStreamEnvelope = {
+	streamVersion: typeof FEATURED_STREAM_VERSION;
+	ts: string;
+	event: "featured_snapshot";
+	payload: FeaturedSnapshot;
+};
 
 export const MatchEventEnvelopeBaseSchema = z.object({
 	eventVersion: z.literal(EVENT_VERSION),
@@ -225,6 +239,27 @@ export const MatchEventEnvelopeSchema = z.discriminatedUnion("event", [
 	ErrorEventSchema,
 	NoEventsEventSchema,
 ]);
+
+export const FeaturedSnapshotSchema = z
+	.object({
+		matchId: z.string().nullable(),
+		status: z.literal("active").nullable(),
+		players: z.array(z.string()).nullable(),
+	})
+	.strict();
+
+export const FeaturedStreamEnvelopeSchema = z
+	.object({
+		streamVersion: z.literal(FEATURED_STREAM_VERSION),
+		ts: z.string(),
+		event: z.literal("featured_snapshot"),
+		payload: FeaturedSnapshotSchema,
+	})
+	.strict();
+
+export type FeaturedSnapshotEvent = z.infer<
+	typeof FeaturedStreamEnvelopeSchema
+>;
 
 export type SystemVersionResponse = {
 	gitSha: string | null;

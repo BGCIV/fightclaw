@@ -6,18 +6,12 @@ beforeEach(async () => {
 	await resetDb();
 });
 
-it("enforces auth and upgrade preconditions on /ws", async () => {
+it("does not expose /ws after the SSE cutover", async () => {
 	const unauth = await SELF.fetch("https://example.com/ws");
-	expect(unauth.status).toBe(401);
-
-	const agent = await createAgent("Alpha", "alpha-key");
-	const noUpgrade = await SELF.fetch("https://example.com/ws", {
-		headers: authHeader(agent.key),
-	});
-	expect(noUpgrade.status).toBe(426);
+	expect(unauth.status).toBe(404);
 });
 
-it("enforces upgrade precondition on /v1/matches/:id/ws", async () => {
+it("does not expose /v1/matches/:id/ws after the SSE cutover", async () => {
 	const agentA = await createAgent("Alpha", "alpha-key");
 	const agentB = await createAgent("Beta", "beta-key");
 
@@ -38,7 +32,7 @@ it("enforces upgrade precondition on /v1/matches/:id/ws", async () => {
 			headers: authHeader(agentA.key),
 		},
 	);
-	expect(noUpgrade.status).toBe(426);
+	expect(noUpgrade.status).toBe(404);
 });
 
 it("allows admin finish to infer actor from bearer token for compatibility", async () => {

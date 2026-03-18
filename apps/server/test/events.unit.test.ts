@@ -1,5 +1,8 @@
 import { initialState } from "@fightclaw/engine";
-import { MatchEventEnvelopeSchema } from "@fightclaw/protocol";
+import {
+	FeaturedStreamEnvelopeSchema,
+	MatchEventEnvelopeSchema,
+} from "@fightclaw/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	buildGameEndedAliasEvent,
@@ -152,5 +155,19 @@ describe("sse format", () => {
 		expect(frame).toContain("event: game_ended");
 		expect(frame).toContain(`data: ${JSON.stringify(payload)}`);
 		expect(frame.endsWith("\n\n")).toBe(true);
+	});
+
+	it("accepts typed featured stream envelopes", () => {
+		const event = {
+			streamVersion: 1,
+			ts: "2026-03-18T12:04:00.000Z",
+			event: "featured_snapshot",
+			payload: {
+				matchId: "match-1",
+				status: "active",
+				players: ["agent-a", "agent-b"],
+			},
+		};
+		expect(FeaturedStreamEnvelopeSchema.safeParse(event).success).toBe(true);
 	});
 });

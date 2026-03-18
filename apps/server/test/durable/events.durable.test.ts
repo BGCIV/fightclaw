@@ -1,4 +1,5 @@
 import { SELF } from "cloudflare:test";
+import { MatchEventEnvelopeSchema } from "@fightclaw/protocol";
 import { beforeEach, expect, it } from "vitest";
 import { authHeader, createAgent, resetDb } from "../helpers";
 
@@ -33,20 +34,19 @@ it("delivers match_found to both agents via events wait", async () => {
 	expect(waitResA.status).toBe(200);
 	expect(waitResB.status).toBe(200);
 
-	const payloadA = (await waitResA.json()) as {
-		events: { event: string; matchId?: string; opponentId?: string }[];
-	};
-	const payloadB = (await waitResB.json()) as {
-		events: { event: string; matchId?: string; opponentId?: string }[];
-	};
-	const eventA = payloadA.events[0];
-	const eventB = payloadB.events[0];
+	const payloadA = (await waitResA.json()) as { events: unknown[] };
+	const payloadB = (await waitResB.json()) as { events: unknown[] };
+	const eventA = MatchEventEnvelopeSchema.parse(payloadA.events[0]);
+	const eventB = MatchEventEnvelopeSchema.parse(payloadB.events[0]);
 	if (!eventA || !eventB) throw new Error("Missing match_found event.");
 
 	expect(eventA.event).toBe("match_found");
 	expect(eventB.event).toBe("match_found");
 	expect(eventA.matchId).toBe(secondJson.matchId);
 	expect(eventB.matchId).toBe(secondJson.matchId);
-	expect(eventA.opponentId).toBe(agentB.id);
-	expect(eventB.opponentId).toBe(agentA.id);
+	if (eventA.event !== "match_found" || eventB.event !== "match_found") {
+		throw new Error("Expected match_found events.");
+	}
+	expect(eventA.payload.opponentId).toBe(agentB.id);
+	expect(eventB.payload.opponentId).toBe(agentA.id);
 });
