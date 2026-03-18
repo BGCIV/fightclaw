@@ -7,6 +7,7 @@ import type {
 	MatchEventHandler,
 	MoveSubmitResponse,
 	QueueWaitEvent,
+	QueueWaitResponse,
 	RunMatchOptions,
 	RunMatchResult,
 	RunnerSession,
@@ -77,6 +78,17 @@ const resolveTerminalFromMove = (
 	};
 };
 
+const didMoveResponseAdvanceTurn = (
+	result: MoveSubmitResponse,
+	expectedVersion: number,
+) => {
+	return (
+		!result.ok &&
+		typeof result.stateVersion === "number" &&
+		result.stateVersion > expectedVersion
+	);
+};
+
 const parseQueueEvent = (events: QueueWaitEvent[]) => {
 	for (const event of events) {
 		if (event.event === "match_found" && typeof event.matchId === "string") {
@@ -90,7 +102,22 @@ const parseQueueEvent = (events: QueueWaitEvent[]) => {
 	return null;
 };
 
+const shouldRetryQueueWait = (error: unknown) => {
+	return (
+		error instanceof ArenaHttpError &&
+		error.status === 408 &&
+		error.envelope?.code === "queue_wait_disconnect"
+	);
+};
+
 const shouldFailStreamConnect = (error: unknown) => {
+	if (
+		error instanceof ArenaHttpError &&
+		error.status === 404 &&
+		error.envelope?.code === "match_stream_attach_gap"
+	) {
+		return false;
+	}
 	return (
 		error instanceof ArenaHttpError &&
 		error.status >= 400 &&
@@ -175,7 +202,15 @@ export const createRunnerSession = (
 					if (Date.now() - startedAt > queueTimeoutMs) {
 						throw new Error("Timed out waiting for queue match.");
 					}
-					const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					let waited: QueueWaitResponse;
+					try {
+						waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					} catch (error) {
+						if (shouldRetryQueueWait(error)) {
+							continue;
+						}
+						throw error;
+					}
 					const queueEvent = parseQueueEvent(waited.events);
 					if (!queueEvent) continue;
 					matchId = queueEvent.matchId;
@@ -371,6 +406,13 @@ export const runMatch = async (
 						});
 						if (response.ok) {
 							lastObservedVersion = response.state.stateVersion;
+							handledTurns.add(expectedVersion);
+						} else if (didMoveResponseAdvanceTurn(response, expectedVersion)) {
+							const advancedStateVersion = response.stateVersion;
+							lastObservedVersion = Math.max(
+								lastObservedVersion,
+								advancedStateVersion ?? lastObservedVersion,
+							);
 							handledTurns.add(expectedVersion);
 						}
 

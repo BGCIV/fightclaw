@@ -1,10 +1,11 @@
-import { SELF } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { currentPlayer, listLegalMoves } from "@fightclaw/engine";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
 	authHeader,
 	bindRunnerAgent,
 	openSse,
+	pollUntil,
 	readSseUntil,
 	resetDb,
 	runnerHeaders,
@@ -203,6 +204,74 @@ it(
 			expect(payload.event).toBe("engine_events");
 			expect(typeof payload.eventId).toBe("number");
 			expect((payload.eventId as number) > afterId).toBe(true);
+		} finally {
+			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"does not duplicate match_ended when resuming just before a terminal match event",
+	async () => {
+		const { matchId, agentA } = await setupMatch();
+
+		const finishRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/finish`,
+			{
+				method: "POST",
+				headers: {
+					...authHeader(agentA.key),
+					"content-type": "application/json",
+					"x-admin-key": env.ADMIN_KEY,
+				},
+				body: JSON.stringify({ reason: "forfeit" }),
+			},
+		);
+		expect(finishRes.ok).toBe(true);
+
+		const hasTerminalEvent = (payload: {
+			events: Array<{ event: string; eventId: number }>;
+		}) => payload.events.some((event) => event.event === "match_ended");
+
+		const terminalPage = await pollUntil(async () => {
+			const res = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/log?limit=50`,
+			);
+			expect(res.ok).toBe(true);
+			return (await res.json()) as {
+				events: Array<{ event: string; eventId: number }>;
+			};
+		}, hasTerminalEvent);
+
+		const terminalEvent = terminalPage.events.find(
+			(event) => event.event === "match_ended",
+		);
+		expect(terminalEvent).toBeTruthy();
+		if (!terminalEvent) throw new Error("Missing terminal log event.");
+
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/spectate?afterId=${Math.max(
+				0,
+				terminalEvent.eventId - 1,
+			)}`,
+		);
+
+		try {
+			const result = await readSseUntil(
+				stream.res,
+				() => false,
+				1250,
+				SSE_MAX_BYTES,
+				{
+					abortController: stream.controller,
+				},
+			);
+			const matchEndedCount = (result.text.match(/event: match_ended/g) ?? [])
+				.length;
+			expect(matchEndedCount).toBe(1);
+			expect(result.text).toContain("event: state");
+			expect(result.text).toContain("event: match_ended");
 		} finally {
 			await stream.close();
 		}

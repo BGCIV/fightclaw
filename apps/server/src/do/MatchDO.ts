@@ -840,9 +840,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					return new Response("Match id unavailable.", { status: 409 });
 				}
 				const afterId = this.parseAfterId(request);
-				if (afterId > 0) {
-					await this.replayRecordedEvents(writer, matchId, afterId);
-				}
+				const replayedTerminal =
+					afterId > 0
+						? await this.replayRecordedEvents(writer, matchId, afterId)
+						: false;
 				void this.sendEvent(
 					writer,
 					"state",
@@ -856,7 +857,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					this.unregisterAgentStream(agentId, writer);
 				});
 				this.sendYourTurnIfActive(state, agentId, writer);
-				if (state.status === "ended") {
+				if (state.status === "ended" && !replayedTerminal) {
 					void this.sendEvent(
 						writer,
 						"match_ended",
@@ -990,7 +991,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		matchId: string,
 		afterId: number,
 	) {
-		if (afterId <= 0) return;
+		if (afterId <= 0) return false;
 		const { results } = await this.env.DB.prepare(
 			[
 				"SELECT id, match_id, ts, event_type, payload_json",
@@ -1008,6 +1009,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				event_type: string;
 				payload_json: string;
 			}>();
+		let replayedTerminal = false;
 		for (const row of results ?? []) {
 			let payload: unknown = null;
 			try {
@@ -1023,8 +1025,12 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				payload,
 			});
 			if (!envelope) continue;
+			if (envelope.event === "match_ended") {
+				replayedTerminal = true;
+			}
 			await this.sendEvent(writer, envelope.event, envelope);
 		}
+		return replayedTerminal;
 	}
 
 	private async broadcastState(state: MatchState) {
@@ -1436,9 +1442,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					cleanup();
 					return;
 				}
-				if (afterId > 0) {
-					await this.replayRecordedEvents(writer, matchId, afterId);
-				}
+				const replayedTerminal =
+					afterId > 0
+						? await this.replayRecordedEvents(writer, matchId, afterId)
+						: false;
 				await this.sendEvent(
 					writer,
 					"state",
@@ -1449,7 +1456,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						state: state.game,
 					}),
 				);
-				if (state.status !== "ended") return;
+				if (state.status !== "ended" || replayedTerminal) return;
 				const endedPayload = buildLiveMatchEndedEvent({
 					ts: state.updatedAt,
 					matchId,

@@ -1,6 +1,6 @@
-import { SELF } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
-import { resetDb, setupMatch } from "../helpers";
+import { authHeader, pollUntil, resetDb, setupMatch } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
@@ -143,5 +143,57 @@ it("provides pagination metadata for replay log consumers", async () => {
 	expect(
 		secondPage.nextAfterId === null ||
 			typeof secondPage.nextAfterId === "number",
+	).toBe(true);
+});
+
+it("keeps the replay cursor strict at the terminal boundary", async () => {
+	const { matchId, agentA } = await setupMatch();
+
+	const finishRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/finish`,
+		{
+			method: "POST",
+			headers: {
+				...authHeader(agentA.key),
+				"content-type": "application/json",
+				"x-admin-key": env.ADMIN_KEY,
+			},
+			body: JSON.stringify({ reason: "forfeit" }),
+		},
+	);
+	expect(finishRes.ok).toBe(true);
+
+	const terminalPage = await pollUntil(
+		async () => {
+			const res = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/log?limit=50`,
+			);
+			expect(res.ok).toBe(true);
+			return (await res.json()) as {
+				events: Array<{ event: string; eventId: number }>;
+			};
+		},
+		(payload) => payload.events.some((event) => event.event === "match_ended"),
+	);
+
+	const terminalEvent = terminalPage.events.find(
+		(event) => event.event === "match_ended",
+	);
+	expect(terminalEvent).toBeTruthy();
+	if (!terminalEvent) throw new Error("Missing terminal log event.");
+
+	const replayRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/log?afterId=${terminalEvent.eventId}`,
+	);
+	expect(replayRes.ok).toBe(true);
+	const replayJson = (await replayRes.json()) as {
+		events: Array<{ event: string; eventId: number }>;
+	};
+
+	expect(replayJson.events.some((event) => event.event === "match_ended")).toBe(
+		false,
+	);
+	expect(
+		replayJson.events.every((event) => event.eventId > terminalEvent.eventId),
 	).toBe(true);
 });
