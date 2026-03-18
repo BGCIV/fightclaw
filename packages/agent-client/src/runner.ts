@@ -132,7 +132,7 @@ const asTerminalResult = (
 	agentId: string,
 	opponentId: string | null,
 ): RunMatchResult | null => {
-	if (event.event !== "match_ended" && event.event !== "game_ended") {
+	if (event.event !== "match_ended") {
 		return null;
 	}
 	const winner = event.payload.winnerAgentId ?? null;

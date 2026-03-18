@@ -26,7 +26,7 @@ const SSE_TIMEOUT_MS = 15000;
 const SSE_MAX_BYTES = 1_000_000;
 const TEST_TIMEOUT_MS = SSE_TIMEOUT_MS + 5000;
 
-// Note: Additional SSE tests (your_turn isolation, game_ended events) were removed
+// Note: Additional SSE tests (your_turn isolation, terminal alias coverage) were removed
 // due to workerd teardown instability. See TEST_SUITE_REVISION.md Priority 4.
 // This smoke test verifies basic SSE functionality.
 
@@ -272,6 +272,54 @@ it(
 			expect(matchEndedCount).toBe(1);
 			expect(result.text).toContain("event: state");
 			expect(result.text).toContain("event: match_ended");
+			expect(result.text).not.toContain("event: game_ended");
+		} finally {
+			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"does not emit game_ended on live terminal agent streams",
+	async () => {
+		const { matchId, agentA } = await setupMatch();
+
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/stream`,
+			authHeader(agentA.key),
+		);
+
+		try {
+			const waitForTerminal = readSseUntil(
+				stream.res,
+				() => false,
+				SSE_TIMEOUT_MS,
+				SSE_MAX_BYTES,
+				{
+					label: "agent terminal",
+					abortController: stream.controller,
+				},
+			);
+
+			const finishRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/finish`,
+				{
+					method: "POST",
+					headers: {
+						...authHeader(agentA.key),
+						"content-type": "application/json",
+						"x-admin-key": env.ADMIN_KEY,
+					},
+					body: JSON.stringify({ reason: "forfeit" }),
+				},
+			);
+			expect(finishRes.ok).toBe(true);
+
+			const result = await waitForTerminal;
+			expect(result.text).toContain("event: state");
+			expect(result.text).toContain("event: match_ended");
+			expect(result.text).not.toContain("event: game_ended");
 		} finally {
 			await stream.close();
 		}

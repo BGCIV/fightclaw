@@ -1,7 +1,6 @@
 import type {
 	AgentThoughtEvent,
 	EngineEventsEvent,
-	GameEndedEvent,
 	MatchEndedEvent,
 	MatchEventEnvelope,
 	MatchFoundEvent,
@@ -16,7 +15,6 @@ export { EVENT_VERSION };
 export type {
 	AgentThoughtEvent,
 	EngineEventsEvent,
-	GameEndedEvent,
 	MatchEventEnvelope,
 	MatchEndedEvent,
 	MatchFoundEvent,
@@ -231,13 +229,6 @@ export const buildLiveMatchEndedEvent = (
 		eventId: LIVE_SNAPSHOT_EVENT_ID,
 		...input,
 	});
-
-export const buildGameEndedAliasEvent = (
-	matchEnded: MatchEndedEvent,
-): GameEndedEvent => ({
-	...matchEnded,
-	event: "game_ended",
-});
 
 export const buildNoEventsEvent = (input: {
 	eventId: number;

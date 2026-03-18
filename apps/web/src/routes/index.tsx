@@ -128,7 +128,6 @@ function SpectatorLanding() {
 				setConnectionStatus("live");
 				return;
 			case "match_ended":
-			case "game_ended":
 				setConnectionStatus("live");
 				return;
 			default:
@@ -238,7 +237,6 @@ function SpectatorLanding() {
 			source.addEventListener("engine_events", onEnvelope as EventListener);
 			source.addEventListener("agent_thought", onEnvelope as EventListener);
 			source.addEventListener("match_ended", onEnvelope as EventListener);
-			source.addEventListener("game_ended", onEnvelope as EventListener);
 			source.addEventListener("error", () => {
 				if (!active) return;
 				source?.close();
@@ -463,7 +461,6 @@ function SpectatorLanding() {
 			source.addEventListener("engine_events", onEnvelope as EventListener);
 			source.addEventListener("agent_thought", onEnvelope as EventListener);
 			source.addEventListener("match_ended", onEnvelope as EventListener);
-			source.addEventListener("game_ended", onEnvelope as EventListener);
 			source.addEventListener("error", () => {
 				if (!active) return;
 				source?.close();

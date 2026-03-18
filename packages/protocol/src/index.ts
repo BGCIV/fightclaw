@@ -2,9 +2,8 @@ import { z } from "zod";
 
 export const EVENT_VERSION = 2 as const;
 export const FEATURED_STREAM_VERSION = 1 as const;
-export const PROTOCOL_VERSION = 4 as const;
-export const CONTRACTS_VERSION =
-	"2026-03-18.featured-stream-and-sse-only.v1" as const;
+export const PROTOCOL_VERSION = 5 as const;
+export const CONTRACTS_VERSION = "2026-03-18.match-ended-only.v1" as const;
 export const ENGINE_VERSION = "war_of_attrition_v2" as const;
 
 export type PlayerSide = "A" | "B";
@@ -83,11 +82,6 @@ export type MatchEndedEvent = MatchEventEnvelopeBase<
 	MatchEndedPayload
 >;
 
-export type GameEndedEvent = MatchEventEnvelopeBase<
-	"game_ended",
-	MatchEndedPayload
->;
-
 export type ErrorEvent = MatchEventEnvelopeBase<
 	"error",
 	{
@@ -108,7 +102,6 @@ export type MatchEventEnvelope =
 	| EngineEventsEvent
 	| AgentThoughtEvent
 	| MatchEndedEvent
-	| GameEndedEvent
 	| ErrorEvent
 	| NoEventsEvent;
 
@@ -208,11 +201,6 @@ export const MatchEndedEventSchema = MatchEventEnvelopeBaseSchema.extend({
 	payload: MatchEndedPayloadSchema,
 });
 
-export const GameEndedEventSchema = MatchEventEnvelopeBaseSchema.extend({
-	event: z.literal("game_ended"),
-	payload: MatchEndedPayloadSchema,
-});
-
 export const ErrorEventSchema = MatchEventEnvelopeBaseSchema.extend({
 	event: z.literal("error"),
 	payload: z
@@ -235,7 +223,6 @@ export const MatchEventEnvelopeSchema = z.discriminatedUnion("event", [
 	EngineEventsEventSchema,
 	AgentThoughtEventSchema,
 	MatchEndedEventSchema,
-	GameEndedEventSchema,
 	ErrorEventSchema,
 	NoEventsEventSchema,
 ]);

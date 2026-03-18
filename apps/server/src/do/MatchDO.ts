@@ -18,7 +18,6 @@ import { emitMetric } from "../obs/metrics";
 import {
 	buildAgentThoughtEvent,
 	buildEngineEventsEvent,
-	buildGameEndedAliasEvent,
 	buildLiveMatchEndedEvent,
 	buildLiveStateEvent,
 	buildLiveYourTurnEvent,
@@ -1107,11 +1106,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			"match_ended",
 			payload,
 		);
-		await this.broadcast(
-			[...this.spectators, ...this.allAgentWriters()],
-			"game_ended",
-			buildGameEndedAliasEvent(payload),
-		);
 	}
 
 	private allAgentWriters(): StreamWriter[] {
@@ -1466,11 +1460,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					reason: state.endReason ?? "ended",
 				});
 				await this.sendEvent(writer, "match_ended", endedPayload);
-				await this.sendEvent(
-					writer,
-					"game_ended",
-					buildGameEndedAliasEvent(endedPayload),
-				);
 			})().catch(() => {
 				cleanup();
 			});
