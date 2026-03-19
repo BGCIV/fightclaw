@@ -4,6 +4,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createSmokeArtifactBundle } from "./openclaw-duel-smoke-artifacts.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
@@ -213,6 +214,27 @@ const fetchJson = async (url, init) => {
 	return { res, text, json };
 };
 
+const captureSnapshot = async (url, init, fallbackLabel) => {
+	try {
+		const { res, text, json } = await fetchJson(url, init);
+		return {
+			ok: res.ok,
+			status: res.status,
+			text,
+			json,
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			status: null,
+			error: error instanceof Error ? error.message : String(error),
+			text: "",
+			json: null,
+			label: fallbackLabel,
+		};
+	}
+};
+
 const runCheckedCommand = async (command, args, options) => {
 	const proc = spawnLoggedProcess(command, args, options);
 	const result = await proc.result;
@@ -287,6 +309,10 @@ const main = async () => {
 	const logFiles = createLogFiles();
 	const persistDir = path.join(logFiles.dir, "wrangler-state");
 	mkdirSync(persistDir, { recursive: true });
+	const artifacts = createSmokeArtifactBundle({
+		dir: logFiles.dir,
+		logFiles,
+	});
 
 	await ensurePortAvailable(SERVER_PORT);
 	await runCheckedCommand(
@@ -352,6 +378,7 @@ const main = async () => {
 
 	let cli = null;
 	let success = false;
+	let observedMatchId = null;
 
 	try {
 		await waitForHealth();
@@ -420,7 +447,8 @@ const main = async () => {
 			MATCH_PROGRESS_TIMEOUT_MS,
 			"live match id",
 		);
-		const observedMatchId = livePayload.matchId;
+		observedMatchId = livePayload.matchId;
+		artifacts.setMatchId(observedMatchId);
 		const persistedPlayers = await waitFor(
 			async () => {
 				try {
@@ -602,6 +630,12 @@ const main = async () => {
 		const finalState = await fetchJson(
 			`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/state`,
 		);
+		artifacts.setFinalStateSnapshot({
+			ok: finalState.res.ok,
+			status: finalState.res.status,
+			text: finalState.text,
+			json: finalState.json,
+		});
 		if (!finalState.res.ok) {
 			throw new Error(
 				`Failed to fetch final state (${finalState.res.status}): ${finalState.text}`,
@@ -616,6 +650,12 @@ const main = async () => {
 		const replay = await fetchJson(
 			`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=200`,
 		);
+		artifacts.setFinalLogSnapshot({
+			ok: replay.res.ok,
+			status: replay.res.status,
+			text: replay.text,
+			json: replay.json,
+		});
 		if (!replay.res.ok) {
 			throw new Error(
 				`Failed to fetch canonical log (${replay.res.status}): ${replay.text}`,
@@ -650,7 +690,32 @@ const main = async () => {
 		success = true;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		if (observedMatchId) {
+			artifacts.setFinalStateSnapshot(
+				await captureSnapshot(
+					`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/state`,
+					undefined,
+					"final_state",
+				),
+			);
+			artifacts.setFinalLogSnapshot(
+				await captureSnapshot(
+					`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=200`,
+					{
+						headers: {
+							"x-admin-key": ADMIN_KEY,
+						},
+					},
+					"final_log",
+				),
+			);
+		}
+		const writtenArtifacts = await artifacts.persistFailureArtifacts(message);
 		console.error(message);
+		if (writtenArtifacts.matchId) {
+			console.error(`Resolved matchId: ${writtenArtifacts.matchId}`);
+		}
+		console.error(`Artifact summary: ${writtenArtifacts.summaryFile}`);
 		console.error(`Migration stdout: ${logFiles.migrateStdout}`);
 		console.error(`Migration stderr: ${logFiles.migrateStderr}`);
 		console.error(`DB stdout: ${logFiles.dbStdout}`);
