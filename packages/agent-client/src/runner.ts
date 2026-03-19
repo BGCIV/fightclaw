@@ -5,6 +5,7 @@ import type { ArenaClient } from "./client";
 import { ArenaHttpError } from "./errors";
 import type {
 	MatchEventHandler,
+	MatchStateResponse,
 	MoveSubmitResponse,
 	QueueWaitEvent,
 	QueueWaitResponse,
@@ -146,6 +147,27 @@ const asTerminalResult = (
 	};
 };
 
+const buildTerminalEnvelopeFromState = (
+	state: MatchStateResponse["state"],
+	matchId: string,
+): MatchEventEnvelope | null => {
+	if (!state || state.status !== "ended") return null;
+	return {
+		eventVersion: 2,
+		eventId: state.stateVersion,
+		ts: new Date().toISOString(),
+		matchId,
+		stateVersion: state.stateVersion,
+		event: "match_ended",
+		payload: {
+			winnerAgentId: state.winnerAgentId ?? null,
+			loserAgentId: state.loserAgentId ?? null,
+			reasonCode: state.endReason ?? "ended",
+			reason: state.endReason ?? "ended",
+		},
+	};
+};
+
 export const createRunnerSession = (
 	client: ArenaClient,
 	options: RunnerSessionOptions = {},
@@ -166,6 +188,8 @@ export const createRunnerSession = (
 	let stopStream: (() => void) | null = null;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let closed = false;
+	let sameCursorReconnects = 0;
+	let terminalStateCheckInFlight = false;
 
 	const clearReconnectTimer = () => {
 		if (!reconnectTimer) return;
@@ -252,6 +276,7 @@ export const createRunnerSession = (
 
 		const connectStream = async () => {
 			if (closed) return;
+			const streamCursor = lastEventId;
 			try {
 				const nextStop = await client.subscribeMatchStream(
 					started.matchId,
@@ -263,6 +288,32 @@ export const createRunnerSession = (
 						afterId: lastEventId,
 						onClose: () => {
 							if (closed) return;
+							if (lastEventId === streamCursor) {
+								sameCursorReconnects += 1;
+							} else {
+								sameCursorReconnects = 0;
+							}
+							if (sameCursorReconnects >= 2) {
+								void (async () => {
+									if (terminalStateCheckInFlight) return;
+									terminalStateCheckInFlight = true;
+									try {
+										const state = await client.getMatchState(started.matchId);
+										const terminalEvent = buildTerminalEnvelopeFromState(
+											state.state,
+											started.matchId,
+										);
+										if (terminalEvent) {
+											await handler(terminalEvent);
+											return;
+										}
+									} finally {
+										terminalStateCheckInFlight = false;
+									}
+									scheduleReconnect();
+								})();
+								return;
+							}
 							scheduleReconnect();
 						},
 					},

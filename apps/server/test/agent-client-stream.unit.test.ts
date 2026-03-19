@@ -863,4 +863,120 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		expect(slowMoveProvider.nextMove).toHaveBeenCalledTimes(1);
 		expect(stopStream).toHaveBeenCalledTimes(1);
 	});
+
+	it("falls back to authoritative terminal state after repeated reconnects at the same cursor", async () => {
+		vi.useFakeTimers();
+		try {
+			const stopFirst = vi.fn();
+			const stopSecond = vi.fn();
+			const stopThird = vi.fn();
+			const subscribeMatchStream = vi
+				.fn()
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId ?? 0).toBe(0);
+						queueMicrotask(() => {
+							void handler({
+								eventVersion: 2,
+								eventId: 111,
+								ts: "2026-03-18T12:00:00.000Z",
+								matchId,
+								stateVersion: 55,
+								event: "state",
+								payload: { state: { game: "snapshot" } },
+							});
+							queueMicrotask(() => {
+								options?.onClose?.();
+							});
+						});
+						return stopFirst;
+					},
+				)
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						_handler: (event: Parameters<typeof _handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId).toBe(111);
+						queueMicrotask(() => {
+							options?.onClose?.();
+						});
+						return stopSecond;
+					},
+				)
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						_handler: (event: Parameters<typeof _handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId).toBe(111);
+						queueMicrotask(() => {
+							options?.onClose?.();
+						});
+						return stopThird;
+					},
+				);
+
+			const getMatchState = vi.fn(async () => ({
+				state: {
+					stateVersion: 59,
+					status: "ended" as const,
+					winnerAgentId: "agent-b",
+					loserAgentId: "agent-a",
+					endReason: "forfeit",
+				},
+			}));
+
+			const client = {
+				me: vi.fn(async () => ({ agentId: "agent-a" })),
+				queueJoin: vi.fn(async () => ({
+					status: "ready" as const,
+					matchId: "match-1",
+					opponentId: "agent-b",
+				})),
+				waitForMatch: vi.fn(),
+				submitMove: vi.fn(),
+				subscribeMatchStream,
+				getMatchState,
+			};
+
+			const resultPromise = runMatch(client as never, {
+				moveProvider: {
+					nextMove: vi.fn(async () => ({ action: "pass" })),
+				},
+				streamReconnectDelayMs: 10,
+			});
+
+			const outcome = await Promise.race([
+				resultPromise.then((result) => ({ kind: "result" as const, result })),
+				vi.advanceTimersByTimeAsync(1000).then(() => ({
+					kind: "timeout" as const,
+				})),
+			]);
+
+			expect(outcome.kind).toBe("result");
+			if (outcome.kind !== "result") return;
+			expect(outcome.result).toMatchObject({
+				matchId: "match-1",
+				reason: "forfeit",
+				winnerAgentId: "agent-b",
+				loserAgentId: "agent-a",
+			});
+			expect(getMatchState).toHaveBeenCalledWith("match-1");
+			expect(subscribeMatchStream).toHaveBeenCalledTimes(3);
+			expect(stopFirst).toHaveBeenCalledTimes(0);
+			expect(stopThird).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

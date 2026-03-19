@@ -391,6 +391,101 @@ it(
 );
 
 it(
+	"replays the remaining terminal tail on resumed agent streams and closes cleanly",
+	async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+		try {
+			const { matchId, agentA } = await setupMatch();
+
+			const finishRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/finish`,
+				{
+					method: "POST",
+					headers: {
+						...authHeader(agentA.key),
+						"content-type": "application/json",
+						"x-admin-key": env.ADMIN_KEY,
+					},
+					body: JSON.stringify({ reason: "forfeit" }),
+				},
+			);
+			expect(finishRes.ok).toBe(true);
+
+			const terminalPage = await pollUntil(
+				async () => {
+					const res = await SELF.fetch(
+						`https://example.com/v1/matches/${matchId}/log?limit=50`,
+					);
+					expect(res.ok).toBe(true);
+					return (await res.json()) as {
+						events: Array<{ event: string; eventId: number }>;
+					};
+				},
+				({ events }) => events.some((event) => event.event === "match_ended"),
+			);
+
+			const terminalEvent = terminalPage.events.find(
+				(event) => event.event === "match_ended",
+			);
+			expect(terminalEvent).toBeTruthy();
+			if (!terminalEvent) throw new Error("Missing terminal log event.");
+
+			const afterId = Math.max(0, terminalEvent.eventId - 1);
+			const stream = await openSse(
+				`https://example.com/v1/matches/${matchId}/stream?afterId=${afterId}`,
+				authHeader(agentA.key),
+			);
+			expect(stream.res.ok).toBe(true);
+
+			try {
+				const result = await readSseUntil(
+					stream.res,
+					(value) => value.includes("event: match_ended"),
+					SSE_TIMEOUT_MS,
+					SSE_MAX_BYTES,
+					{
+						throwOnTimeout: true,
+						label: "agent stream terminal tail replay",
+						abortController: stream.controller,
+					},
+				);
+				expect(result.text).toContain("event: match_ended");
+				expect(result.text).not.toContain("event: game_ended");
+
+				const logs = readInfoLogs(infoSpy);
+				const replayed = logs.find(
+					(entry) => entry.message === "runner_stream_replayed",
+				);
+				const closed = logs.find(
+					(entry) =>
+						entry.message === "runner_stream_closed" &&
+						entry.route === `/v1/matches/${matchId}/stream`,
+				);
+
+				expect(replayed).toMatchObject({
+					event: "runner_stream_replayed",
+					route: `/v1/matches/${matchId}/stream`,
+					streamKind: "agent",
+					afterId,
+					replayedTerminal: true,
+				});
+				expect(closed).toMatchObject({
+					event: "runner_stream_closed",
+					route: `/v1/matches/${matchId}/stream`,
+					streamKind: "agent",
+					reason: "terminal_complete",
+				});
+			} finally {
+				await stream.close();
+			}
+		} finally {
+			infoSpy.mockRestore();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
 	"logs a terminal stream close exactly once when spectate ends",
 	async () => {
 		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});

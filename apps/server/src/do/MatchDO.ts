@@ -911,56 +911,68 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				if (!resolvedMatchId) {
 					return new Response("Match id unavailable.", { status: 409 });
 				}
-				const replaySummary =
-					afterId > 0
-						? await this.replayRecordedEvents(writer, resolvedMatchId, afterId)
-						: {
-								replayedCount: 0,
-								replayedTerminal: false,
-								lastReplayedEventId: null,
-							};
-				if (afterId > 0) {
-					observability.logStreamReplay({
-						streamKind: "agent",
-						afterId,
-						replayedCount: replaySummary.replayedCount,
-						replayedTerminal: replaySummary.replayedTerminal,
-						stateVersion: state.stateVersion,
-					});
-					observability.emitStreamResume(this.env);
-				}
-				void this.sendEvent(
-					writer,
-					"state",
-					buildLiveStateEvent({
-						ts: state.updatedAt,
-						matchId: resolvedMatchId,
-						stateVersion: state.stateVersion,
-						state: state.game,
-					}),
-				).catch(() => {
-					cleanup();
-				});
-				this.sendYourTurnIfActive(state, agentId, writer);
-				if (state.status === "ended") {
-					if (!replaySummary.replayedTerminal) {
-						void this.sendEvent(
+				void (async () => {
+					const replaySummary =
+						afterId > 0
+							? await this.replayRecordedEvents(
+									writer,
+									resolvedMatchId,
+									afterId,
+								)
+							: {
+									replayedCount: 0,
+									replayedTerminal: false,
+									lastReplayedEventId: null,
+								};
+					if (afterId > 0) {
+						observability.logStreamReplay({
+							streamKind: "agent",
+							afterId,
+							replayedCount: replaySummary.replayedCount,
+							replayedTerminal: replaySummary.replayedTerminal,
+							stateVersion: state.stateVersion,
+						});
+						observability.emitStreamResume(this.env);
+					}
+					try {
+						await this.sendEvent(
 							writer,
-							"match_ended",
-							buildLiveMatchEndedEvent({
+							"state",
+							buildLiveStateEvent({
 								ts: state.updatedAt,
 								matchId: resolvedMatchId,
 								stateVersion: state.stateVersion,
-								winnerAgentId: state.winnerAgentId ?? null,
-								loserAgentId: state.loserAgentId ?? null,
-								reason: state.endReason ?? "ended",
+								state: state.game,
 							}),
-						).catch(() => {
-							cleanup();
-						});
+						);
+					} catch {
+						cleanup();
+						return;
 					}
-					cleanup("terminal_complete");
-				}
+					this.sendYourTurnIfActive(state, agentId, writer);
+					if (state.status === "ended") {
+						if (!replaySummary.replayedTerminal) {
+							try {
+								await this.sendEvent(
+									writer,
+									"match_ended",
+									buildLiveMatchEndedEvent({
+										ts: state.updatedAt,
+										matchId: resolvedMatchId,
+										stateVersion: state.stateVersion,
+										winnerAgentId: state.winnerAgentId ?? null,
+										loserAgentId: state.loserAgentId ?? null,
+										reason: state.endReason ?? "ended",
+									}),
+								);
+							} catch {
+								cleanup();
+								return;
+							}
+						}
+						cleanup("terminal_complete");
+					}
+				})();
 			}
 
 			return this.streamResponse(readable, cleanup);
