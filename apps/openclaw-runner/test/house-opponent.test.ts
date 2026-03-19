@@ -120,51 +120,56 @@ test("house opponent registers one agent, verifies it, publishes the preset, bin
 		throw new Error(`Unhandled fetch: ${url}`);
 	}) as typeof fetch;
 
-	const result = await runHouseOpponent({
-		baseUrl: "https://example.com",
-		name: "HouseOpponent",
-		adminKey: "admin-key",
-		runnerKey: "runner-key",
-		runnerId: "runner-1",
-		runMatchImpl: async (_client, options) => {
-			assert.ok(options.session);
-			const started = await options.session.start();
-			assert.equal(started.matchId, "match-house-1");
-			assert.equal(started.opponentId, "tester-9");
-			return {
-				matchId: "match-house-1",
-				transport: "sse",
-				reason: "match_ended",
-				winnerAgentId: "house-123",
-				loserAgentId: "tester-9",
-			};
-		},
-	});
+	try {
+		const result = await runHouseOpponent({
+			baseUrl: "https://example.com",
+			name: "HouseOpponent",
+			adminKey: "admin-key",
+			runnerKey: "runner-key",
+			runnerId: "runner-1",
+			runMatchImpl: async (_client, options) => {
+				assert.ok(options.session);
+				const started = await options.session.start();
+				assert.equal(started.matchId, "match-house-1");
+				assert.equal(started.opponentId, "tester-9");
+				return {
+					matchId: "match-house-1",
+					transport: "sse",
+					reason: "match_ended",
+					winnerAgentId: "house-123",
+					loserAgentId: "tester-9",
+				};
+			},
+		});
 
-	globalThis.fetch = originalFetch;
-
-	assert.equal(result.agentId, "house-123");
-	assert.equal(result.matchId, "match-house-1");
-	assert.equal(result.terminalReason, "match_ended");
-	assert.equal(result.selection.source.kind, "preset");
-	assert.equal(
-		calls.filter((url) => url.endsWith("/v1/auth/register")).length,
-		1,
-	);
-	assert.equal(
-		calls.filter((url) => url.endsWith("/v1/auth/verify")).length,
-		1,
-	);
-	assert.equal(
-		calls.filter((url) => url.endsWith("/v1/internal/runners/agents/bind"))
-			.length,
-		1,
-	);
-	assert.equal(
-		calls.filter((url) => url.endsWith("/v1/agents/me/strategy/hex_conquest"))
-			.length,
-		1,
-	);
-	assert.equal(calls.filter((url) => url.endsWith("/v1/auth/me")).length, 1);
-	assert.equal(calls.filter((url) => url.endsWith("/v1/queue/join")).length, 1);
+		assert.equal(result.agentId, "house-123");
+		assert.equal(result.matchId, "match-house-1");
+		assert.equal(result.terminalReason, "match_ended");
+		assert.equal(result.selection.source.kind, "preset");
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/auth/register")).length,
+			1,
+		);
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/auth/verify")).length,
+			1,
+		);
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/internal/runners/agents/bind"))
+				.length,
+			1,
+		);
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/agents/me/strategy/hex_conquest"))
+				.length,
+			1,
+		);
+		assert.equal(calls.filter((url) => url.endsWith("/v1/auth/me")).length, 1);
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/queue/join")).length,
+			1,
+		);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
 });
