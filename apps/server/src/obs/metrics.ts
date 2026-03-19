@@ -12,7 +12,11 @@ export type MetricEvent =
 	| "prompt_version_attached"
 	| "prompt_injected"
 	| "agent_model_seen"
-	| "agent_inference";
+	| "agent_inference"
+	| "runner_queue_wait_no_events"
+	| "runner_stream_resume"
+	| "runner_stream_disconnect"
+	| "runner_move_conflict";
 
 export type MetricScope = "worker" | "match_do" | "matchmaker_do" | "web";
 

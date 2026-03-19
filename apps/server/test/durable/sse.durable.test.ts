@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { currentPlayer, listLegalMoves } from "@fightclaw/engine";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
 	authHeader,
 	bindRunnerAgent,
@@ -25,6 +25,19 @@ afterEach(async () => {
 const SSE_TIMEOUT_MS = 15000;
 const SSE_MAX_BYTES = 1_000_000;
 const TEST_TIMEOUT_MS = SSE_TIMEOUT_MS + 5000;
+
+const readInfoLogs = (spy: ReturnType<typeof vi.spyOn>) => {
+	return spy.mock.calls
+		.map(([message]) => {
+			if (typeof message !== "string") return null;
+			try {
+				return JSON.parse(message) as Record<string, unknown>;
+			} catch {
+				return null;
+			}
+		})
+		.filter((entry): entry is Record<string, unknown> => entry !== null);
+};
 
 // Note: Additional SSE tests (your_turn isolation, terminal alias coverage) were removed
 // due to workerd teardown instability. See TEST_SUITE_REVISION.md Priority 4.
@@ -212,6 +225,103 @@ it(
 );
 
 it(
+	"logs stream attach and replay summaries when spectating with afterId",
+	async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+		try {
+			const { matchId, agentA } = await setupMatch();
+
+			const stateRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/state`,
+			);
+			const stateJson = (await stateRes.json()) as {
+				state: { stateVersion: number } | null;
+			};
+			const expectedVersion = stateJson.state?.stateVersion ?? 0;
+
+			await SELF.fetch(`https://example.com/v1/matches/${matchId}/move`, {
+				method: "POST",
+				headers: {
+					...authHeader(agentA.key),
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					moveId: crypto.randomUUID(),
+					expectedVersion,
+					move: { action: "fortify", unitId: "A-1" },
+				}),
+			});
+
+			const firstPageRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/log?limit=1`,
+			);
+			const firstPage = (await firstPageRes.json()) as {
+				nextAfterId?: number | null;
+			};
+			const afterId = firstPage.nextAfterId ?? 0;
+
+			const resumedStateRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/state`,
+			);
+			const resumedStateJson = (await resumedStateRes.json()) as {
+				state: { stateVersion: number } | null;
+			};
+			const resumedStateVersion = resumedStateJson.state?.stateVersion ?? 0;
+
+			const stream = await openSse(
+				`https://example.com/v1/matches/${matchId}/spectate?afterId=${afterId}`,
+			);
+
+			try {
+				const result = await readSseUntil(
+					stream.res,
+					(value) => value.includes("event: engine_events"),
+					SSE_TIMEOUT_MS,
+					SSE_MAX_BYTES,
+					{
+						throwOnTimeout: true,
+						label: "spectate afterId replay logs",
+						abortController: stream.controller,
+					},
+				);
+				expect(result.text).toContain("event: engine_events");
+
+				const logs = readInfoLogs(infoSpy);
+				const attached = logs.find(
+					(entry) => entry.message === "runner_stream_attached",
+				);
+				const replayed = logs.find(
+					(entry) => entry.message === "runner_stream_replayed",
+				);
+
+				expect(attached).toMatchObject({
+					event: "runner_stream_attached",
+					route: `/v1/matches/${matchId}/spectate`,
+					streamKind: "spectator",
+					afterId,
+				});
+				expect(replayed).toMatchObject({
+					event: "runner_stream_replayed",
+					route: `/v1/matches/${matchId}/spectate`,
+					streamKind: "spectator",
+					afterId,
+					stateVersion: resumedStateVersion,
+				});
+				expect(
+					typeof replayed?.replayedCount === "number" &&
+						Number.isFinite(replayed.replayedCount as number),
+				).toBe(true);
+			} finally {
+				await stream.close();
+			}
+		} finally {
+			infoSpy.mockRestore();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
 	"does not duplicate match_ended when resuming just before a terminal match event",
 	async () => {
 		const { matchId, agentA } = await setupMatch();
@@ -275,6 +385,68 @@ it(
 			expect(result.text).not.toContain("event: game_ended");
 		} finally {
 			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"logs a terminal stream close exactly once when spectate ends",
+	async () => {
+		const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+		try {
+			const { matchId, agentA } = await setupMatch();
+
+			const finishRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/finish`,
+				{
+					method: "POST",
+					headers: {
+						...authHeader(agentA.key),
+						"content-type": "application/json",
+						"x-admin-key": env.ADMIN_KEY,
+					},
+					body: JSON.stringify({ reason: "forfeit" }),
+				},
+			);
+			expect(finishRes.ok).toBe(true);
+
+			const stream = await openSse(
+				`https://example.com/v1/matches/${matchId}/spectate`,
+			);
+
+			try {
+				const result = await readSseUntil(
+					stream.res,
+					(value) => value.includes("event: match_ended"),
+					SSE_TIMEOUT_MS,
+					SSE_MAX_BYTES,
+					{
+						throwOnTimeout: true,
+						label: "terminal spectate close",
+						abortController: stream.controller,
+					},
+				);
+				expect(result.text).toContain("event: state");
+				expect(result.text).toContain("event: match_ended");
+				expect(result.text).not.toContain("event: game_ended");
+
+				const logs = readInfoLogs(infoSpy);
+				const closed = logs.filter(
+					(entry) => entry.message === "runner_stream_closed",
+				);
+				expect(closed).toHaveLength(1);
+				expect(closed[0]).toMatchObject({
+					event: "runner_stream_closed",
+					route: `/v1/matches/${matchId}/spectate`,
+					streamKind: "spectator",
+					reason: "terminal_complete",
+				});
+			} finally {
+				await stream.close();
+			}
+		} finally {
+			infoSpy.mockRestore();
 		}
 	},
 	TEST_TIMEOUT_MS,

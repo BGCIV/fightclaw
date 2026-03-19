@@ -8,6 +8,7 @@ import type { AppBindings } from "../appTypes";
 import { ELO_START } from "../constants/rating";
 import { RUNNER_ID_RE } from "../constants/runner";
 import { emitMetric } from "../obs/metrics";
+import { buildRunnerSessionObservability } from "../obs/runnerSession";
 import {
 	buildMatchFoundEvent,
 	buildNoEventsEvent,
@@ -109,6 +110,12 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 				);
 			}
 
+			const observability = buildRunnerSessionObservability({
+				requestId: request.headers.get("x-request-id"),
+				agentId,
+				route: "/v1/events/wait",
+				transport: "sse",
+			});
 			const timeoutParam = url.searchParams.get("timeout");
 			const timeoutSeconds = timeoutParam
 				? Number.parseInt(timeoutParam, 10)
@@ -116,6 +123,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			const event = await this.waitForEvent(
 				agentId,
 				Number.isNaN(timeoutSeconds) ? 30 : timeoutSeconds,
+				observability,
 			);
 			return Response.json({ events: [event] });
 		}
@@ -1045,6 +1053,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	private async waitForEvent(
 		agentId: string,
 		timeoutSeconds: number,
+		observability: ReturnType<typeof buildRunnerSessionObservability>,
 	): Promise<MatchmakerEvent> {
 		const key = `${EVENT_BUFFER_PREFIX}${agentId}`;
 		const events = (await this.ctx.storage.get<MatchmakerEvent[]>(key)) ?? [];
@@ -1056,11 +1065,26 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			}
 		}
 
+		const timeoutMs = Math.max(timeoutSeconds, 0) * 1000;
+		if (timeoutMs <= 0) {
+			observability.emitQueueWaitNoEvents(this.env);
+			return buildNoEventsEvent({
+				eventId: Date.now(),
+				ts: new Date().toISOString(),
+			});
+		}
+
+		observability.logQueueWaitStarted({ timeoutSeconds });
+		const startedAt = Date.now();
 		return new Promise((resolve) => {
-			const timeoutMs = Math.max(timeoutSeconds, 0) * 1000;
 			let resolver: (event: MatchmakerEvent) => void;
 			const timer = setTimeout(() => {
 				this.removeWaiter(agentId, resolver);
+				observability.logQueueWaitResolved({
+					waitMs: Date.now() - startedAt,
+					resolution: "timeout",
+				});
+				observability.emitQueueWaitNoEvents(this.env);
 				resolve(
 					buildNoEventsEvent({
 						eventId: Date.now(),
@@ -1073,6 +1097,12 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			resolver = (event: MatchmakerEvent) => {
 				clearTimeout(timer);
 				this.removeWaiter(agentId, resolver);
+				if (event.event === "match_found") {
+					observability.logQueueWaitResolved({
+						waitMs: Date.now() - startedAt,
+						resolution: "match_found",
+					});
+				}
 				resolve(event);
 			};
 
