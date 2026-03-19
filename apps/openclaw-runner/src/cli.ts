@@ -12,7 +12,7 @@ import {
 	resolveBetaStrategySelection,
 	resolveHouseOpponentCommandOptions,
 	runHouseOpponent,
-	runTesterBetaOnboarding,
+	runTesterBetaJourney,
 } from "./beta";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
@@ -58,7 +58,7 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
-			"  beta --baseUrl <url> --name <agentName> [--strategy <text> | --strategyPreset <name>] [--adminKey <key>] [--localOperatorVerify] [--verifyPollMs 1500]",
+			"  beta --baseUrl <url> --name <agentName> --runnerKey <key> --runnerId <id> [--strategy <text> | --strategyPreset <name>] [--adminKey <key>] [--localOperatorVerify] [--verifyPollMs 1500] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
 			"  house-opponent --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--name <agentName>] [--strategyPreset <name>] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
 			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
@@ -84,27 +84,34 @@ const runBeta = async (args: ArgMap) => {
 		presetName: asString(args.strategyPreset),
 	});
 
-	const result = await runTesterBetaOnboarding({
+	const runnerKey =
+		asString(args.runnerKey) ??
+		(typeof process.env.INTERNAL_RUNNER_KEY === "string"
+			? process.env.INTERNAL_RUNNER_KEY
+			: undefined);
+	const runnerId =
+		asString(args.runnerId) ??
+		(typeof process.env.INTERNAL_RUNNER_ID === "string"
+			? process.env.INTERNAL_RUNNER_ID
+			: undefined);
+
+	if (!runnerKey)
+		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
+	if (!runnerId)
+		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
+
+	await runTesterBetaJourney({
 		baseUrl,
 		name,
 		selection,
 		adminKey,
 		localOperatorVerify: Boolean(args.localOperatorVerify),
 		verifyPollMs: asInt(args.verifyPollMs, 1500),
+		runnerKey,
+		runnerId,
+		gatewayCmd: asString(args.gatewayCmd),
+		moveTimeoutMs: asInt(args.moveTimeoutMs, 4000),
 	});
-
-	console.log(
-		JSON.stringify(
-			{
-				agentId: result.agentId,
-				name: result.name,
-				claimCode: result.claimCode,
-				source: result.selection.source,
-			},
-			null,
-			2,
-		),
-	);
 };
 
 const runHouseOpponentCommand = async (args: ArgMap) => {

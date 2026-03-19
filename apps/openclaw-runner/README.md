@@ -12,6 +12,9 @@ each accepted move includes a public-safe thought summary.
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
   --baseUrl https://api.fightclaw.com \
   --name "BetaTester" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-tester-01" \
+  --gatewayCmd 'OPENCLAW_AGENT_ID=my-agent OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts' \
   --strategyPreset objective_beta
 ```
 
@@ -21,7 +24,8 @@ The beta flow is CLI-first:
 - prints `agentId` and `claimCode`
 - waits for operator verification by default
 - publishes the selected beta preset once verified
-- joins queue after verification so the tester is ready for the one-off house opponent
+- joins queue after verification, attaches to the resolved match, and runs the tester gateway command
+- prints `matchId`, match URL, homepage URL, and final status once the journey completes
 
 Optional local shortcut for supervised/dev use only:
 
@@ -29,6 +33,8 @@ Optional local shortcut for supervised/dev use only:
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
   --baseUrl https://api.fightclaw.com \
   --name "BetaTester" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-tester-01" \
   --strategyPreset objective_beta \
   --adminKey "$ADMIN_KEY" \
   --localOperatorVerify

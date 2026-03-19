@@ -22,7 +22,8 @@ type BetaPhase =
 	| { phase: "waiting_for_operator_verification" }
 	| { phase: "verified" }
 	| { phase: "publishing_preset" }
-	| { phase: "joining_queue" };
+	| { phase: "joining_queue" }
+	| { phase: "matched" };
 
 export const DEFAULT_BETA_PRESET = "objective_beta";
 export const DEFAULT_HOUSE_GATEWAY_CMD =
@@ -259,6 +260,8 @@ export const formatBetaProgressEvent = (event: BetaPhase): string => {
 			return "publishing preset";
 		case "joining_queue":
 			return "joining queue";
+		case "matched":
+			return "matched";
 	}
 };
 
@@ -267,6 +270,42 @@ export const shouldUseLocalOperatorVerify = (input: {
 	adminKey?: string;
 }) => {
 	return Boolean(input.localOperatorVerify);
+};
+
+export const buildBetaHomepageUrl = (baseUrl: string) => {
+	const url = new URL(baseUrl);
+	if (url.hostname === "api.fightclaw.com") {
+		url.hostname = "fightclaw.com";
+		url.port = "";
+		url.pathname = "/";
+		url.search = "";
+		url.hash = "";
+		return url.toString();
+	}
+	if (
+		(url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+		url.port === "3000"
+	) {
+		url.port = "3001";
+		url.pathname = "/";
+		url.search = "";
+		url.hash = "";
+		return url.toString();
+	}
+	url.pathname = "/";
+	url.search = "";
+	url.hash = "";
+	return url.toString();
+};
+
+export const buildBetaMatchUrl = (baseUrl: string, matchId: string) => {
+	const url = new URL(buildBetaHomepageUrl(baseUrl));
+	url.searchParams.set("replayMatchId", matchId);
+	return url.toString();
+};
+
+export const formatBetaSummaryLine = (label: string, value: string) => {
+	return `${label}: ${value}`;
 };
 
 export const resolveHouseOpponentCommandOptions = (input: {
@@ -337,6 +376,7 @@ export const runTesterBetaOnboarding = async (input: {
 	adminKey?: string;
 	localOperatorVerify?: boolean;
 	verifyPollMs?: number;
+	joinQueue?: boolean;
 	onProgress?: (line: string) => void;
 }) => {
 	const progress = input.onProgress ?? ((line: string) => console.log(line));
@@ -401,18 +441,105 @@ export const runTesterBetaOnboarding = async (input: {
 		selection: input.selection,
 	});
 
-	progress(formatBetaProgressEvent({ phase: "joining_queue" }));
-	const queued = await testerClient.queueJoin();
+	const shouldJoinQueue = input.joinQueue ?? true;
+	let queued: {
+		status: string;
+		matchId?: string | null;
+		opponentId?: string | null;
+	} | null = null;
+	if (shouldJoinQueue) {
+		progress(formatBetaProgressEvent({ phase: "joining_queue" }));
+		queued = await testerClient.queueJoin();
+	}
 
 	return {
 		agentId: registered.agentId,
 		apiKey: registered.apiKey,
 		claimCode: registered.claimCode,
 		name: registered.name,
-		queueStatus: queued.status,
-		queuedMatchId: queued.matchId,
-		opponentId: queued.opponentId ?? null,
+		queueStatus: queued?.status ?? null,
+		queuedMatchId: queued?.matchId ?? null,
+		opponentId: queued?.opponentId ?? null,
 		selection: input.selection,
+	};
+};
+
+export const runTesterBetaJourney = async (input: {
+	baseUrl: string;
+	name: string;
+	selection: StrategySelection;
+	adminKey?: string;
+	localOperatorVerify?: boolean;
+	verifyPollMs?: number;
+	runnerKey: string;
+	runnerId: string;
+	gatewayCmd?: string;
+	moveTimeoutMs?: number;
+	onProgress?: (line: string) => void;
+	runMatchImpl?: typeof runMatch;
+}) => {
+	const progress = input.onProgress ?? ((line: string) => console.log(line));
+	const onboarding = await runTesterBetaOnboarding({
+		baseUrl: input.baseUrl,
+		name: input.name,
+		selection: input.selection,
+		adminKey: input.adminKey,
+		localOperatorVerify: input.localOperatorVerify,
+		verifyPollMs: input.verifyPollMs,
+		joinQueue: false,
+		onProgress: progress,
+	});
+
+	await bindRunnerAgent(
+		input.baseUrl,
+		input.runnerKey,
+		input.runnerId,
+		onboarding.agentId,
+	);
+
+	const runnerClient = new InternalRunnerClient(
+		input.baseUrl,
+		onboarding.apiKey,
+		input.runnerKey,
+		input.runnerId,
+		onboarding.agentId,
+	);
+	const session = createRunnerSession(runnerClient, {
+		queueWaitTimeoutSeconds: 5,
+	});
+	progress(formatBetaProgressEvent({ phase: "joining_queue" }));
+	const started = await session.start();
+	progress(formatBetaProgressEvent({ phase: "matched" }));
+	const homepageUrl = buildBetaHomepageUrl(input.baseUrl);
+	const matchUrl = buildBetaMatchUrl(input.baseUrl, started.matchId);
+	progress(formatBetaSummaryLine("matchId", started.matchId));
+	progress(formatBetaSummaryLine("match URL", matchUrl));
+	progress(formatBetaSummaryLine("homepage URL", homepageUrl));
+
+	const runMatchImpl = input.runMatchImpl ?? runMatch;
+	const result = await runMatchImpl(runnerClient, {
+		moveProvider: createMoveProvider(
+			runnerClient,
+			onboarding.agentId,
+			onboarding.name,
+			input.gatewayCmd,
+		),
+		moveProviderTimeoutMs: input.moveTimeoutMs,
+		session,
+	});
+
+	const matchId = result.matchId || started.matchId;
+	progress(formatBetaSummaryLine("final status", result.reason));
+
+	return {
+		agentId: onboarding.agentId,
+		matchId,
+		homepageUrl,
+		matchUrl,
+		finalStatus: result.reason,
+		winnerAgentId: result.winnerAgentId,
+		loserAgentId: result.loserAgentId,
+		selection: onboarding.selection,
 	};
 };
 

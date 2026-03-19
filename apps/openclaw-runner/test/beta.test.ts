@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
 	formatBetaProgressEvent,
 	resolveBetaStrategySelection,
+	runTesterBetaJourney,
 	runTesterBetaOnboarding,
 	shouldUseLocalOperatorVerify,
 } from "../src/beta";
@@ -297,6 +298,138 @@ test("tester beta onboarding polls for manual verification before publish and qu
 		assert.equal(result.queuedMatchId, "match-manual");
 		assert.equal(meCalls, 2);
 		assert.equal(calls.includes("https://example.com/v1/auth/verify"), false);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test("tester beta journey prints the final match summary with URLs", async () => {
+	const progress: string[] = [];
+	const calls: string[] = [];
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (input, _init) => {
+		const url = String(input);
+		calls.push(url);
+
+		if (url.endsWith("/v1/auth/register")) {
+			return new Response(
+				JSON.stringify({
+					agent: {
+						id: "agent-789",
+						name: "BetaTester",
+						verified: false,
+					},
+					apiKey: "agent-key-789",
+					claimCode: "CODE-1234",
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		if (url.endsWith("/v1/auth/me")) {
+			return new Response(
+				JSON.stringify({
+					agent: {
+						id: "agent-789",
+						name: "BetaTester",
+						verified: true,
+					},
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		if (url.endsWith("/v1/agents/me/strategy/hex_conquest")) {
+			return new Response(JSON.stringify({ created: { version: 1 } }), {
+				status: 201,
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		if (url.endsWith("/v1/internal/runners/agents/bind")) {
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		if (url.endsWith("/v1/queue/join")) {
+			return new Response(
+				JSON.stringify({
+					status: "ready",
+					matchId: "match-789",
+					opponentId: "house-1",
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		throw new Error(`Unhandled fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		const result = await runTesterBetaJourney({
+			baseUrl: "https://api.fightclaw.com",
+			name: "BetaTester",
+			selection: resolveBetaStrategySelection({
+				side: "A",
+			}),
+			adminKey: "admin-key",
+			runnerKey: "runner-key",
+			runnerId: "runner-1",
+			gatewayCmd: "pnpm exec tsx scripts/gateway-move.ts",
+			moveTimeoutMs: 4000,
+			onProgress: (line) => progress.push(line),
+			runMatchImpl: async (_client, options) => {
+				assert.ok(options.session);
+				const started = await options.session.start();
+				assert.equal(started.matchId, "match-789");
+				return {
+					matchId: "match-789",
+					transport: "sse",
+					reason: "match_ended",
+					winnerAgentId: "agent-789",
+					loserAgentId: "house-1",
+				};
+			},
+		});
+
+		assert.equal(result.agentId, "agent-789");
+		assert.equal(result.matchId, "match-789");
+		assert.equal(result.homepageUrl, "https://fightclaw.com/");
+		assert.equal(
+			result.matchUrl,
+			"https://fightclaw.com/?replayMatchId=match-789",
+		);
+		assert.equal(result.finalStatus, "match_ended");
+		assert.deepEqual(progress, [
+			"registered",
+			"agentId: agent-789",
+			"claimCode: CODE-1234",
+			"waiting for operator verification",
+			"verified",
+			"publishing preset",
+			"joining queue",
+			"matched",
+			"matchId: match-789",
+			"match URL: https://fightclaw.com/?replayMatchId=match-789",
+			"homepage URL: https://fightclaw.com/",
+			"final status: match_ended",
+		]);
+		assert.equal(
+			calls.filter((url) => url.endsWith("/v1/internal/runners/agents/bind"))
+				.length,
+			1,
+		);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
