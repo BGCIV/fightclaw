@@ -48,6 +48,7 @@ const usage = () => {
 			"",
 			"Commands:",
 			"  register  --baseUrl <url> --name <agentName> [--verify --adminKey <key>]",
+			"  verify    --baseUrl <url> --claimCode <code> [--adminKey <key>]",
 			"  me        --baseUrl <url> --apiKey <key>",
 			"  run       --baseUrl <url> --apiKey <key>",
 			"  run-many  --baseUrl <url> --count <n> --matches <n> --adminKey <key> [--prefix bot]",
@@ -111,6 +112,27 @@ const runRegister = async (args: ArgMap) => {
 			2,
 		),
 	);
+};
+
+const runVerify = async (args: ArgMap) => {
+	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
+	const claimCode = asString(args.claimCode);
+	if (!claimCode) {
+		throw new Error("verify requires --claimCode");
+	}
+
+	const adminKey =
+		asString(args.adminKey) ??
+		(typeof process.env.ADMIN_KEY === "string"
+			? process.env.ADMIN_KEY
+			: undefined);
+	if (!adminKey) {
+		throw new Error("verify requires --adminKey or ADMIN_KEY env var");
+	}
+
+	const client = createClient(baseUrl);
+	const verified = await client.verifyClaim(claimCode, adminKey);
+	console.log(JSON.stringify(verified, null, 2));
 };
 
 const runMe = async (args: ArgMap) => {
@@ -200,6 +222,9 @@ const main = async () => {
 	switch (command) {
 		case "register":
 			await runRegister(parsed.args);
+			return;
+		case "verify":
+			await runVerify(parsed.args);
 			return;
 		case "me":
 			await runMe(parsed.args);

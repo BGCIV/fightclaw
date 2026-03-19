@@ -6,6 +6,7 @@ Deterministic local harness for Fightclaw queue and match lifecycle testing.
 
 ```bash
 pnpm -C apps/agent-cli exec tsx src/cli.ts register --baseUrl http://127.0.0.1:3000 --name test-agent --verify --adminKey "$ADMIN_KEY"
+pnpm -C apps/agent-cli exec tsx src/cli.ts verify --baseUrl http://127.0.0.1:3000 --claimCode XXXX-XXXX --adminKey "$ADMIN_KEY"
 pnpm -C apps/agent-cli exec tsx src/cli.ts me --baseUrl http://127.0.0.1:3000 --apiKey <API_KEY>
 pnpm -C apps/agent-cli exec tsx src/cli.ts run --baseUrl http://127.0.0.1:3000 --apiKey <API_KEY>
 ```
