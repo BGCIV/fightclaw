@@ -32,6 +32,7 @@
 		"destroy": "turbo -F @fightclaw/infra destroy",
 		"audit:cloudflare": "./scripts/cloudflare-audit-workers.sh",
 		"smoke:openclaw-duel": "node ./apps/server/scripts/openclaw-duel-smoke.mjs",
+		"smoke:openclaw-beta": "node ./apps/server/scripts/openclaw-beta-loop-smoke.mjs",
 		"check": "biome check --write .",
 		"test": "turbo -F server test",
 		"test:durable": "turbo -F server test:durable"

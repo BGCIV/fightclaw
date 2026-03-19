@@ -40,6 +40,17 @@ pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
   --localOperatorVerify
 ```
 
+End-to-end local closed-beta smoke:
+
+```bash
+pnpm run smoke:openclaw-beta
+```
+
+That harness starts a local Workers server, runs the tester beta command,
+performs operator verification through `apps/agent-cli`, launches the one-off
+house opponent, and verifies the resulting featured match plus canonical match
+state/log before cleaning up.
+
 One-off house opponent for the closed-beta loop:
 
 ```bash
