@@ -138,7 +138,9 @@ it("provides pagination metadata for replay log consumers", async () => {
 		nextAfterId?: number | null;
 	};
 	expect(secondPage.events.length).toBeGreaterThan(0);
-	expect(secondPage.events[0]?.eventId).toBeGreaterThan(cursor);
+	secondPage.events.forEach((event) => {
+		expect(event.eventId).toBeGreaterThan(cursor);
+	});
 	expect(typeof secondPage.hasMore).toBe("boolean");
 	expect(
 		secondPage.nextAfterId === null ||

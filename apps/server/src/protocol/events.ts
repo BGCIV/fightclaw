@@ -268,6 +268,10 @@ const asOptionalString = (value: unknown): string | undefined => {
 	return typeof value === "string" ? value : undefined;
 };
 
+const asNullableString = (value: unknown): string | null => {
+	return typeof value === "string" ? value : null;
+};
+
 export const buildStoredMatchEventEnvelope = (
 	row: StoredMatchEventRow,
 ): MatchEventEnvelope | null => {
@@ -280,8 +284,10 @@ export const buildStoredMatchEventEnvelope = (
 					)
 				: [];
 			const seed = asOptionalNumber(payload?.seed);
-			const stateVersion = asOptionalNumber(payload?.stateVersion) ?? 0;
-			if (players.length !== 2 || seed === null) return null;
+			const stateVersion = asOptionalNumber(payload?.stateVersion);
+			if (players.length !== 2 || seed === null || stateVersion === null) {
+				return null;
+			}
 			return buildMatchStartedEvent({
 				eventId: row.eventId,
 				ts: row.ts,
@@ -343,16 +349,8 @@ export const buildStoredMatchEventEnvelope = (
 				ts: row.ts,
 				matchId: row.matchId,
 				stateVersion: asOptionalNumber(payload?.stateVersion),
-				winnerAgentId:
-					typeof payload?.winnerAgentId === "string" ||
-					payload?.winnerAgentId === null
-						? payload.winnerAgentId
-						: null,
-				loserAgentId:
-					typeof payload?.loserAgentId === "string" ||
-					payload?.loserAgentId === null
-						? payload.loserAgentId
-						: null,
+				winnerAgentId: asNullableString(payload?.winnerAgentId),
+				loserAgentId: asNullableString(payload?.loserAgentId),
 				reason: asOptionalString(payload?.reason) ?? "ended",
 			});
 		}

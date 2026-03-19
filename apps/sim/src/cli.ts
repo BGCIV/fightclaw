@@ -28,6 +28,13 @@ type Args = ReturnType<typeof minimist>;
 
 type BotType = "random" | "greedy" | "aggressive" | "mockllm" | "llm";
 type StrategyName = "aggressive" | "defensive" | "random" | "strategic";
+const VALID_BOT_TYPES = [
+	"random",
+	"greedy",
+	"aggressive",
+	"mockllm",
+	"llm",
+] as const;
 
 function inferApiKeyForBaseUrl(
 	_baseUrl: string | undefined,
@@ -47,6 +54,16 @@ function strategyPromptForLlm(strategy?: string): string | undefined {
 		default:
 			return undefined;
 	}
+}
+
+function assertBotType(value: string, label: string): BotType {
+	if ((VALID_BOT_TYPES as readonly string[]).includes(value)) {
+		return value as BotType;
+	}
+
+	throw new Error(
+		`Invalid ${label} "${value}". Expected one of: ${VALID_BOT_TYPES.join(", ")}`,
+	);
 }
 
 function makeBot(
@@ -593,8 +610,8 @@ function createCliContext(argv: Args): CliContext {
 		explicitStrategy: stringArg(argv, "strategy2"),
 		fallbackBotType: "random",
 	});
-	const bot1Type = resolvedP1.botType as BotType;
-	const bot2Type = resolvedP2.botType as BotType;
+	const bot1Type = assertBotType(resolvedP1.botType, "resolvedP1.botType");
+	const bot2Type = assertBotType(resolvedP2.botType, "resolvedP2.botType");
 	const prompt1 = resolvedP1.prompt;
 	const prompt2 = resolvedP2.prompt;
 	const strategy1 = resolvedP1.strategy;

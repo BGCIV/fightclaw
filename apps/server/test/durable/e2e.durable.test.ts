@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
 	authHeader,
+	ensureResetDb,
 	openSse,
 	pollUntil,
 	readSseText,
@@ -20,8 +21,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await resetDb();
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await ensureResetDb();
 });
 
 const pickMove = (moves: Move[]): Move => {

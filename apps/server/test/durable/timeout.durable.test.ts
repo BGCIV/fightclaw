@@ -1,14 +1,13 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { authHeader, createAgent, resetDb } from "../helpers";
+import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
 });
 
 afterEach(async () => {
-	await resetDb();
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await ensureResetDb();
 });
 
 const setupMatch = async () => {
@@ -158,17 +157,29 @@ it("falls back to default timeout when TURN_TIMEOUT_SECONDS is 0", async () => {
 				env?: { TURN_TIMEOUT_SECONDS?: string };
 				alarm?: () => Promise<void>;
 			};
-			if (anyInstance.env) {
-				anyInstance.env.TURN_TIMEOUT_SECONDS = "0";
+			const prevTurnTimeout = anyInstance.env?.TURN_TIMEOUT_SECONDS;
+			try {
+				if (anyInstance.env) {
+					anyInstance.env.TURN_TIMEOUT_SECONDS = "0";
+				}
+				const stored =
+					await state.storage.get<Record<string, unknown>>("state");
+				if (!stored) return new Response("missing state", { status: 500 });
+				await state.storage.put("state", {
+					...stored,
+					turnExpiresAtMs: Date.now() - 1,
+				});
+				await anyInstance.alarm?.();
+				return new Response("ok");
+			} finally {
+				if (anyInstance.env) {
+					if (prevTurnTimeout === undefined) {
+						delete anyInstance.env.TURN_TIMEOUT_SECONDS;
+					} else {
+						anyInstance.env.TURN_TIMEOUT_SECONDS = prevTurnTimeout;
+					}
+				}
 			}
-			const stored = await state.storage.get<Record<string, unknown>>("state");
-			if (!stored) return new Response("missing state", { status: 500 });
-			await state.storage.put("state", {
-				...stored,
-				turnExpiresAtMs: Date.now() - 1,
-			});
-			await anyInstance.alarm?.();
-			return new Response("ok");
 		},
 	);
 

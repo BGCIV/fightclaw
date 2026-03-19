@@ -2,6 +2,7 @@ import {
 	type EngineEvent,
 	type MatchState,
 	type Move,
+	MoveSchema,
 	parseHexId,
 } from "@fightclaw/engine";
 import type { EngineEventsEvent } from "@fightclaw/protocol";
@@ -46,6 +47,12 @@ const MIN_STEP_MS = 50;
 
 const isValidHex = (id: unknown): id is string =>
 	typeof id === "string" && id.length >= 2;
+
+const isEngineEvent = (value: unknown): value is EngineEvent =>
+	typeof value === "object" &&
+	value !== null &&
+	"type" in value &&
+	typeof (value as { type?: unknown }).type === "string";
 
 const inferSide = (events: EngineEvent[]): "A" | "B" | null => {
 	for (const event of events) {
@@ -160,8 +167,18 @@ export function useArenaAnimator(options?: {
 		async (item: QueuedItem, token: number) => {
 			const scale = scaleForQueue(queueRef.current.length);
 			const envelope = item.envelope;
-			const move = envelope.payload.move as Move;
-			const engineEvents = envelope.payload.engineEvents as EngineEvent[];
+			const moveParse = MoveSchema.safeParse(envelope.payload.move);
+			const engineEvents = Array.isArray(envelope.payload.engineEvents)
+				? envelope.payload.engineEvents.filter(isEngineEvent)
+				: null;
+			if (!moveParse.success || !engineEvents) {
+				console.warn("arena-animator: skipped invalid engine_events payload", {
+					move: envelope.payload.move,
+					engineEvents: envelope.payload.engineEvents,
+				});
+				return;
+			}
+			const move: Move = moveParse.data;
 
 			// Collect dying unit IDs from attack events BEFORE applying state
 			const dyingIds: string[] = [];

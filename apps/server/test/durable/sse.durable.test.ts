@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import {
 	authHeader,
 	bindRunnerAgent,
+	ensureResetDb,
 	openSse,
 	pollUntil,
 	readSseUntil,
@@ -17,9 +18,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await resetDb();
-	// Allow stream aborts to propagate and DOs to settle before next test.
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	await ensureResetDb();
 });
 
 const SSE_TIMEOUT_MS = 15000;
@@ -316,7 +315,7 @@ it(
 			await SELF.fetch(`https://example.com/v1/matches/${matchId}/move`, {
 				method: "POST",
 				headers: {
-					...{ authorization: `Bearer ${agentA.key}` },
+					...authHeader(agentA.key),
 					"content-type": "application/json",
 				},
 				body: JSON.stringify({
