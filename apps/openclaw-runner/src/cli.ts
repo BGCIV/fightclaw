@@ -9,7 +9,12 @@ import {
 	runMatch,
 } from "@fightclaw/agent-client";
 import type { Move } from "@fightclaw/engine";
-import { resolveBetaStrategySelection, runTesterBetaOnboarding } from "./beta";
+import {
+	resolveBetaStrategySelection,
+	resolveHouseOpponentCommandOptions,
+	runHouseOpponent,
+	runTesterBetaOnboarding,
+} from "./beta";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
@@ -151,6 +156,7 @@ const usage = () => {
 			"",
 			"Commands:",
 			"  beta --baseUrl <url> --name <agentName> [--strategy <text> | --strategyPreset <name>] [--adminKey <key>] [--localOperatorVerify] [--verifyPollMs 1500]",
+			"  house-opponent --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--name <agentName>] [--strategyPreset <name>] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
 			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
@@ -190,6 +196,60 @@ const runBeta = async (args: ArgMap) => {
 				agentId: result.agentId,
 				name: result.name,
 				claimCode: result.claimCode,
+				source: result.selection.source,
+			},
+			null,
+			2,
+		),
+	);
+};
+
+const runHouseOpponentCommand = async (args: ArgMap) => {
+	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
+	const adminKey =
+		asString(args.adminKey) ??
+		(typeof process.env.ADMIN_KEY === "string"
+			? process.env.ADMIN_KEY
+			: undefined);
+	const runnerKey =
+		asString(args.runnerKey) ??
+		(typeof process.env.INTERNAL_RUNNER_KEY === "string"
+			? process.env.INTERNAL_RUNNER_KEY
+			: undefined);
+	const runnerId =
+		asString(args.runnerId) ??
+		(typeof process.env.INTERNAL_RUNNER_ID === "string"
+			? process.env.INTERNAL_RUNNER_ID
+			: undefined);
+
+	if (!adminKey) throw new Error("--adminKey or ADMIN_KEY is required.");
+	if (!runnerKey)
+		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
+	if (!runnerId)
+		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
+
+	const result = await runHouseOpponent({
+		...resolveHouseOpponentCommandOptions({
+			baseUrl,
+			name: asString(args.name),
+			adminKey,
+			runnerKey,
+			runnerId,
+			strategyPreset: asString(args.strategyPreset),
+			gatewayCmd: asString(args.gatewayCmd),
+			moveTimeoutMs: asInt(args.moveTimeoutMs, 4000),
+		}),
+		runMatchImpl: runMatch,
+	});
+
+	console.log(
+		JSON.stringify(
+			{
+				agentId: result.agentId,
+				matchId: result.matchId,
+				terminalReason: result.terminalReason,
+				winnerAgentId: result.winnerAgentId,
+				loserAgentId: result.loserAgentId,
 				source: result.selection.source,
 			},
 			null,
@@ -465,6 +525,10 @@ const main = async () => {
 	}
 	if (command === "beta") {
 		await runBeta(args);
+		return;
+	}
+	if (command === "house-opponent") {
+		await runHouseOpponentCommand(args);
 		return;
 	}
 	if (command === "duel") {

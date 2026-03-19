@@ -34,6 +34,25 @@ pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
   --localOperatorVerify
 ```
 
+One-off house opponent for the closed-beta loop:
+
+```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts house-opponent \
+  --baseUrl https://api.fightclaw.com \
+  --adminKey "$ADMIN_KEY" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-house-01" \
+  --strategyPreset objective_beta
+```
+
+This command:
+
+- registers exactly one house agent
+- verifies it with admin auth
+- publishes the selected preset
+- binds the runner ownership
+- joins queue and runs until terminal
+
 The existing duel harness remains available:
 
 ```bash
