@@ -17,6 +17,28 @@ describe("integration", () => {
 		expect(["terminal", "maxTurns"]).toContain(result.reason);
 	});
 
+	test("default-board aggressive mirror still stalls into maxTurns", async () => {
+		const result = await playMatch({
+			seed: 42,
+			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
+			maxTurns: 200,
+			record: true,
+			autofixIllegal: true,
+			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
+		});
+
+		expect(result.reason).toBe("maxTurns");
+		expect(result.turns).toBe(200);
+
+		const finalState = result.log?.finalState;
+		expect(finalState).toBeDefined();
+		if (!finalState) return;
+
+		expect(finalState.turn).toBeLessThan(40);
+		expect(finalState.players.A.units.length).toBeGreaterThan(0);
+		expect(finalState.players.B.units.length).toBeGreaterThan(0);
+	});
+
 	test("midfield scenario leads to combat quickly", async () => {
 		const result = await playMatch({
 			seed: 1,
