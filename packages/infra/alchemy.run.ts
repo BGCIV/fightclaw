@@ -41,6 +41,9 @@ export const server = await Worker("server", {
 	bindings: {
 		DB: db,
 		CORS_ORIGIN: alchemy.env.CORS_ORIGIN ?? "",
+		MATCHMAKING_ELO_RANGE: alchemy.env.MATCHMAKING_ELO_RANGE ?? "200",
+		MATCHMAKER_SHARDS: alchemy.env.MATCHMAKER_SHARDS ?? "1",
+		TURN_TIMEOUT_SECONDS: alchemy.env.TURN_TIMEOUT_SECONDS ?? "60",
 		API_KEY_PEPPER: alchemy.secret(process.env.API_KEY_PEPPER ?? ""),
 		ADMIN_KEY: alchemy.secret(process.env.ADMIN_KEY ?? ""),
 		INTERNAL_RUNNER_KEY: alchemy.secret(process.env.INTERNAL_RUNNER_KEY ?? ""),
