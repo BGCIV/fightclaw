@@ -13,6 +13,8 @@ import {
 	type EngineEventsEvent,
 	type FeaturedSnapshot,
 	FeaturedStreamEnvelopeSchema,
+	type GameEndedEvent,
+	type MatchEndedEvent,
 	type MatchEventEnvelope,
 	MatchEventEnvelopeSchema,
 	type MatchStartedEvent,
@@ -25,6 +27,13 @@ import {
 	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
+import {
+	appendBroadcastTickerItem,
+	type BroadcastTickerItem,
+	buildSpectatorDeskProjection,
+	isTerminalDeskEvent,
+	projectBroadcastTickerItem,
+} from "@/lib/spectator-desk";
 import {
 	applyFeaturedUpdate,
 	type FeaturedLiveState,
@@ -67,8 +76,10 @@ function SpectatorLanding() {
 	const [replayShouldFollowLive, setReplayShouldFollowLive] = useState(false);
 	const [thoughtsA, setThoughtsA] = useState<string[]>([]);
 	const [thoughtsB, setThoughtsB] = useState<string[]>([]);
-	const [isThinkingA, setIsThinkingA] = useState(false);
-	const [isThinkingB, setIsThinkingB] = useState(false);
+	const [tickerItems, setTickerItems] = useState<BroadcastTickerItem[]>([]);
+	const [terminalEvent, setTerminalEvent] = useState<
+		MatchEndedEvent | GameEndedEvent | null
+	>(null);
 	const thoughtEventIdsRef = useRef(new Set<string>());
 
 	const featured = featuredState.featured;
@@ -88,11 +99,11 @@ function SpectatorLanding() {
 		onApplyBaseState: (state) => setLatestState(state),
 	});
 
-	const resetThoughts = useEffectEvent(() => {
+	const resetBroadcastState = useEffectEvent(() => {
 		setThoughtsA([]);
 		setThoughtsB([]);
-		setIsThinkingA(false);
-		setIsThinkingB(false);
+		setTickerItems([]);
+		setTerminalEvent(null);
 		thoughtEventIdsRef.current.clear();
 	});
 
@@ -120,6 +131,10 @@ function SpectatorLanding() {
 				return;
 			}
 			case "engine_events":
+				setTickerItems((current) => {
+					const item = projectBroadcastTickerItem(event as EngineEventsEvent);
+					return item ? appendBroadcastTickerItem(current, item) : current;
+				});
 				enqueueEngineEvents(event as EngineEventsEnvelope);
 				setConnectionStatus("live");
 				return;
@@ -129,6 +144,7 @@ function SpectatorLanding() {
 				return;
 			case "match_ended":
 			case "game_ended":
+				setTerminalEvent(event);
 				setConnectionStatus("live");
 				return;
 			default:
@@ -207,7 +223,7 @@ function SpectatorLanding() {
 			resetAnimator();
 			setLatestState(null);
 			setConnectionStatus("idle");
-			resetThoughts();
+			resetBroadcastState();
 			replayAfterIdRef.current = 0;
 			return;
 		}
@@ -219,7 +235,7 @@ function SpectatorLanding() {
 		resetAnimator();
 		setLatestState(null);
 		setConnectionStatus("connecting");
-		resetThoughts();
+		resetBroadcastState();
 		replayAfterIdRef.current = 0;
 
 		const connect = (afterId: number) => {
@@ -282,7 +298,7 @@ function SpectatorLanding() {
 		});
 		setLatestState(null);
 		setConnectionStatus("connecting");
-		resetThoughts();
+		resetBroadcastState();
 
 		const runReplay = async () => {
 			try {
@@ -365,6 +381,7 @@ function SpectatorLanding() {
 				let state = createInitialState(seed, replayEngineConfig, players);
 				setLatestState(state);
 				setConnectionStatus("replay");
+				let replayTicker: BroadcastTickerItem[] = [];
 
 				const thoughtByMoveId = new Map<string, AgentThoughtEvent[]>();
 				for (const event of allEvents) {
@@ -408,6 +425,10 @@ function SpectatorLanding() {
 						},
 					};
 
+					const tickerItem = projectBroadcastTickerItem(event);
+					if (tickerItem) {
+						replayTicker = appendBroadcastTickerItem(replayTicker, tickerItem);
+					}
 					enqueueEngineEvents(envelope, { postState: state });
 					const thoughts = thoughtByMoveId.get(event.payload.moveId) ?? [];
 					for (const thought of thoughts) {
@@ -415,12 +436,19 @@ function SpectatorLanding() {
 					}
 				}
 
+				setTickerItems(replayTicker);
+				const replayTerminal =
+					allEvents.findLast?.(isTerminalDeskEvent) ??
+					[...allEvents].reverse().find(isTerminalDeskEvent) ??
+					null;
+				setTerminalEvent(replayTerminal);
+
 				replayAfterIdRef.current = allEvents.reduce(
 					(maxEventId, event) => Math.max(maxEventId, event.eventId),
 					0,
 				);
 
-				if (state.status === "active") {
+				if (state.status === "active" && !replayTerminal) {
 					setReplayShouldFollowLive(true);
 				}
 			} catch {
@@ -500,14 +528,42 @@ function SpectatorLanding() {
 		}
 	}, [connectionStatus]);
 
+	const deskProjection = useMemo(
+		() =>
+			buildSpectatorDeskProjection({
+				connectionStatus,
+				featured,
+				state: latestState,
+				thoughtsA,
+				thoughtsB,
+				tickerItems,
+				terminalEvent,
+			}),
+		[
+			connectionStatus,
+			featured,
+			latestState,
+			thoughtsA,
+			thoughtsB,
+			tickerItems,
+			terminalEvent,
+		],
+	);
+
 	return (
 		<SpectatorArena
 			statusBadge={statusBadge}
+			featuredDesk={deskProjection.featuredDesk}
+			agentCards={deskProjection.agentCards}
+			tickerItems={deskProjection.tickerItems}
+			resultSummary={deskProjection.resultSummary}
+			topBarCenterFallback={deskProjection.featuredDesk.label}
+			topBarRight={
+				<span className="top-bar-right-label">
+					{deskProjection.topBarRightLabel}
+				</span>
+			}
 			state={latestState}
-			thoughtsA={thoughtsA}
-			thoughtsB={thoughtsB}
-			isThinkingA={isThinkingA}
-			isThinkingB={isThinkingB}
 			hudPassPulse={hudFx.passPulse}
 			effects={effects}
 			unitAnimStates={unitAnimStates}

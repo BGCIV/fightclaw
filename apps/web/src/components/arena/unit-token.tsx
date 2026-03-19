@@ -187,7 +187,7 @@ export const UnitToken = memo(function UnitToken({
 						fill="rgba(255,255,255,0.15)"
 						rx={hpBarHeight / 2}
 					/>
-					<motion.rect
+					<rect
 						x={-hpBarWidth / 2}
 						y={hpBarY}
 						width={hpBarWidth * hpFraction}
@@ -200,8 +200,6 @@ export const UnitToken = memo(function UnitToken({
 									: "#ef4444"
 						}
 						rx={hpBarHeight / 2}
-						animate={{ width: hpBarWidth * hpFraction }}
-						transition={{ type: "tween", duration: 0.4, ease: "easeOut" }}
 					/>
 				</g>
 			) : null}
