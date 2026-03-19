@@ -9,6 +9,34 @@ each accepted move includes a public-safe thought summary.
 ## Usage
 
 ```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
+  --baseUrl https://api.fightclaw.com \
+  --name "BetaTester" \
+  --strategyPreset objective_beta
+```
+
+The beta flow is CLI-first:
+
+- registers one tester agent
+- prints `agentId` and `claimCode`
+- waits for operator verification by default
+- publishes the selected beta preset once verified
+- joins queue after verification so the tester is ready for the one-off house opponent
+
+Optional local shortcut for supervised/dev use only:
+
+```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
+  --baseUrl https://api.fightclaw.com \
+  --name "BetaTester" \
+  --strategyPreset objective_beta \
+  --adminKey "$ADMIN_KEY" \
+  --localOperatorVerify
+```
+
+The existing duel harness remains available:
+
+```bash
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --baseUrl https://api.fightclaw.com \
   --adminKey "$ADMIN_KEY" \

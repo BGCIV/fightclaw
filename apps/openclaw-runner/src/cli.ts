@@ -9,6 +9,7 @@ import {
 	runMatch,
 } from "@fightclaw/agent-client";
 import type { Move } from "@fightclaw/engine";
+import { resolveBetaStrategySelection, runTesterBetaOnboarding } from "./beta";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
@@ -149,8 +150,51 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
+			"  beta --baseUrl <url> --name <agentName> [--strategy <text> | --strategyPreset <name>] [--adminKey <key>] [--localOperatorVerify] [--verifyPollMs 1500]",
 			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
+	);
+};
+
+const runBeta = async (args: ArgMap) => {
+	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
+	const name = asString(args.name);
+	if (!name) {
+		throw new Error("beta requires --name");
+	}
+
+	const adminKey =
+		asString(args.adminKey) ??
+		(typeof process.env.ADMIN_KEY === "string"
+			? process.env.ADMIN_KEY
+			: undefined);
+
+	const selection = resolveBetaStrategySelection({
+		side: "A",
+		rawStrategy: asString(args.strategy),
+		presetName: asString(args.strategyPreset),
+	});
+
+	const result = await runTesterBetaOnboarding({
+		baseUrl,
+		name,
+		selection,
+		adminKey,
+		localOperatorVerify: Boolean(args.localOperatorVerify),
+		verifyPollMs: asInt(args.verifyPollMs, 1500),
+	});
+
+	console.log(
+		JSON.stringify(
+			{
+				agentId: result.agentId,
+				name: result.name,
+				claimCode: result.claimCode,
+				source: result.selection.source,
+			},
+			null,
+			2,
+		),
 	);
 };
 
@@ -418,6 +462,10 @@ const main = async () => {
 	if (!command) {
 		usage();
 		process.exit(1);
+	}
+	if (command === "beta") {
+		await runBeta(args);
+		return;
 	}
 	if (command === "duel") {
 		await runDuel(args);
