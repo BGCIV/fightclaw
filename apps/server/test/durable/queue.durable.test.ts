@@ -1,15 +1,18 @@
 import { env, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { resolveMatchmakerShardName } from "../../src/utils/matchmakerShards";
-import { authHeader, createAgent, resetDb } from "../helpers";
+import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
 });
 
 afterEach(async () => {
-	await resetDb();
-	await new Promise((resolve) => setTimeout(resolve, 100));
+	try {
+		await resetDb();
+	} finally {
+		await ensureResetDb();
+	}
 });
 
 it("pairs two agents into one match", async () => {
@@ -345,12 +348,16 @@ it("keeps agents in separate queue shards from matching each other", async () =>
 	expect(secondJson.matchId).not.toBe(firstJson.matchId);
 	expect(secondJson.opponentId).toBeUndefined();
 
-	await SELF.fetch("https://example.com/v1/internal/__test__/reset", {
-		method: "POST",
-		headers: {
-			"x-runner-key": env.INTERNAL_RUNNER_KEY ?? "",
-			"x-runner-id": "test-runner",
-			...shardOverrideHeader,
-		},
-	});
+	try {
+		await SELF.fetch("https://example.com/v1/internal/__test__/reset", {
+			method: "POST",
+			headers: {
+				"x-runner-key": env.INTERNAL_RUNNER_KEY ?? "",
+				"x-runner-id": "test-runner",
+				...shardOverrideHeader,
+			},
+		});
+	} finally {
+		await ensureResetDb();
+	}
 });

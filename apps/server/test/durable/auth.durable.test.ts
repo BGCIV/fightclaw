@@ -1,6 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { openSse, resetDb, setupMatch } from "../helpers";
+import { ensureResetDb, openSse, setupMatch } from "../helpers";
 
 const matchId = "11111111-1111-4111-8111-111111111111";
 
@@ -11,8 +11,7 @@ const matchId = "11111111-1111-4111-8111-111111111111";
 
 describe("auth", () => {
 	afterEach(async () => {
-		await resetDb();
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await ensureResetDb();
 	});
 
 	it("requires auth for queue", async () => {
@@ -63,6 +62,7 @@ describe("auth", () => {
 	});
 
 	it("allows public spectate stream", async () => {
+		await setupMatch();
 		const stream = await openSse(
 			`https://example.com/v1/matches/${matchId}/spectate`,
 		);

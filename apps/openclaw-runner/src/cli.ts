@@ -8,7 +8,7 @@ import {
 	type RunMatchResult,
 	runMatch,
 } from "@fightclaw/agent-client";
-import type { Move } from "@fightclaw/engine";
+import { listLegalMoves, type Move } from "@fightclaw/engine";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
@@ -242,6 +242,17 @@ const fallbackMove: Move = {
 	reasoning: "Public-safe fallback: pass turn.",
 };
 
+const selectLegalFallbackMove = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+): Move | null => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	const legalMoves = listLegalMoves(
+		game as Parameters<typeof listLegalMoves>[0],
+	);
+	return legalMoves[0] ?? null;
+};
+
 const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
@@ -268,6 +279,13 @@ const createMoveProvider = (
 					reasoning: thought,
 				};
 			}
+		}
+		const legalFallback = selectLegalFallbackMove(state);
+		if (legalFallback) {
+			return {
+				...legalFallback,
+				reasoning: "Public-safe fallback: selected the first legal move.",
+			};
 		}
 		return fallbackMove;
 	},

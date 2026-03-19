@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
 import {
 	createRunnerSession,
+	type MatchStreamSubscriptionOptions,
 	runMatch,
-} from "../../../packages/agent-client/src/runner";
-import type { MatchStreamSubscriptionOptions } from "../../../packages/agent-client/src/types";
+} from "@fightclaw/agent-client";
+import { describe, expect, it, vi } from "vitest";
 
 describe("agent-client runMatch canonical SSE flow", () => {
 	it("resolves a waiting queue join through one session start lifecycle", async () => {

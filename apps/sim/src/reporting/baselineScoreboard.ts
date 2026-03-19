@@ -216,6 +216,7 @@ function attributeIllegalEnding(args: {
 		args.accA.illegalEndingCount += 1;
 		return;
 	}
+	// Ambiguous illegal endings are split evenly between both profiles on purpose.
 	args.accA.illegalEndingCount += 0.5;
 	args.accB.illegalEndingCount += 0.5;
 }
@@ -235,6 +236,7 @@ function attributeIllegalMoves(args: {
 		args.accA.totalIllegalMovesProxy += illegalMoves;
 		return;
 	}
+	// When attribution is ambiguous, split illegal move blame evenly as a heuristic.
 	const sharedIllegalMoves = illegalMoves / 2;
 	args.accA.totalIllegalMovesProxy += sharedIllegalMoves;
 	args.accB.totalIllegalMovesProxy += sharedIllegalMoves;

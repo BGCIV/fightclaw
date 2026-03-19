@@ -24,7 +24,7 @@ export type StrategySelection = {
 		  };
 };
 
-const presetDir = path.resolve(
+const defaultPresetDir = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"..",
 	"..",
@@ -33,10 +33,32 @@ const presetDir = path.resolve(
 	"hex_conquest",
 );
 
+let hasWarnedAboutPresetFallback = false;
+
+const resolvePresetDir = (presetDir?: string): string => {
+	const configuredDir = presetDir?.trim() || process.env.PRESETS_DIR?.trim();
+	if (configuredDir) {
+		return configuredDir;
+	}
+
+	if (!hasWarnedAboutPresetFallback) {
+		hasWarnedAboutPresetFallback = true;
+		console.warn(
+			`PRESETS_DIR not set; falling back to checked-in preset path: ${defaultPresetDir}`,
+		);
+	}
+
+	return defaultPresetDir;
+};
+
 export function loadHexConquestPreset(
 	presetName: string,
+	options?: { presetDir?: string },
 ): HexConquestPresetArtifact {
-	const filePath = path.join(presetDir, `${presetName}.json`);
+	const filePath = path.join(
+		resolvePresetDir(options?.presetDir),
+		`${presetName}.json`,
+	);
 	if (!existsSync(filePath)) {
 		throw new Error(`Unknown hex_conquest preset: ${presetName}`);
 	}
@@ -68,6 +90,7 @@ export function resolveStrategySelection(input: {
 	side: "A" | "B";
 	rawStrategy?: string;
 	presetName?: string;
+	presetDir?: string;
 }): StrategySelection {
 	const raw = input.rawStrategy?.trim();
 	const presetName = input.presetName?.trim();
@@ -91,7 +114,9 @@ export function resolveStrategySelection(input: {
 	}
 
 	if (hasPreset && presetName) {
-		const preset = loadHexConquestPreset(presetName);
+		const preset = loadHexConquestPreset(presetName, {
+			presetDir: input.presetDir,
+		});
 		return {
 			publicPersona: preset.publicPersona,
 			privateStrategy: preset.privateStrategy,

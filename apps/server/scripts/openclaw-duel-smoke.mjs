@@ -24,7 +24,10 @@ const SERVER_START_TIMEOUT_MS = 30_000;
 const MATCH_PROGRESS_TIMEOUT_MS = 20_000;
 const CLI_TIMEOUT_MS = 25_000;
 const MIGRATION_TIMEOUT_MS = 30_000;
-const NATURAL_END_TIMEOUT_MS = 15_000;
+const NATURAL_END_TIMEOUT_MS = Number.parseInt(
+	process.env.SMOKE_NATURAL_END_TIMEOUT_MS ?? "3000",
+	10,
+);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

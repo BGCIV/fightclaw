@@ -20,7 +20,14 @@ import {
 	type MatchStartedEvent,
 } from "@fightclaw/protocol";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+	type MutableRefObject,
+	useEffect,
+	useEffectEvent,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 
 import { SpectatorArena } from "@/components/arena/spectator-arena";
 import {
@@ -58,6 +65,54 @@ type MatchLogResponse = {
 
 const MAX_THOUGHTS = 80;
 const STREAM_RECONNECT_DELAY_MS = 1000;
+
+function createSpectateStreamController(input: {
+	matchId: string;
+	afterIdRef: MutableRefObject<number>;
+	onEnvelope: (event: MatchEventEnvelope) => void;
+	onReconnectStart: () => void;
+}): () => void {
+	let active = true;
+	let source: EventSource | null = null;
+	let reconnectTimer: number | null = null;
+
+	const connect = (afterId: number) => {
+		if (!active) return;
+		source?.close();
+		source = new EventSource(buildSpectateUrl(input.matchId, afterId));
+
+		const onEnvelope = (message: MessageEvent<string>) => {
+			if (!active) return;
+			const envelope = parseMatchEvent(message.data);
+			if (!envelope) return;
+			input.onEnvelope(envelope);
+		};
+
+		source.addEventListener("state", onEnvelope as EventListener);
+		source.addEventListener("engine_events", onEnvelope as EventListener);
+		source.addEventListener("agent_thought", onEnvelope as EventListener);
+		source.addEventListener("match_ended", onEnvelope as EventListener);
+		source.addEventListener("game_ended", onEnvelope as EventListener);
+		source.addEventListener("error", () => {
+			if (!active) return;
+			source?.close();
+			input.onReconnectStart();
+			reconnectTimer = window.setTimeout(() => {
+				connect(input.afterIdRef.current);
+			}, STREAM_RECONNECT_DELAY_MS);
+		});
+	};
+
+	connect(input.afterIdRef.current);
+
+	return () => {
+		active = false;
+		source?.close();
+		if (reconnectTimer !== null) {
+			window.clearTimeout(reconnectTimer);
+		}
+	};
+}
 
 function SpectatorLanding() {
 	const search = Route.useSearch();
@@ -228,52 +283,19 @@ function SpectatorLanding() {
 			return;
 		}
 
-		let active = true;
-		let source: EventSource | null = null;
-		let reconnectTimer: number | null = null;
-
 		resetAnimator();
 		setLatestState(null);
 		setConnectionStatus("connecting");
 		resetBroadcastState();
 		replayAfterIdRef.current = 0;
 
-		const connect = (afterId: number) => {
-			if (!active) return;
-			source?.close();
-			source = new EventSource(buildSpectateUrl(matchId, afterId));
-
-			const onEnvelope = (message: MessageEvent<string>) => {
-				if (!active) return;
-				const envelope = parseMatchEvent(message.data);
-				if (!envelope) return;
-				applyLiveEnvelope(envelope);
-			};
-
-			source.addEventListener("state", onEnvelope as EventListener);
-			source.addEventListener("engine_events", onEnvelope as EventListener);
-			source.addEventListener("agent_thought", onEnvelope as EventListener);
-			source.addEventListener("match_ended", onEnvelope as EventListener);
-			source.addEventListener("game_ended", onEnvelope as EventListener);
-			source.addEventListener("error", () => {
-				if (!active) return;
-				source?.close();
-				setConnectionStatus("connecting");
-				reconnectTimer = window.setTimeout(() => {
-					connect(replayAfterIdRef.current);
-				}, STREAM_RECONNECT_DELAY_MS);
-			});
-		};
-
-		connect(0);
-
-		return () => {
-			active = false;
-			source?.close();
-			if (reconnectTimer !== null) {
-				window.clearTimeout(reconnectTimer);
-			}
-		};
+		replayAfterIdRef.current = 0;
+		return createSpectateStreamController({
+			matchId,
+			afterIdRef: replayAfterIdRef,
+			onEnvelope: (envelope) => applyLiveEnvelope(envelope),
+			onReconnectStart: () => setConnectionStatus("connecting"),
+		});
 	}, [matchId, replayMatchId, resetAnimator]);
 
 	useEffect(() => {
@@ -471,46 +493,12 @@ function SpectatorLanding() {
 		if (replayFollowStarted.current) return;
 
 		replayFollowStarted.current = true;
-		let active = true;
-		let source: EventSource | null = null;
-		let reconnectTimer: number | null = null;
-
-		const connect = (afterId: number) => {
-			if (!active) return;
-			source?.close();
-			source = new EventSource(buildSpectateUrl(replayMatchId, afterId));
-
-			const onEnvelope = (message: MessageEvent<string>) => {
-				if (!active) return;
-				const envelope = parseMatchEvent(message.data);
-				if (!envelope) return;
-				applyLiveEnvelope(envelope);
-			};
-
-			source.addEventListener("state", onEnvelope as EventListener);
-			source.addEventListener("engine_events", onEnvelope as EventListener);
-			source.addEventListener("agent_thought", onEnvelope as EventListener);
-			source.addEventListener("match_ended", onEnvelope as EventListener);
-			source.addEventListener("game_ended", onEnvelope as EventListener);
-			source.addEventListener("error", () => {
-				if (!active) return;
-				source?.close();
-				setConnectionStatus("connecting");
-				reconnectTimer = window.setTimeout(() => {
-					connect(replayAfterIdRef.current);
-				}, STREAM_RECONNECT_DELAY_MS);
-			});
-		};
-
-		connect(replayAfterIdRef.current);
-
-		return () => {
-			active = false;
-			source?.close();
-			if (reconnectTimer !== null) {
-				window.clearTimeout(reconnectTimer);
-			}
-		};
+		return createSpectateStreamController({
+			matchId: replayMatchId,
+			afterIdRef: replayAfterIdRef,
+			onEnvelope: (envelope) => applyLiveEnvelope(envelope),
+			onReconnectStart: () => setConnectionStatus("connecting"),
+		});
 	}, [isAnimating, replayMatchId, replayShouldFollowLive]);
 
 	const statusBadge = useMemo(() => {

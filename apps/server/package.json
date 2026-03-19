@@ -22,6 +22,7 @@
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.9.0",
+		"@fightclaw/agent-client": "workspace:*",
 		"@cloudflare/workers-types": "catalog:",
 		"@fightclaw/config": "workspace:*",
 		"@types/node": "catalog:",

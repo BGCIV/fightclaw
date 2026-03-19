@@ -21,7 +21,7 @@ describe("applyFeaturedUpdate", () => {
 				status: "active",
 				players: ["agent-c", "agent-d"],
 			}),
-		).toEqual(state);
+		).toBe(state);
 	});
 
 	it("accepts fetch updates before the stream has produced a snapshot", () => {

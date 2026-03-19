@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { Move } from "@fightclaw/engine";
+import { type Move, MoveSchema } from "@fightclaw/engine";
 
 type GatewayInput = {
 	agentId?: string;
@@ -14,11 +14,10 @@ type GatewayOutput = {
 	publicThought?: string;
 };
 
-const FALLBACK_OUTPUT: GatewayOutput = {
-	move: {
-		action: "pass",
-	},
-	publicThought: "Gateway unavailable; safe fallback action applied.",
+const FALLBACK_OUTPUT = {
+	error: "Gateway unavailable; no valid move was produced.",
+	publicThought:
+		"Gateway unavailable; upstream fallback handling should choose a legal move.",
 };
 
 const readStdin = async () => {
@@ -103,13 +102,19 @@ const runGatewayCommand = async (
 			}
 
 			const parsed = safeJsonParse(stdout.trim());
-			if (!isRecord(parsed) || !isRecord(parsed.move)) {
+			if (!isRecord(parsed)) {
+				resolve(null);
+				return;
+			}
+
+			const parsedMove = MoveSchema.safeParse(parsed.move);
+			if (!parsedMove.success) {
 				resolve(null);
 				return;
 			}
 
 			resolve({
-				move: parsed.move as Move,
+				move: parsedMove.data,
 				publicThought:
 					typeof parsed.publicThought === "string"
 						? parsed.publicThought
@@ -149,7 +154,11 @@ const main = async () => {
 	try {
 		const out = await runGatewayCommand(command, raw);
 		process.stdout.write(JSON.stringify(out ?? FALLBACK_OUTPUT));
-	} catch {
+	} catch (error) {
+		console.error("gateway-openclaw-router: gateway command failed", {
+			command,
+			error,
+		});
 		process.stdout.write(JSON.stringify(FALLBACK_OUTPUT));
 	}
 };

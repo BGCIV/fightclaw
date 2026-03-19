@@ -134,6 +134,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 4.20260203.0
+      '@fightclaw/agent-client':
+        specifier: workspace:*
+        version: link:../../packages/agent-client
       '@fightclaw/config':
         specifier: workspace:*
         version: link:../../packages/config

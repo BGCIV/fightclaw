@@ -10,6 +10,8 @@
 
 ---
 
+## Tasks
+
 ### Task 1: Add checked-in `hex_conquest` baseline presets
 
 **Files:**

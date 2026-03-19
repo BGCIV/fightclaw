@@ -14,6 +14,23 @@ beforeEach(async () => {
 
 const testMatchId = "11111111-1111-4111-8111-111111111111";
 
+const createBoundMatchState = async () => {
+	const { matchId, agentA, agentB } = await setupMatch();
+	await bindRunnerAgent(agentA.id);
+	await bindRunnerAgent(agentB.id);
+	const stateRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/state`,
+	);
+	const payload = (await stateRes.json()) as {
+		state: { stateVersion: number; game: unknown } | null;
+	};
+	const state = payload.state;
+	expect(state).toBeTruthy();
+	const game = (state?.game ?? null) as Parameters<typeof listLegalMoves>[0];
+	const activeId = currentPlayer(game);
+	return { matchId, agentA, agentB, state, game, activeId };
+};
+
 it("requires runner key for internal move", async () => {
 	const res = await SELF.fetch(
 		`https://example.com/v1/internal/matches/${testMatchId}/move`,
@@ -34,20 +51,8 @@ it("requires runner key for internal move", async () => {
 });
 
 it("accepts runner key + agent id", async () => {
-	const { matchId, agentA, agentB } = await setupMatch();
-	await bindRunnerAgent(agentA.id);
-	await bindRunnerAgent(agentB.id);
-	const stateRes = await SELF.fetch(
-		`https://example.com/v1/matches/${matchId}/state`,
-	);
-	const payload = (await stateRes.json()) as {
-		state: { stateVersion: number; game: unknown } | null;
-	};
-	const state = payload.state;
-	expect(state).toBeTruthy();
-
-	const game = (state?.game ?? null) as Parameters<typeof listLegalMoves>[0];
-	const activeId = currentPlayer(game);
+	const { matchId, agentA, agentB, state, game, activeId } =
+		await createBoundMatchState();
 	const moves = listLegalMoves(game);
 	const move = moves[0];
 	const actingId = activeId === agentA.id ? agentA.id : agentB.id;
@@ -103,21 +108,8 @@ it("rejects internal move for unbound runner-agent pair", async () => {
 });
 
 it("rejects oversized publicThought on internal move payload", async () => {
-	const { matchId, agentA, agentB } = await setupMatch();
-	await bindRunnerAgent(agentA.id);
-	await bindRunnerAgent(agentB.id);
-
-	const stateRes = await SELF.fetch(
-		`https://example.com/v1/matches/${matchId}/state`,
-	);
-	const payload = (await stateRes.json()) as {
-		state: { stateVersion: number; game: unknown } | null;
-	};
-	const state = payload.state;
-	expect(state).toBeTruthy();
-
-	const game = (state?.game ?? null) as Parameters<typeof listLegalMoves>[0];
-	const activeId = currentPlayer(game);
+	const { matchId, agentA, agentB, state, game, activeId } =
+		await createBoundMatchState();
 	const moves = listLegalMoves(game);
 	const move = moves[0];
 	const actingId = activeId === agentA.id ? agentA.id : agentB.id;

@@ -4,6 +4,7 @@ import {
 	authHeader,
 	bindRunnerAgent,
 	createAgent,
+	ensureResetDb,
 	resetDb,
 	runnerHeaders,
 } from "../helpers";
@@ -14,8 +15,7 @@ describe("observability safety", () => {
 	});
 
 	afterEach(async () => {
-		await resetDb();
-		await new Promise((r) => setTimeout(r, 100));
+		await ensureResetDb();
 	});
 
 	describe("Sentry disabled", () => {

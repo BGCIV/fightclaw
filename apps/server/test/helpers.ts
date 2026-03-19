@@ -31,25 +31,48 @@ export const resetDb = async () => {
 	// With `isolatedStorage: false` in the durable lane, DO state persists across tests.
 	// Reset live DO instances before clearing D1 rows so match ids are still discoverable.
 	if (env.INTERNAL_RUNNER_KEY) {
+		let lastStatus: number | null = null;
+		let lastError: unknown = null;
 		for (let attempt = 1; attempt <= 10; attempt += 1) {
-			const res = await SELF.fetch(
-				"https://example.com/v1/internal/__test__/reset",
-				{
-					method: "POST",
-					headers: {
-						"x-runner-key": env.INTERNAL_RUNNER_KEY,
-						"x-runner-id": TEST_RUNNER_ID,
+			try {
+				const res = await SELF.fetch(
+					"https://example.com/v1/internal/__test__/reset",
+					{
+						method: "POST",
+						headers: {
+							"x-runner-key": env.INTERNAL_RUNNER_KEY,
+							"x-runner-id": TEST_RUNNER_ID,
+						},
 					},
-				},
-			);
-			if (res.ok) break;
+				);
+				if (res.ok) {
+					lastStatus = null;
+					lastError = null;
+					break;
+				}
+				lastStatus = res.status;
+			} catch (error) {
+				lastError = error;
+			}
 			await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+		}
+		if (lastError) {
+			throw lastError;
+		}
+		if (lastStatus !== null) {
+			throw new Error(
+				`Reset unavailable while clearing live durable objects (status ${lastStatus}).`,
+			);
 		}
 	}
 
+	await clearDbTables();
+};
+
+const clearDbTables = async () => {
 	// Order matters: tables with FKs must be deleted before their referenced tables.
-	// FK chain: match_events/match_players/match_results → matches
-	//           agent_prompt_active/prompt_versions/api_keys → agents
+	// FK chain: match_events/match_players/match_results -> matches
+	//           agent_prompt_active/prompt_versions/api_keys -> agents
 	await env.DB.prepare("DELETE FROM match_events").run();
 	await env.DB.prepare("DELETE FROM match_players").run();
 	await env.DB.prepare("DELETE FROM match_results").run();
@@ -60,6 +83,56 @@ export const resetDb = async () => {
 	await env.DB.prepare("DELETE FROM runner_agent_ownership").run();
 	await env.DB.prepare("DELETE FROM api_keys").run();
 	await env.DB.prepare("DELETE FROM agents").run();
+};
+
+export const waitForDoSettle = async (timeoutMs = 1000) => {
+	const settled = await pollUntil(
+		async () => {
+			const [matches, events, players, results] = await Promise.all([
+				env.DB.prepare("SELECT COUNT(*) as count FROM matches").first<{
+					count: number;
+				}>(),
+				env.DB.prepare("SELECT COUNT(*) as count FROM match_events").first<{
+					count: number;
+				}>(),
+				env.DB.prepare("SELECT COUNT(*) as count FROM match_players").first<{
+					count: number;
+				}>(),
+				env.DB.prepare("SELECT COUNT(*) as count FROM match_results").first<{
+					count: number;
+				}>(),
+			]);
+			return [matches, events, players, results].every(
+				(row) => (row?.count ?? 0) === 0,
+			);
+		},
+		(value) => value,
+		timeoutMs,
+		25,
+	);
+	if (!settled) {
+		throw new Error(
+			`Timed out waiting for durable objects to settle after ${timeoutMs}ms.`,
+		);
+	}
+};
+
+export const ensureResetDb = async () => {
+	let resetError: unknown = null;
+	try {
+		await resetDb();
+	} catch (error) {
+		resetError = error;
+		console.error(
+			"resetDb teardown failed; retrying direct table cleanup before rethrow.",
+			error,
+		);
+		await clearDbTables();
+	}
+	await waitForDoSettle();
+	if (resetError) {
+		throw resetError;
+	}
 };
 
 export const authHeader = (key: string) => ({

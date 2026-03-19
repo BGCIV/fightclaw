@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import net from "node:net";
+import { buildVitestRuns } from "./run-durable-tests-lib.mjs";
 
 const canListen = async () => {
 	return await new Promise((resolve) => {
@@ -33,15 +34,18 @@ if (!probe.ok) {
 	process.exit(0);
 }
 
-const res = spawnSync(
-	process.execPath,
-	[
-		"./node_modules/vitest/vitest.mjs",
-		"-c",
-		"vitest.durable.config.ts",
-		"--run",
-	],
-	{ stdio: "inherit" },
-);
+for (const run of buildVitestRuns(process.argv.slice(2))) {
+	const res = spawnSync(process.execPath, run.args, {
+		stdio: "inherit",
+		env: {
+			...process.env,
+			...run.env,
+		},
+	});
 
-process.exit(res.status ?? 1);
+	if ((res.status ?? 1) !== 0) {
+		process.exit(res.status ?? 1);
+	}
+}
+
+process.exit(0);

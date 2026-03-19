@@ -38,15 +38,11 @@ it("delivers match_found to both agents via events wait", async () => {
 	const payloadB = (await waitResB.json()) as { events: unknown[] };
 	const eventA = MatchEventEnvelopeSchema.parse(payloadA.events[0]);
 	const eventB = MatchEventEnvelopeSchema.parse(payloadB.events[0]);
-	if (!eventA || !eventB) throw new Error("Missing match_found event.");
 
 	expect(eventA.event).toBe("match_found");
 	expect(eventB.event).toBe("match_found");
 	expect(eventA.matchId).toBe(secondJson.matchId);
 	expect(eventB.matchId).toBe(secondJson.matchId);
-	if (eventA.event !== "match_found" || eventB.event !== "match_found") {
-		throw new Error("Expected match_found events.");
-	}
 	expect(eventA.payload.opponentId).toBe(agentB.id);
 	expect(eventB.payload.opponentId).toBe(agentA.id);
 });

@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
-import { listLegalMoves, type MatchState, type Move } from "@fightclaw/engine";
+import {
+	listLegalMoves,
+	type MatchState,
+	type Move,
+	MoveSchema,
+} from "@fightclaw/engine";
 
 type GatewayInput = {
 	agentId?: string;
@@ -10,12 +15,15 @@ type GatewayInput = {
 	state?: unknown;
 };
 
-type GatewayOutput = {
+type GatewaySuccessOutput = {
 	move: Move;
 	publicThought?: string;
 };
 
-const FALLBACK_MOVE: Move = { action: "pass" };
+type GatewayFailureOutput = {
+	error: string;
+	publicThought?: string;
+};
 
 const readStdin = async () => {
 	const chunks: Buffer[] = [];
@@ -35,6 +43,9 @@ const safeJsonParse = (raw: string): unknown => {
 		return null;
 	}
 };
+
+const isMove = (value: unknown): value is Move =>
+	MoveSchema.safeParse(value).success;
 
 const extractState = (value: unknown): MatchState | null => {
 	if (!isRecord(value)) return null;
@@ -146,13 +157,41 @@ const normalizeModelMove = (
 				? record.reasoning
 				: undefined;
 
-	if (isRecord(record.move)) {
-		return { move: record.move as Move, publicThought };
+	if (isMove(record.move)) {
+		return { move: record.move, publicThought };
 	}
-	if (typeof record.action === "string") {
-		return { move: record as Move, publicThought };
+	if (isMove(record)) {
+		return { move: record, publicThought };
 	}
 	return { move: null, publicThought };
+};
+
+const buildLegalFallback = (
+	state: MatchState | null,
+	message: string,
+): GatewaySuccessOutput | GatewayFailureOutput => {
+	if (!state) {
+		return {
+			error: message,
+			publicThought:
+				"State unavailable; no legal fallback move could be derived.",
+		};
+	}
+
+	const legalMoves = listLegalMoves(state);
+	const move = legalMoves[0] ?? null;
+	if (!move) {
+		return {
+			error: message,
+			publicThought:
+				"No legal fallback move is available for the current state.",
+		};
+	}
+
+	return {
+		move,
+		publicThought: message,
+	};
 };
 
 const callOpenClawAgent = async (args: {
@@ -230,10 +269,12 @@ const main = async () => {
 	const state = extractState(payload.state);
 	if (!state) {
 		process.stdout.write(
-			JSON.stringify({
-				move: FALLBACK_MOVE,
-				publicThought: "State unavailable; fallback move applied.",
-			}),
+			JSON.stringify(
+				buildLegalFallback(
+					null,
+					"State unavailable; no fallback move could be selected.",
+				),
+			),
 		);
 		return;
 	}
@@ -242,8 +283,9 @@ const main = async () => {
 	if (legalMoves.length === 0) {
 		process.stdout.write(
 			JSON.stringify({
-				move: { action: "end_turn" },
-				publicThought: "No legal moves available; ending turn.",
+				error: "No legal moves available for the current state.",
+				publicThought:
+					"No legal moves available; the gateway is not submitting a move.",
 			}),
 		);
 		return;
@@ -289,11 +331,12 @@ const main = async () => {
 		const decoded = textReply ? extractJsonObject(textReply) : null;
 		if (!decoded) {
 			process.stdout.write(
-				JSON.stringify({
-					move: legalMoves[0],
-					publicThought:
+				JSON.stringify(
+					buildLegalFallback(
+						state,
 						"Model reply was not parseable JSON; selected deterministic legal fallback.",
-				}),
+					),
+				),
 			);
 			return;
 		}
@@ -306,11 +349,12 @@ const main = async () => {
 
 		if (!chosen || !legal) {
 			process.stdout.write(
-				JSON.stringify({
-					move: legalMoves[0],
-					publicThought:
+				JSON.stringify(
+					buildLegalFallback(
+						state,
 						"Model chose an invalid move; selected deterministic legal fallback.",
-				}),
+					),
+				),
 			);
 			return;
 		}
@@ -325,13 +369,15 @@ const main = async () => {
 					) || "Public-safe reasoning unavailable.",
 			}),
 		);
-	} catch {
+	} catch (error) {
+		console.error("gateway-openclaw-agent: agent invocation failed", error);
 		process.stdout.write(
-			JSON.stringify({
-				move: legalMoves[0],
-				publicThought:
+			JSON.stringify(
+				buildLegalFallback(
+					state,
 					"Agent call failed; selected deterministic legal fallback.",
-			}),
+				),
+			),
 		);
 	}
 };
