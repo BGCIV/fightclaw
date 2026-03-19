@@ -24,6 +24,7 @@ export type AppBindings = {
 	MATCHMAKER_SHARDS?: string;
 	TURN_TIMEOUT_SECONDS?: string;
 	TEST_MODE?: string;
+	TEST_STREAM_MAX_LIFETIME_MS?: string;
 	MATCHMAKER: DurableObjectNamespace;
 	MATCH: DurableObjectNamespace;
 	MOVE_SUBMIT_LIMIT?: RateLimitBinding;
