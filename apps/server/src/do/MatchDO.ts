@@ -100,7 +100,7 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
-const TEST_STREAM_MAX_LIFETIME_MS = 2000;
+const TEST_STREAM_MAX_LIFETIME_MS = 30000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const ELO_K = 32;
 const MAX_PUBLIC_THOUGHT_LEN = 280;
@@ -1145,10 +1145,13 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		const write = writer.write(this.encoder.encode(payload));
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 		const timeout = new Promise((_, reject) => {
-			timeoutId = setTimeout(
-				() => reject(new Error("SSE write timeout")),
-				timeoutMs,
-			);
+			timeoutId = setTimeout(() => {
+				const error = new Error("SSE write timeout");
+				void writer.abort(error).catch(() => {
+					// ignore abort races on already-closing streams
+				});
+				reject(error);
+			}, timeoutMs);
 		});
 		try {
 			await Promise.race([write, timeout]);
