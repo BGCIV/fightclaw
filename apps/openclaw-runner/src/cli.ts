@@ -1,113 +1,22 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	ArenaClient,
 	createRunnerSession,
-	type MoveProvider,
-	type MoveProviderContext,
 	type RunMatchResult,
 	runMatch,
 } from "@fightclaw/agent-client";
-import { listLegalMoves, type Move } from "@fightclaw/engine";
+import {
+	bindRunnerAgent,
+	createMoveProvider,
+	InternalRunnerClient,
+	resolveBetaStrategySelection,
+	resolveHouseOpponentCommandOptions,
+	runHouseOpponent,
+	runTesterBetaJourney,
+} from "./beta";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
-
-type MoveSubmitEnvelope =
-	| {
-			ok: true;
-			state: {
-				stateVersion: number;
-				status?: "active" | "ended";
-				winnerAgentId?: string | null;
-				endReason?: string;
-			};
-	  }
-	| {
-			ok: false;
-			error: string;
-			stateVersion?: number;
-			forfeited?: boolean;
-			matchStatus?: "ended";
-			winnerAgentId?: string | null;
-			reason?: string;
-			reasonCode?: string;
-	  };
-
-type GatewayMoveResult = {
-	move: Move;
-	publicThought?: string;
-};
-
-class InternalRunnerClient extends ArenaClient {
-	private readonly internalBaseUrl: string;
-
-	constructor(
-		baseUrl: string,
-		agentApiKey: string,
-		private readonly runnerKey: string,
-		private readonly runnerId: string,
-		private readonly actingAgentId: string,
-	) {
-		super({
-			baseUrl,
-			agentApiKey,
-			requestIdProvider: () => randomUUID(),
-		});
-		this.internalBaseUrl = baseUrl.replace(/\/+$/, "");
-	}
-
-	async submitMove(
-		matchId: string,
-		payload: {
-			moveId: string;
-			expectedVersion: number;
-			move: unknown;
-			publicThought?: string;
-		},
-	): Promise<MoveSubmitEnvelope> {
-		const moveRecord =
-			payload.move && typeof payload.move === "object"
-				? (payload.move as Record<string, unknown>)
-				: null;
-		const publicThought =
-			typeof payload.publicThought === "string"
-				? payload.publicThought
-				: typeof moveRecord?.reasoning === "string"
-					? moveRecord.reasoning
-					: undefined;
-		const res = await fetch(
-			`${this.internalBaseUrl}/v1/internal/matches/${encodeURIComponent(matchId)}/move`,
-			{
-				method: "POST",
-				headers: {
-					accept: "application/json",
-					"content-type": "application/json",
-					"x-runner-key": this.runnerKey,
-					"x-runner-id": this.runnerId,
-					"x-agent-id": this.actingAgentId,
-					"x-request-id": randomUUID(),
-				},
-				body: JSON.stringify({
-					...payload,
-					...(publicThought ? { publicThought } : {}),
-				}),
-			},
-		);
-		const body = (await res.json().catch(() => null)) as unknown;
-		if (!body || typeof body !== "object") {
-			throw new Error(`Invalid internal move response (${res.status}).`);
-		}
-		const envelope = body as Record<string, unknown>;
-		if (envelope.ok === true) {
-			return envelope as MoveSubmitEnvelope;
-		}
-		if (envelope.ok === false && typeof envelope.error === "string") {
-			return envelope as MoveSubmitEnvelope;
-		}
-		throw new Error(`Unexpected internal move payload (${res.status}).`);
-	}
-}
 
 const parseArgs = (
 	argv: string[],
@@ -149,147 +58,115 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
+			"  beta --baseUrl <url> --name <agentName> --runnerKey <key> --runnerId <id> [--strategy <text> | --strategyPreset <name>] [--adminKey <key>] [--localOperatorVerify] [--verifyPollMs 1500] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
+			"  house-opponent --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--name <agentName>] [--strategyPreset <name>] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
 			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
 };
 
-const bindRunnerAgent = async (
-	baseUrl: string,
-	runnerKey: string,
-	runnerId: string,
-	agentId: string,
-) => {
-	const res = await fetch(`${baseUrl}/v1/internal/runners/agents/bind`, {
-		method: "POST",
-		headers: {
-			accept: "application/json",
-			"content-type": "application/json",
-			"x-runner-key": runnerKey,
-			"x-runner-id": runnerId,
-			"x-request-id": randomUUID(),
-		},
-		body: JSON.stringify({ agentId }),
-	});
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Failed binding runner->agent (${res.status}): ${body}`);
+const runBeta = async (args: ArgMap) => {
+	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
+	const name = asString(args.name);
+	if (!name) {
+		throw new Error("beta requires --name");
 	}
-};
 
-const invokeGateway = async (
-	command: string,
-	input: {
-		agentId: string;
-		agentName: string;
-		matchId: string;
-		stateVersion: number;
-		state: unknown;
-	},
-): Promise<GatewayMoveResult | null> => {
-	return await new Promise((resolve, reject) => {
-		const child = spawn(command, {
-			shell: true,
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		child.stdout.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString("utf8");
-		});
-		child.on("error", reject);
-		child.on("exit", (code) => {
-			if (code !== 0) {
-				reject(
-					new Error(
-						`Gateway command failed (${code}). ${stderr.trim() || "No stderr."}`,
-					),
-				);
-				return;
-			}
-			try {
-				const parsed = JSON.parse(stdout.trim()) as unknown;
-				if (!parsed || typeof parsed !== "object") {
-					resolve(null);
-					return;
-				}
-				const record = parsed as Record<string, unknown>;
-				if (!record.move || typeof record.move !== "object") {
-					resolve(null);
-					return;
-				}
-				resolve({
-					move: record.move as Move,
-					publicThought:
-						typeof record.publicThought === "string"
-							? record.publicThought
-							: undefined,
-				});
-			} catch (error) {
-				reject(error);
-			}
-		});
-		child.stdin.write(JSON.stringify(input));
-		child.stdin.end();
+	const adminKey =
+		asString(args.adminKey) ??
+		(typeof process.env.ADMIN_KEY === "string"
+			? process.env.ADMIN_KEY
+			: undefined);
+
+	const selection = resolveBetaStrategySelection({
+		side: "A",
+		rawStrategy: asString(args.strategy),
+		presetName: asString(args.strategyPreset),
+	});
+
+	const runnerKey =
+		asString(args.runnerKey) ??
+		(typeof process.env.INTERNAL_RUNNER_KEY === "string"
+			? process.env.INTERNAL_RUNNER_KEY
+			: undefined);
+	const runnerId =
+		asString(args.runnerId) ??
+		(typeof process.env.INTERNAL_RUNNER_ID === "string"
+			? process.env.INTERNAL_RUNNER_ID
+			: undefined);
+
+	if (!runnerKey)
+		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
+	if (!runnerId)
+		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
+
+	await runTesterBetaJourney({
+		baseUrl,
+		name,
+		selection,
+		adminKey,
+		localOperatorVerify: Boolean(args.localOperatorVerify),
+		verifyPollMs: asInt(args.verifyPollMs, 1500),
+		runnerKey,
+		runnerId,
+		gatewayCmd: asString(args.gatewayCmd),
+		moveTimeoutMs: asInt(args.moveTimeoutMs, 4000),
 	});
 };
 
-const fallbackMove: Move = {
-	action: "pass",
-	reasoning: "Public-safe fallback: pass turn.",
-};
+const runHouseOpponentCommand = async (args: ArgMap) => {
+	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
+	const adminKey =
+		asString(args.adminKey) ??
+		(typeof process.env.ADMIN_KEY === "string"
+			? process.env.ADMIN_KEY
+			: undefined);
+	const runnerKey =
+		asString(args.runnerKey) ??
+		(typeof process.env.INTERNAL_RUNNER_KEY === "string"
+			? process.env.INTERNAL_RUNNER_KEY
+			: undefined);
+	const runnerId =
+		asString(args.runnerId) ??
+		(typeof process.env.INTERNAL_RUNNER_ID === "string"
+			? process.env.INTERNAL_RUNNER_ID
+			: undefined);
 
-const selectLegalFallbackMove = (
-	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
-): Move | null => {
-	const game = state.state?.game;
-	if (!game || typeof game !== "object") return null;
-	const legalMoves = listLegalMoves(
-		game as Parameters<typeof listLegalMoves>[0],
+	if (!adminKey) throw new Error("--adminKey or ADMIN_KEY is required.");
+	if (!runnerKey)
+		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
+	if (!runnerId)
+		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
+
+	const result = await runHouseOpponent({
+		...resolveHouseOpponentCommandOptions({
+			baseUrl,
+			name: asString(args.name),
+			adminKey,
+			runnerKey,
+			runnerId,
+			strategyPreset: asString(args.strategyPreset),
+			gatewayCmd: asString(args.gatewayCmd),
+			moveTimeoutMs: asInt(args.moveTimeoutMs, 4000),
+		}),
+		runMatchImpl: runMatch,
+	});
+
+	console.log(
+		JSON.stringify(
+			{
+				agentId: result.agentId,
+				matchId: result.matchId,
+				terminalReason: result.terminalReason,
+				winnerAgentId: result.winnerAgentId,
+				loserAgentId: result.loserAgentId,
+				source: result.selection.source,
+			},
+			null,
+			2,
+		),
 	);
-	return legalMoves[0] ?? null;
 };
-
-const createMoveProvider = (
-	client: ArenaClient,
-	agentId: string,
-	agentName: string,
-	gatewayCmd?: string,
-): MoveProvider => ({
-	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
-		const state = await client.getMatchState(matchId);
-		if (gatewayCmd) {
-			const gateway = await invokeGateway(gatewayCmd, {
-				agentId,
-				agentName,
-				matchId,
-				stateVersion,
-				state,
-			});
-			if (gateway?.move) {
-				const thought =
-					typeof gateway.publicThought === "string"
-						? gateway.publicThought
-						: "Public-safe summary unavailable.";
-				return {
-					...gateway.move,
-					reasoning: thought,
-				};
-			}
-		}
-		const legalFallback = selectLegalFallbackMove(state);
-		if (legalFallback) {
-			return {
-				...legalFallback,
-				reasoning: "Public-safe fallback: selected the first legal move.",
-			};
-		}
-		return fallbackMove;
-	},
-});
 
 const runDuel = async (args: ArgMap) => {
 	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
@@ -436,6 +313,14 @@ const main = async () => {
 	if (!command) {
 		usage();
 		process.exit(1);
+	}
+	if (command === "beta") {
+		await runBeta(args);
+		return;
+	}
+	if (command === "house-opponent") {
+		await runHouseOpponentCommand(args);
+		return;
 	}
 	if (command === "duel") {
 		await runDuel(args);

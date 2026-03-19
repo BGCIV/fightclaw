@@ -43,6 +43,7 @@ export default defineWorkersConfig(async () => {
 							MATCHMAKING_ELO_RANGE: "200",
 							TURN_TIMEOUT_SECONDS: "60",
 							TEST_MODE: "true",
+							TEST_STREAM_MAX_LIFETIME_MS: "2000",
 							CORS_ORIGIN: "",
 							TEST_MIGRATIONS: migrations,
 						},

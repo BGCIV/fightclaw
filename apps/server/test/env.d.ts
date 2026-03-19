@@ -9,6 +9,7 @@ declare module "cloudflare:test" {
 		SENTRY_DSN?: string;
 		SENTRY_ENVIRONMENT?: string;
 		TEST_MODE?: string;
+		TEST_STREAM_MAX_LIFETIME_MS?: string;
 		MATCHMAKER: DurableObjectNamespace;
 	}
 

@@ -16,6 +16,7 @@ import {
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
 import { doFetchWithRetry } from "../utils/durable";
+import { getTestStreamMaxLifetimeMs } from "../utils/testStreamTimeout";
 import { isRecord } from "../utils/typeGuards";
 
 const FEATURED_MATCH_KEY = "featuredMatchId";
@@ -30,8 +31,6 @@ const ACTIVE_MATCH_PREFIX = "activeMatch:";
 const RECENT_PREFIX = "recent:";
 const QUEUE_TTL_MS = 10 * 60 * 1000;
 const FEATURED_STREAM_INTERVAL_MS = 1000;
-const TEST_STREAM_MAX_LIFETIME_MS = 2000;
-
 type MatchmakerEnv = {
 	DB: D1Database;
 	MATCH: DurableObjectNamespace;
@@ -39,6 +38,7 @@ type MatchmakerEnv = {
 	INTERNAL_RUNNER_KEY?: string;
 	MATCHMAKING_ELO_RANGE?: string;
 	TEST_MODE?: string;
+	TEST_STREAM_MAX_LIFETIME_MS?: string;
 } & Partial<Pick<AppBindings, "OBS" | "SENTRY_ENVIRONMENT">>;
 
 type QueueJoinResponse = {
@@ -247,7 +247,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 				};
 				closeStream = close;
 				if (this.env.TEST_MODE) {
-					testTimeout = setTimeout(close, TEST_STREAM_MAX_LIFETIME_MS);
+					testTimeout = setTimeout(close, getTestStreamMaxLifetimeMs(this.env));
 				}
 
 				if (request.signal.aborted) {

@@ -26,6 +26,7 @@ import {
 	buildStoredMatchEventEnvelope,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
+import { getTestStreamMaxLifetimeMs } from "../utils/testStreamTimeout";
 import { isRecord } from "../utils/typeGuards";
 
 type MatchEnv = Pick<
@@ -36,6 +37,7 @@ type MatchEnv = Pick<
 	| "INTERNAL_RUNNER_KEY"
 	| "TURN_TIMEOUT_SECONDS"
 	| "TEST_MODE"
+	| "TEST_STREAM_MAX_LIFETIME_MS"
 	| "OBS"
 	| "SENTRY_ENVIRONMENT"
 >;
@@ -101,7 +103,6 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
-const TEST_STREAM_MAX_LIFETIME_MS = 30000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const ELO_K = 32;
 const MAX_PUBLIC_THOUGHT_LEN = 280;
@@ -830,7 +831,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				void close();
 			};
 			if (this.env.TEST_MODE) {
-				testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+				testTimeout = setTimeout(cleanup, getTestStreamMaxLifetimeMs(this.env));
 			}
 			this.handleAbort(request, cleanup);
 
@@ -1447,7 +1448,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			void close();
 		};
 		if (this.env.TEST_MODE) {
-			testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+			testTimeout = setTimeout(cleanup, getTestStreamMaxLifetimeMs(this.env));
 		}
 		this.handleAbort(request, cleanup);
 

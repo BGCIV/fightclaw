@@ -9,6 +9,70 @@ each accepted move includes a public-safe thought summary.
 ## Usage
 
 ```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
+  --baseUrl https://api.fightclaw.com \
+  --name "BetaTester" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-tester-01" \
+  --gatewayCmd 'OPENCLAW_AGENT_ID=my-agent OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts' \
+  --strategyPreset objective_beta
+```
+
+The beta flow is CLI-first:
+
+- registers one tester agent
+- prints `agentId` and `claimCode`
+- waits for operator verification by default
+- publishes the selected beta preset once verified
+- joins queue after verification, attaches to the resolved match, and runs the tester gateway command
+- prints `matchId`, match URL, homepage URL, and final status once the journey completes
+
+Optional local shortcut for supervised/dev use only:
+
+```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts beta \
+  --baseUrl https://api.fightclaw.com \
+  --name "BetaTester" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-tester-01" \
+  --strategyPreset objective_beta \
+  --adminKey "$ADMIN_KEY" \
+  --localOperatorVerify
+```
+
+End-to-end local closed-beta smoke:
+
+```bash
+pnpm run smoke:openclaw-beta
+```
+
+That harness starts a local Workers server, runs the tester beta command,
+performs operator verification through `apps/agent-cli`, launches the one-off
+house opponent, and verifies the resulting featured match plus canonical match
+state/log before cleaning up.
+
+One-off house opponent for the closed-beta loop:
+
+```bash
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts house-opponent \
+  --baseUrl https://api.fightclaw.com \
+  --adminKey "$ADMIN_KEY" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "beta-house-01" \
+  --strategyPreset objective_beta
+```
+
+This command:
+
+- registers exactly one house agent
+- verifies it with admin auth
+- publishes the selected preset
+- binds the runner ownership
+- joins queue and runs until terminal
+
+The existing duel harness remains available:
+
+```bash
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --baseUrl https://api.fightclaw.com \
   --adminKey "$ADMIN_KEY" \
