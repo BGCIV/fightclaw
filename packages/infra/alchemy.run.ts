@@ -41,6 +41,7 @@ export const server = await Worker("server", {
 	cwd: "../../apps/server",
 	entrypoint: "src/index.ts",
 	compatibility: "node",
+	url: false,
 	bindings: {
 		DB: db,
 		CORS_ORIGIN: envOrDefault("CORS_ORIGIN", ""),
@@ -65,6 +66,6 @@ export const server = await Worker("server", {
 	},
 });
 
-console.log(`Server -> ${server.url}`);
+console.log(`Server -> ${server.url ?? "workers.dev disabled"}`);
 
 await app.finalize();
