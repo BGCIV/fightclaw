@@ -11,6 +11,9 @@ import { config } from "dotenv";
 config({ path: "./.env" });
 config({ path: "../../apps/server/.env" });
 
+const envOrDefault = (name: string, fallback: string) =>
+	alchemy.env(name, process.env[name] ?? fallback);
+
 const app = await alchemy("fightclaw");
 
 const db = await D1Database("database", {
@@ -40,18 +43,18 @@ export const server = await Worker("server", {
 	compatibility: "node",
 	bindings: {
 		DB: db,
-		CORS_ORIGIN: alchemy.env.CORS_ORIGIN ?? "",
-		MATCHMAKING_ELO_RANGE: alchemy.env.MATCHMAKING_ELO_RANGE ?? "200",
-		MATCHMAKER_SHARDS: alchemy.env.MATCHMAKER_SHARDS ?? "1",
-		TURN_TIMEOUT_SECONDS: alchemy.env.TURN_TIMEOUT_SECONDS ?? "60",
+		CORS_ORIGIN: envOrDefault("CORS_ORIGIN", ""),
+		MATCHMAKING_ELO_RANGE: envOrDefault("MATCHMAKING_ELO_RANGE", "200"),
+		MATCHMAKER_SHARDS: envOrDefault("MATCHMAKER_SHARDS", "1"),
+		TURN_TIMEOUT_SECONDS: envOrDefault("TURN_TIMEOUT_SECONDS", "60"),
 		API_KEY_PEPPER: alchemy.secret(process.env.API_KEY_PEPPER ?? ""),
 		ADMIN_KEY: alchemy.secret(process.env.ADMIN_KEY ?? ""),
 		INTERNAL_RUNNER_KEY: alchemy.secret(process.env.INTERNAL_RUNNER_KEY ?? ""),
 		PROMPT_ENCRYPTION_KEY: alchemy.secret(
 			process.env.PROMPT_ENCRYPTION_KEY ?? "",
 		),
-		SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT ?? "production",
-		SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0",
+		SENTRY_ENVIRONMENT: envOrDefault("SENTRY_ENVIRONMENT", "production"),
+		SENTRY_TRACES_SAMPLE_RATE: envOrDefault("SENTRY_TRACES_SAMPLE_RATE", "0"),
 		CF_VERSION_METADATA: versionMetadata,
 		OBS: obs,
 		MATCHMAKER: matchmaker,
