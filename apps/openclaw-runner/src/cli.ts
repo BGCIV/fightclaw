@@ -9,6 +9,7 @@ import {
 	runMatch,
 } from "@fightclaw/agent-client";
 import type { Move } from "@fightclaw/engine";
+import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
 
@@ -148,7 +149,7 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
-			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
+			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
 };
@@ -174,31 +175,6 @@ const bindRunnerAgent = async (
 		const body = await res.text();
 		throw new Error(`Failed binding runner->agent (${res.status}): ${body}`);
 	}
-};
-
-const setStrategyPrompt = async (
-	baseUrl: string,
-	apiKey: string,
-	privateStrategy: string,
-) => {
-	const res = await fetch(`${baseUrl}/v1/agents/me/strategy/hex_conquest`, {
-		method: "POST",
-		headers: {
-			accept: "application/json",
-			"content-type": "application/json",
-			authorization: `Bearer ${apiKey}`,
-			"x-request-id": randomUUID(),
-		},
-		body: JSON.stringify({
-			privateStrategy,
-			activate: true,
-		}),
-	});
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Failed setting strategy prompt (${res.status}): ${body}`);
-	}
-	return (await res.json()) as unknown;
 };
 
 const invokeGateway = async (
@@ -316,8 +292,16 @@ const runDuel = async (args: ArgMap) => {
 			: undefined);
 	const nameA = asString(args.nameA) ?? `openclaw-a-${Date.now()}`;
 	const nameB = asString(args.nameB) ?? `openclaw-b-${Date.now()}`;
-	const strategyA = asString(args.strategyA);
-	const strategyB = asString(args.strategyB);
+	const selectionA = resolveStrategySelection({
+		side: "A",
+		rawStrategy: asString(args.strategyA),
+		presetName: asString(args.strategyPresetA),
+	});
+	const selectionB = resolveStrategySelection({
+		side: "B",
+		rawStrategy: asString(args.strategyB),
+		presetName: asString(args.strategyPresetB),
+	});
 	const gatewayCmd = asString(args.gatewayCmd);
 	const gatewayCmdA = asString(args.gatewayCmdA) ?? gatewayCmd;
 	const gatewayCmdB = asString(args.gatewayCmdB) ?? gatewayCmd;
@@ -328,9 +312,6 @@ const runDuel = async (args: ArgMap) => {
 		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
 	if (!runnerId)
 		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
-	if (!strategyA || !strategyB) {
-		throw new Error("--strategyA and --strategyB are required.");
-	}
 
 	const bootstrap = new ArenaClient({
 		baseUrl,
@@ -345,8 +326,16 @@ const runDuel = async (args: ArgMap) => {
 	await bindRunnerAgent(baseUrl, runnerKey, runnerId, registeredA.agentId);
 	await bindRunnerAgent(baseUrl, runnerKey, runnerId, registeredB.agentId);
 
-	await setStrategyPrompt(baseUrl, registeredA.apiKey, strategyA);
-	await setStrategyPrompt(baseUrl, registeredB.apiKey, strategyB);
+	await publishAgentStrategy({
+		baseUrl,
+		apiKey: registeredA.apiKey,
+		selection: selectionA,
+	});
+	await publishAgentStrategy({
+		baseUrl,
+		apiKey: registeredB.apiKey,
+		selection: selectionB,
+	});
 
 	const runnerClientA = new InternalRunnerClient(
 		baseUrl,

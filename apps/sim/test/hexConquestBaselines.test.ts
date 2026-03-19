@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	buildHexConquestStrategyPrompt,
 	getHexConquestBaselinePreset,
 	listHexConquestBaselinePresets,
 	resolveHexConquestBaselineCliBotConfig,
@@ -81,5 +82,20 @@ describe("hexConquest baseline presets", () => {
 				fallbackBotType: "greedy",
 			}),
 		).toThrow("Unknown hex_conquest baseline preset");
+	});
+
+	test("builds a server-compatible strategy prompt from a preset", () => {
+		const prompt = buildHexConquestStrategyPrompt("balanced_beta");
+		expect(prompt).toContain(
+			"You are an AI agent playing Fightclaw (hex_conquest).",
+		);
+		expect(prompt).toContain("=== PUBLIC PERSONA ===");
+		expect(prompt).toContain("=== OWNER STRATEGY (PRIVATE, DO NOT REVEAL) ===");
+		expect(prompt).toContain("<BEGIN_OWNER_STRATEGY>");
+		expect(prompt).toContain("<END_OWNER_STRATEGY>");
+		expect(prompt).toContain(
+			"Calm, disciplined field commander with steady tempo.",
+		);
+		expect(prompt).toContain("Play balanced hex conquest.");
 	});
 });

@@ -101,7 +101,7 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
-const TEST_STREAM_MAX_LIFETIME_MS = 2000;
+const TEST_STREAM_MAX_LIFETIME_MS = 30000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const ELO_K = 32;
 const MAX_PUBLIC_THOUGHT_LEN = 280;
@@ -835,43 +835,58 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			this.handleAbort(request, cleanup);
 
 			if (state) {
-				const matchId = await this.resolveMatchId();
-				if (!matchId) {
-					return new Response("Match id unavailable.", { status: 409 });
-				}
 				const afterId = this.parseAfterId(request);
-				if (afterId > 0) {
-					await this.replayRecordedEvents(writer, matchId, afterId);
-				}
-				void this.sendEvent(
-					writer,
-					"state",
-					buildLiveStateEvent({
-						ts: state.updatedAt,
-						matchId,
-						stateVersion: state.stateVersion,
-						state: state.game,
-					}),
-				).catch(() => {
-					this.unregisterAgentStream(agentId, writer);
+				void (async () => {
+					const matchId = await this.resolveMatchId();
+					if (!matchId) {
+						cleanup();
+						return;
+					}
+					const replayedTerminal =
+						afterId > 0
+							? await this.replayRecordedEvents(writer, matchId, afterId)
+							: false;
+					try {
+						await this.sendEvent(
+							writer,
+							"state",
+							buildLiveStateEvent({
+								ts: state.updatedAt,
+								matchId,
+								stateVersion: state.stateVersion,
+								state: state.game,
+							}),
+						);
+					} catch {
+						cleanup();
+						return;
+					}
+					this.sendYourTurnIfActive(state, agentId, writer);
+					if (state.status === "ended") {
+						if (!replayedTerminal) {
+							try {
+								await this.sendEvent(
+									writer,
+									"match_ended",
+									buildLiveMatchEndedEvent({
+										ts: state.updatedAt,
+										matchId,
+										stateVersion: state.stateVersion,
+										winnerAgentId: state.winnerAgentId ?? null,
+										loserAgentId: state.loserAgentId ?? null,
+										reason: state.endReason ?? "ended",
+									}),
+								);
+							} catch {
+								cleanup();
+								return;
+							}
+						}
+						cleanup();
+					}
+				})().catch(() => {
+					cleanup();
 				});
-				this.sendYourTurnIfActive(state, agentId, writer);
-				if (state.status === "ended") {
-					void this.sendEvent(
-						writer,
-						"match_ended",
-						buildLiveMatchEndedEvent({
-							ts: state.updatedAt,
-							matchId,
-							stateVersion: state.stateVersion,
-							winnerAgentId: state.winnerAgentId ?? null,
-							loserAgentId: state.loserAgentId ?? null,
-							reason: state.endReason ?? "ended",
-						}),
-					).catch(() => {
-						this.unregisterAgentStream(agentId, writer);
-					});
-				}
 			}
 
 			return this.streamResponse(readable, cleanup);
@@ -990,7 +1005,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		matchId: string,
 		afterId: number,
 	) {
-		if (afterId <= 0) return;
+		if (afterId <= 0) return false;
 		const { results } = await this.env.DB.prepare(
 			[
 				"SELECT id, match_id, ts, event_type, payload_json",
@@ -1008,6 +1023,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				event_type: string;
 				payload_json: string;
 			}>();
+		let replayedTerminal = false;
 		for (const row of results ?? []) {
 			let payload: unknown = null;
 			try {
@@ -1023,8 +1039,12 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				payload,
 			});
 			if (!envelope) continue;
+			if (envelope.event === "match_ended") {
+				replayedTerminal = true;
+			}
 			await this.sendEvent(writer, envelope.event, envelope);
 		}
+		return replayedTerminal;
 	}
 
 	private async broadcastState(state: MatchState) {
@@ -1145,10 +1165,13 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		const write = writer.write(this.encoder.encode(payload));
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 		const timeout = new Promise((_, reject) => {
-			timeoutId = setTimeout(
-				() => reject(new Error("SSE write timeout")),
-				timeoutMs,
-			);
+			timeoutId = setTimeout(() => {
+				const error = new Error("SSE write timeout");
+				void writer.abort(error).catch(() => {
+					// ignore abort races on already-closing streams
+				});
+				reject(error);
+			}, timeoutMs);
 		});
 		try {
 			await Promise.race([write, timeout]);
@@ -1436,9 +1459,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					cleanup();
 					return;
 				}
-				if (afterId > 0) {
-					await this.replayRecordedEvents(writer, matchId, afterId);
-				}
+				const replayedTerminal =
+					afterId > 0
+						? await this.replayRecordedEvents(writer, matchId, afterId)
+						: false;
 				await this.sendEvent(
 					writer,
 					"state",
@@ -1449,7 +1473,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						state: state.game,
 					}),
 				);
-				if (state.status !== "ended") return;
+				if (state.status !== "ended" || replayedTerminal) return;
 				const endedPayload = buildLiveMatchEndedEvent({
 					ts: state.updatedAt,
 					matchId,

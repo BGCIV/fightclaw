@@ -5,6 +5,7 @@ import * as path from "node:path";
 import {
 	buildApiGraduationSummary,
 	buildApiLaneIntegritySummary,
+	collectMatchups,
 	countTrailingLanePasses,
 	summarizeApiGameRows,
 	writeScoreboardArtifacts,
@@ -201,5 +202,22 @@ describe("benchmark-v2 api graduation contract", () => {
 		expect(readFileSync(paths.markdownPath, "utf-8")).toContain(
 			"# Baseline Scoreboard",
 		);
+	});
+
+	test("collects the full baseline preset matrix across all scenarios", () => {
+		const matchups = collectMatchups(90000);
+		expect(matchups).toHaveLength(100);
+		expect(matchups[0]).toMatchObject({
+			scenario: "midfield",
+			bot1: "balanced_beta",
+			bot2: "balanced_beta",
+			seed: 90000,
+		});
+		expect(matchups[99]).toMatchObject({
+			scenario: "all_cavalry",
+			bot1: "safe_fallback_beta",
+			bot2: "safe_fallback_beta",
+			seed: 90099,
+		});
 	});
 });

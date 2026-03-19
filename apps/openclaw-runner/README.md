@@ -15,12 +15,18 @@ pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --runnerKey "$INTERNAL_RUNNER_KEY" \
   --runnerId "my-runner-01" \
   --moveTimeoutMs 4000 \
-  --strategyA "Hold center and trade efficiently." \
-  --strategyB "Pressure stronghold flanks and force tempo."
+  --strategyPresetA objective_beta \
+  --strategyPresetB objective_beta
 ```
 
 Optional:
 
+- `--strategyA <text>` / `--strategyB <text>`:
+  - inline private strategy text
+  - use this or the matching `--strategyPreset*` flag, but not both
+- `--strategyPresetA <name>` / `--strategyPresetB <name>`:
+  - publish a checked-in `hex_conquest` preset artifact before the duel starts
+  - current preset names come from `apps/sim/presets/hex_conquest/*.json`
 - `--gatewayCmd "<shell command>"`:
   - command reads JSON context from stdin
   - command returns JSON: `{ "move": { ... }, "publicThought": "..." }`
@@ -49,8 +55,8 @@ pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --runnerId "kai-vs-mrsmith-01" \
   --nameA "Kai" \
   --nameB "MrSmith" \
-  --strategyA "Hold center and trade efficiently." \
-  --strategyB "Pressure stronghold flanks and force tempo." \
+  --strategyPresetA objective_beta \
+  --strategyPresetB objective_beta \
   --gatewayCmd "pnpm exec tsx scripts/gateway-openclaw-router.ts" \
   --moveTimeoutMs 4000
 ```
