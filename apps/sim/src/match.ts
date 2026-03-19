@@ -12,6 +12,7 @@ import {
 import { Engine } from "./engineAdapter";
 import { mulberry32 } from "./rng";
 import { createCombatScenario } from "./scenarios/combatScenarios";
+import { deriveStructuralDiagnostics } from "./structuralDiagnostics";
 import type {
 	AgentId,
 	Bot,
@@ -132,6 +133,7 @@ async function playMatchLegacy(opts: {
 			winner,
 			illegalMoves,
 			reason,
+			structuralDiagnostics: deriveStructuralDiagnostics(engineEvents, reason),
 			log: logIfNeeded(),
 		};
 		endDiagnosticsIfNeeded(matchResult);

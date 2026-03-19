@@ -24,7 +24,15 @@ export type MatchResult = {
 	winner: AgentId | null;
 	illegalMoves: number;
 	reason: "terminal" | "maxTurns" | "illegal";
+	structuralDiagnostics?: StructuralDiagnostics;
 	log?: MatchLog;
+};
+
+export type StructuralDiagnostics = {
+	firstContactTurn: number | null;
+	firstDamageTurn: number | null;
+	firstKillTurn: number | null;
+	terminalReason: MatchResult["reason"];
 };
 
 export type MatchLog = {
