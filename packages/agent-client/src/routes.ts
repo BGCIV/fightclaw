@@ -8,8 +8,7 @@ export type RouteKey =
 	| "events_wait"
 	| "match_move"
 	| "match_state"
-	| "match_stream"
-	| "match_ws";
+	| "match_stream";
 
 export type RouteTable = Record<RouteKey, string>;
 
@@ -24,7 +23,6 @@ export const defaultRoutes: RouteTable = {
 	match_move: "/v1/matches/:matchId/move",
 	match_state: "/v1/matches/:matchId/state",
 	match_stream: "/v1/matches/:matchId/stream",
-	match_ws: "/v1/matches/:matchId/ws",
 };
 
 const replaceParams = (template: string, params?: Record<string, string>) => {

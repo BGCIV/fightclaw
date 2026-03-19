@@ -1,10 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import {
 	buildApiGraduationSummary,
 	buildApiLaneIntegritySummary,
+	collectMatchups,
 	countTrailingLanePasses,
 	summarizeApiGameRows,
+	writeScoreboardArtifacts,
 } from "../scripts/benchmark-v2";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+	for (const dir of tempDirs.splice(0)) {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 describe("benchmark-v2 api graduation contract", () => {
 	test("applies smoke/full completion thresholds and wall-clock contract", () => {
@@ -144,5 +157,67 @@ describe("benchmark-v2 api graduation contract", () => {
 			"api_smoke",
 		);
 		expect(streak).toBe(2);
+	});
+
+	test("writes scoreboard json and markdown artifacts", () => {
+		const outputDir = mkdtempSync(path.join(tmpdir(), "fightclaw-benchmark-"));
+		tempDirs.push(outputDir);
+
+		const paths = writeScoreboardArtifacts(outputDir, {
+			version: "baseline_scoreboard_v1",
+			profiles: [
+				{
+					profileId: "balanced_beta",
+					games: 8,
+					wins: 5,
+					losses: 2,
+					draws: 1,
+					winRate: 0.625,
+					legalMoveRate: 1,
+					avgMatchTurns: 22.5,
+					maxTurnsRate: 0.125,
+					illegalEndingRate: 0,
+					spectatorUsefulness: 0.71,
+					avgTurnLatencyMs: 12.5,
+					compositeScore: 0.8125,
+				},
+			],
+			winner: {
+				profileId: "balanced_beta",
+				compositeScore: 0.8125,
+				reasons: ["winRate=0.625"],
+			},
+			totals: {
+				profiles: 1,
+				matchups: 4,
+				games: 8,
+			},
+		});
+
+		expect(path.basename(paths.jsonPath)).toBe("scoreboard.json");
+		expect(path.basename(paths.markdownPath)).toBe("scoreboard.md");
+		expect(
+			JSON.parse(readFileSync(paths.jsonPath, "utf-8")).winner.profileId,
+		).toBe("balanced_beta");
+		expect(readFileSync(paths.markdownPath, "utf-8")).toContain(
+			"# Baseline Scoreboard",
+		);
+	});
+
+	test("collects the full baseline preset matrix across all scenarios", () => {
+		const matchups = collectMatchups(90000);
+		expect(matchups).toHaveLength(100);
+		expect(matchups[0]).toMatchObject({
+			scenario: "midfield",
+			bot1: "balanced_beta",
+			bot2: "balanced_beta",
+			seed: 90000,
+		});
+		expect(matchups[99]).toMatchObject({
+			scenario: "all_cavalry",
+			bot1: "safe_fallback_beta",
+			bot2: "safe_fallback_beta",
+			seed: 90099,
+		});
 	});
 });

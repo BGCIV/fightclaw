@@ -1,0 +1,38 @@
+{
+	"id": "objective_beta",
+	"displayName": "Objective Beta",
+	"gameType": "hex_conquest",
+	"publicPersona": "Terrain-first opportunist who wins by pressure and income.",
+	"privateStrategy": "Play objective-focused hex conquest. Contest crowns and income nodes early, keep economy flowing, and turn the resulting resource edge into stronger upgrades, reinforcements, and stronghold pressure.",
+	"provenance": {
+		"selectedAt": "2026-03-18",
+		"selectionMethod": "apps/sim benchmark-v2 fixed baseline preset matrix",
+		"selectedBecause": [
+			"Won the 4-games-per-matchup round robin with compositeScore=0.6072.",
+			"Won the 8-games-per-matchup soak with compositeScore=0.6121.",
+			"Stayed materially less stall-prone than the rest of the baseline set with maxTurnsRate=0.475 in both runs."
+		],
+		"runs": [
+			{
+				"name": "hex_conquest_baselines_fastlane_a",
+				"scoreboardPath": "apps/sim/results/hex_conquest_baselines_fastlane_a/scoreboard.json",
+				"games": 400,
+				"compositeScore": 0.6072,
+				"winRate": 0.1375,
+				"maxTurnsRate": 0.475
+			},
+			{
+				"name": "hex_conquest_baselines_fastlane_b",
+				"scoreboardPath": "apps/sim/results/hex_conquest_baselines_fastlane_b/scoreboard.json",
+				"games": 800,
+				"compositeScore": 0.6121,
+				"winRate": 0.1594,
+				"maxTurnsRate": 0.475
+			}
+		],
+		"caveats": [
+			"The fixed baseline set remains draw-heavy overall; this selection is the best current beta default, not a claim that the benchmark gates are healthy.",
+			"No API spot-check was run at selection time because no LLM_API_KEY or OPENROUTER_API_KEY was available in the current environment or local .env."
+		]
+	}
+}

@@ -19,20 +19,14 @@ import {
 	buildAgentThoughtEvent,
 	buildEngineEventsEvent,
 	buildGameEndedAliasEvent,
+	buildLiveMatchEndedEvent,
+	buildLiveStateEvent,
+	buildLiveYourTurnEvent,
 	buildMatchEndedEvent,
-	buildStateEvent,
-	buildYourTurnEvent,
+	buildStoredMatchEventEnvelope,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
-import {
-	type AgentWsInbound,
-	type AgentWsOutbound,
-	agentWsInboundSchema,
-} from "../protocol/ws";
-import { parseBearerToken } from "../utils/auth";
-import { sha256Hex } from "../utils/crypto";
 import { isRecord } from "../utils/typeGuards";
-import { isWsEndpointPath } from "../utils/wsPaths";
 
 type MatchEnv = Pick<
 	AppBindings,
@@ -107,10 +101,9 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
+const TEST_STREAM_MAX_LIFETIME_MS = 30000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
-const WS_DISCONNECT_GRACE_MS = 15_000;
 const ELO_K = 32;
-const DISCONNECT_DEADLINE_PREFIX = "disconnect:";
 const MAX_PUBLIC_THOUGHT_LEN = 280;
 
 const stripControlCharsExceptNewline = (input: string) => {
@@ -214,8 +207,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	private readonly encoder = new TextEncoder();
 	private spectators = new Set<StreamWriter>();
 	private agentStreams = new Map<string, Set<StreamWriter>>();
-	private agentSockets = new Map<string, Set<WebSocket>>();
-	private socketAgentByWs = new WeakMap<WebSocket, string>();
 	private matchId: string | null = null;
 
 	constructor(ctx: DurableObjectState, env: MatchEnv) {
@@ -228,56 +219,17 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		if (!state) return;
 
 		const timeoutChecked = await this.maybeEnforceTurnTimeout(state);
-		const disconnectChecked =
-			await this.maybeEnforceDisconnectTimeout(timeoutChecked);
-		await this.scheduleNextAlarm(disconnectChecked);
+		await this.scheduleNextAlarm(timeoutChecked);
 	}
 
-	private turnTimeoutMs() {
+	private turnTimeoutMs(): number {
 		const raw = this.env.TURN_TIMEOUT_SECONDS;
 		const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-		if (Number.isNaN(parsed)) {
+		if (Number.isNaN(parsed) || parsed <= 0) {
 			return DEFAULT_TURN_TIMEOUT_SECONDS * 1000;
-		}
-		if (parsed <= 0) {
-			return null;
 		}
 		const seconds = parsed;
 		return seconds * 1000;
-	}
-
-	private disconnectKey(agentId: string) {
-		return `${DISCONNECT_DEADLINE_PREFIX}${agentId}`;
-	}
-
-	private async setDisconnectDeadline(agentId: string, deadlineMs: number) {
-		await this.ctx.storage.put(this.disconnectKey(agentId), deadlineMs);
-	}
-
-	private async clearDisconnectDeadline(agentId: string) {
-		await this.ctx.storage.delete(this.disconnectKey(agentId));
-	}
-
-	private async getDisconnectDeadline(agentId: string): Promise<number | null> {
-		const value = await this.ctx.storage.get<number>(
-			this.disconnectKey(agentId),
-		);
-		return typeof value === "number" && Number.isFinite(value) ? value : null;
-	}
-
-	private async maybeEnforceDisconnectTimeout(
-		state: MatchState,
-	): Promise<MatchState> {
-		if (state.status !== "active") return state;
-		const nowMs = Date.now();
-		for (const agentId of state.players) {
-			const deadline = await this.getDisconnectDeadline(agentId);
-			if (!deadline) continue;
-			if (nowMs >= deadline) {
-				return this.forfeitMatch(state, agentId, "disconnect_timeout");
-			}
-		}
-		return state;
 	}
 
 	private async scheduleNextAlarm(state: MatchState) {
@@ -293,10 +245,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			state.turnExpiresAtMs > 0
 		) {
 			deadlines.push(state.turnExpiresAtMs);
-		}
-		for (const agentId of state.players) {
-			const deadline = await this.getDisconnectDeadline(agentId);
-			if (deadline) deadlines.push(deadline);
 		}
 		if (deadlines.length === 0) {
 			await this.ctx.storage.deleteAlarm();
@@ -314,19 +262,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 		const nowMs = Date.now();
 		const timeoutMs = this.turnTimeoutMs();
-		if (timeoutMs === null) {
-			if (typeof nextState.turnExpiresAtMs === "number") {
-				const next: MatchState = {
-					...nextState,
-					turnExpiresAtMs: undefined,
-				};
-				await this.ctx.storage.put("state", next);
-				await this.scheduleNextAlarm(next);
-				nextState = next;
-			}
-			return nextState;
-		}
-
 		const expiresAt = nextState.turnExpiresAtMs;
 		if (
 			typeof expiresAt !== "number" ||
@@ -483,218 +418,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 	}
 
-	private sendWs(socket: WebSocket, payload: AgentWsOutbound): boolean {
-		try {
-			socket.send(JSON.stringify(payload));
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	private sendWsToAgent(agentId: string, payload: AgentWsOutbound) {
-		const sockets = this.agentSockets.get(agentId);
-		if (!sockets || sockets.size === 0) return;
-		for (const socket of sockets) {
-			const ok = this.sendWs(socket, payload);
-			if (!ok) {
-				sockets.delete(socket);
-			}
-		}
-		if (sockets.size === 0) {
-			this.agentSockets.delete(agentId);
-		}
-	}
-
-	private async resolveAgentId(request: Request): Promise<string | null> {
-		const direct = request.headers.get("x-agent-id");
-		if (direct) return direct;
-
-		const token = parseBearerToken(
-			request.headers.get("authorization") ?? undefined,
-		);
-		if (!token || !this.env.API_KEY_PEPPER) return null;
-		const hash = await sha256Hex(`${this.env.API_KEY_PEPPER}${token}`);
-		const row = await this.env.DB.prepare(
-			[
-				"SELECT a.id as agent_id, a.verified_at as verified_at",
-				"FROM api_keys k",
-				"JOIN agents a ON a.id = k.agent_id",
-				"WHERE k.key_hash = ? AND k.revoked_at IS NULL",
-				"LIMIT 1",
-			].join(" "),
-		)
-			.bind(hash)
-			.first<{ agent_id: string | null; verified_at: string | null }>();
-		if (!row?.agent_id || !row.verified_at) return null;
-		return row.agent_id;
-	}
-
-	private async unregisterAgentSocket(agentId: string, socket: WebSocket) {
-		const sockets = this.agentSockets.get(agentId);
-		if (sockets) {
-			sockets.delete(socket);
-			if (sockets.size === 0) {
-				this.agentSockets.delete(agentId);
-				const state = await this.ctx.storage.get<MatchState>("state");
-				if (state?.status === "active" && state.players.includes(agentId)) {
-					await this.setDisconnectDeadline(
-						agentId,
-						Date.now() + WS_DISCONNECT_GRACE_MS,
-					);
-					await this.scheduleNextAlarm(state);
-				}
-			}
-		}
-	}
-
-	private async handleAgentWs(request: Request): Promise<Response> {
-		if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-			return new Response("Expected websocket upgrade.", { status: 426 });
-		}
-		const socket = (request as Request & { webSocket?: WebSocket }).webSocket;
-		if (!socket) {
-			return new Response("Missing websocket.", { status: 400 });
-		}
-		const agentId = await this.resolveAgentId(request);
-		if (!agentId) {
-			return new Response("Agent id is required.", { status: 400 });
-		}
-
-		let state = await this.ctx.storage.get<MatchState>("state");
-		if (!state) {
-			return new Response("Match not initialized.", { status: 409 });
-		}
-		state = await this.maybeEnforceTurnTimeout(state);
-		state = await this.maybeEnforceDisconnectTimeout(state);
-		if (!state.players.includes(agentId)) {
-			return new Response("Agent not part of match.", { status: 403 });
-		}
-
-		socket.accept();
-		const sockets = this.agentSockets.get(agentId) ?? new Set<WebSocket>();
-		sockets.add(socket);
-		this.agentSockets.set(agentId, sockets);
-		this.socketAgentByWs.set(socket, agentId);
-		await this.clearDisconnectDeadline(agentId);
-		await this.scheduleNextAlarm(state);
-
-		const matchId = await this.resolveMatchId();
-		if (!matchId) return new Response("Match id unavailable.", { status: 409 });
-
-		this.sendWsToAgent(agentId, {
-			type: "state",
-			matchId,
-			stateVersion: state.stateVersion,
-			stateSnapshot: state.game,
-		});
-		if (state.status === "active" && getActiveAgentId(state.game) === agentId) {
-			this.sendWsToAgent(agentId, {
-				type: "your_turn",
-				matchId,
-				stateVersion: state.stateVersion,
-			});
-		}
-
-		socket.addEventListener("message", (event: MessageEvent) => {
-			const text =
-				typeof event.data === "string"
-					? event.data
-					: event.data instanceof ArrayBuffer
-						? new TextDecoder().decode(event.data)
-						: "";
-			const parsed = (() => {
-				try {
-					return JSON.parse(text);
-				} catch {
-					return null;
-				}
-			})();
-			const envelope = agentWsInboundSchema.safeParse(parsed);
-			if (!envelope.success) {
-				this.sendWs(socket, { type: "error", error: "Invalid WS message." });
-				return;
-			}
-
-			if (envelope.data.type === "ping") {
-				this.sendWs(socket, { type: "hello_ok", agentId });
-				return;
-			}
-
-			if (envelope.data.type !== "move_submit") {
-				this.sendWs(socket, {
-					type: "error",
-					error: "Only move_submit is supported on match websocket.",
-				});
-				return;
-			}
-
-			void this.handleWsMoveSubmit(agentId, socket, envelope.data);
-		});
-
-		const cleanup = () => {
-			void this.unregisterAgentSocket(agentId, socket);
-		};
-		socket.addEventListener("close", cleanup);
-		socket.addEventListener("error", cleanup);
-
-		return new Response(null, { status: 101, webSocket: socket });
-	}
-
-	private async handleWsMoveSubmit(
-		agentId: string,
-		socket: WebSocket,
-		payload: Extract<AgentWsInbound, { type: "move_submit" }>,
-	) {
-		const response = await this.fetch(
-			new Request("https://do/move", {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					"x-agent-id": agentId,
-					"x-match-id": payload.matchId,
-				},
-				body: JSON.stringify({
-					moveId: payload.moveId,
-					expectedVersion: payload.expectedVersion,
-					move: payload.move,
-				}),
-			}),
-		);
-
-		const body: unknown = await response.json().catch(() => null);
-		if (!isRecord(body) || typeof body.ok !== "boolean") {
-			this.sendWs(socket, {
-				type: "error",
-				error: "Move response unavailable.",
-			});
-			return;
-		}
-
-		if (body.ok === true) {
-			const state = isRecord(body.state) ? body.state : null;
-			const stateVersion =
-				state && typeof state.stateVersion === "number"
-					? state.stateVersion
-					: undefined;
-			const snapshot = state && isRecord(state.game) ? state.game : undefined;
-			this.sendWs(socket, {
-				type: "move_result",
-				accepted: true,
-				newStateVersion: stateVersion,
-				stateSnapshot: snapshot,
-			});
-			return;
-		}
-
-		const reason = typeof body.reason === "string" ? body.reason : body.error;
-		this.sendWs(socket, {
-			type: "move_result",
-			accepted: false,
-			reason: typeof reason === "string" ? reason : "move_rejected",
-		});
-	}
-
 	async fetch(request: Request): Promise<Response> {
 		const headerMatchId = request.headers.get("x-match-id");
 		if (!this.matchId) {
@@ -703,8 +426,15 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 		const url = new URL(request.url);
 
-		if (request.method === "GET" && isWsEndpointPath(url.pathname)) {
-			return this.handleAgentWs(request);
+		if (request.method === "POST" && url.pathname === "/__test__/reset") {
+			if (!this.env.TEST_MODE)
+				return new Response("Not found", { status: 404 });
+			const runnerKey = request.headers.get("x-runner-key");
+			if (!runnerKey || runnerKey !== this.env.INTERNAL_RUNNER_KEY) {
+				return new Response("Unauthorized", { status: 401 });
+			}
+			await this.resetForTest();
+			return Response.json({ ok: true });
 		}
 
 		if (request.method === "POST" && url.pathname === "/init") {
@@ -719,8 +449,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 			const existing = await this.ctx.storage.get<MatchState>("state");
 			if (existing) {
-				let enforced = await this.maybeEnforceTurnTimeout(existing);
-				enforced = await this.maybeEnforceDisconnectTimeout(enforced);
+				const enforced = await this.maybeEnforceTurnTimeout(existing);
 				return Response.json({ ok: true, state: enforced });
 			}
 
@@ -731,8 +460,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				parsed.data.mode ?? "ranked",
 			);
 			const timeoutMs = this.turnTimeoutMs();
-			nextState.turnExpiresAtMs =
-				timeoutMs === null ? undefined : Date.now() + timeoutMs;
+			nextState.turnExpiresAtMs = Date.now() + timeoutMs;
 			if (this.matchId) {
 				await this.ctx.storage.put(MATCH_ID_KEY, this.matchId);
 			}
@@ -742,6 +470,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				players: nextState.players,
 				seed,
 				engineConfig: getEngineConfig(nextState.game),
+				stateVersion: nextState.stateVersion,
+				mode: nextState.mode,
 			});
 
 			// Emit match_started metric
@@ -754,7 +484,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 
 			await this.broadcastState(nextState);
-			this.broadcastYourTurn(nextState);
+			await this.broadcastYourTurn(nextState);
 			return Response.json({ ok: true, state: nextState });
 		}
 
@@ -806,7 +536,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 
 			state = await this.maybeEnforceTurnTimeout(state);
-			state = await this.maybeEnforceDisconnectTimeout(state);
 			if (state.status === "ended") {
 				const response = {
 					ok: false,
@@ -921,7 +650,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				const baseMs = Date.parse(nextState.updatedAt);
 				const nowMs = Number.isFinite(baseMs) ? baseMs : Date.now();
 				const timeoutMs = this.turnTimeoutMs();
-				const expiresAtMs = timeoutMs === null ? undefined : nowMs + timeoutMs;
+				const expiresAtMs = nowMs + timeoutMs;
 				nextState = { ...nextState, turnExpiresAtMs: expiresAtMs };
 			}
 			await this.ctx.storage.put("state", nextState);
@@ -938,30 +667,37 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				await this.finalizeMatch(nextState, "terminal");
 			}
 
-			await this.recordEvent(nextState, "move_applied", {
-				payloadVersion: 2,
-				agentId,
-				moveId: body.moveId,
-				move: moveParse.data,
-				stateVersion: nextState.stateVersion,
-				engineEvents: result.engineEvents,
-				ts: nextState.updatedAt,
-			});
+			const moveAppliedEventId = await this.recordEvent(
+				nextState,
+				"move_applied",
+				{
+					payloadVersion: 2,
+					agentId,
+					moveId: body.moveId,
+					move: moveParse.data,
+					stateVersion: nextState.stateVersion,
+					engineEvents: result.engineEvents,
+					ts: nextState.updatedAt,
+				},
+			);
 
 			await this.broadcastState(nextState);
 			{
 				const matchId = this.matchId ?? this.ctx.id.name;
 				if (matchId) {
+					const liveWriters = [...this.spectators, ...this.allAgentWriters()];
 					await this.broadcast(
-						[...this.spectators],
+						liveWriters,
 						"engine_events",
-						buildEngineEventsEvent(matchId, {
+						buildEngineEventsEvent({
+							eventId: moveAppliedEventId,
+							ts: nextState.updatedAt,
+							matchId,
 							stateVersion: nextState.stateVersion,
 							agentId,
 							moveId: body.moveId,
 							move: moveParse.data,
 							engineEvents: result.engineEvents,
-							ts: nextState.updatedAt,
 						}),
 					);
 					const safeThought = sanitizePublicThought(body.publicThought);
@@ -969,34 +705,37 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						getPlayerSideForAgent(nextState.game, agentId) ??
 						getPlayerSideForAgent(state.game, agentId);
 					if (safeThought && player) {
-						const thoughtPayload = buildAgentThoughtEvent(matchId, {
-							player,
-							agentId,
-							moveId: body.moveId,
-							stateVersion: nextState.stateVersion,
-							text: safeThought,
-							ts: nextState.updatedAt,
-						});
-						await this.recordEvent(nextState, "agent_thought", {
-							payloadVersion: 1,
-							player,
-							agentId,
-							moveId: body.moveId,
-							stateVersion: nextState.stateVersion,
-							text: safeThought,
-							ts: nextState.updatedAt,
-						});
-						await this.broadcast(
-							[...this.spectators],
+						const thoughtEventId = await this.recordEvent(
+							nextState,
 							"agent_thought",
-							thoughtPayload,
+							{
+								payloadVersion: 1,
+								player,
+								agentId,
+								moveId: body.moveId,
+								stateVersion: nextState.stateVersion,
+								text: safeThought,
+								ts: nextState.updatedAt,
+							},
 						);
+						const thoughtPayload = buildAgentThoughtEvent({
+							eventId: thoughtEventId,
+							ts: nextState.updatedAt,
+							matchId,
+							stateVersion: nextState.stateVersion,
+							player,
+							agentId,
+							moveId: body.moveId,
+							text: safeThought,
+						});
+						await this.broadcast(liveWriters, "agent_thought", thoughtPayload);
 					}
 				}
 			}
-			this.broadcastYourTurn(nextState);
+			await this.broadcastYourTurn(nextState);
 			if (nextState.status === "ended") {
 				await this.recordEvent(nextState, "match_ended", {
+					stateVersion: nextState.stateVersion,
 					winnerAgentId: nextState.winnerAgentId ?? null,
 					loserAgentId: nextState.loserAgentId ?? null,
 					reason: "terminal",
@@ -1035,9 +774,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				);
 			}
 
-			const enforced = await this.maybeEnforceDisconnectTimeout(
-				await this.maybeEnforceTurnTimeout(state),
-			);
+			const enforced = await this.maybeEnforceTurnTimeout(state);
 
 			if (enforced.status === "ended") {
 				const response: FinishResponse = { ok: true, state: enforced };
@@ -1061,7 +798,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			let state = await this.ctx.storage.get<MatchState>("state");
 			if (state) {
 				state = await this.maybeEnforceTurnTimeout(state);
-				state = await this.maybeEnforceDisconnectTimeout(state);
 			}
 			return Response.json({ state: state ?? null });
 		}
@@ -1077,39 +813,86 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 			if (state) {
 				state = await this.maybeEnforceTurnTimeout(state);
-				state = await this.maybeEnforceDisconnectTimeout(state);
 			}
 
 			const { readable, writer, close } = this.createStream();
 			this.registerAgentStream(agentId, writer);
-			this.handleAbort(request, () => {
+			let cleanedUp = false;
+			let testTimeout: ReturnType<typeof setTimeout> | null = null;
+			const cleanup = () => {
+				if (cleanedUp) return;
+				cleanedUp = true;
+				if (testTimeout !== null) {
+					clearTimeout(testTimeout);
+					testTimeout = null;
+				}
 				this.unregisterAgentStream(agentId, writer);
 				void close();
-			});
+			};
+			if (this.env.TEST_MODE) {
+				testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+			}
+			this.handleAbort(request, cleanup);
 
 			if (state) {
-				const matchId = await this.resolveMatchId();
-				if (!matchId) {
-					return new Response("Match id unavailable.", { status: 409 });
-				}
-				void this.sendEvent(
-					writer,
-					"state",
-					buildStateEvent(matchId, state.game),
-				).catch(() => {
-					this.unregisterAgentStream(agentId, writer);
+				const afterId = this.parseAfterId(request);
+				void (async () => {
+					const matchId = await this.resolveMatchId();
+					if (!matchId) {
+						cleanup();
+						return;
+					}
+					const replayedTerminal =
+						afterId > 0
+							? await this.replayRecordedEvents(writer, matchId, afterId)
+							: false;
+					try {
+						await this.sendEvent(
+							writer,
+							"state",
+							buildLiveStateEvent({
+								ts: state.updatedAt,
+								matchId,
+								stateVersion: state.stateVersion,
+								state: state.game,
+							}),
+						);
+					} catch {
+						cleanup();
+						return;
+					}
+					this.sendYourTurnIfActive(state, agentId, writer);
+					if (state.status === "ended") {
+						if (!replayedTerminal) {
+							try {
+								await this.sendEvent(
+									writer,
+									"match_ended",
+									buildLiveMatchEndedEvent({
+										ts: state.updatedAt,
+										matchId,
+										stateVersion: state.stateVersion,
+										winnerAgentId: state.winnerAgentId ?? null,
+										loserAgentId: state.loserAgentId ?? null,
+										reason: state.endReason ?? "ended",
+									}),
+								);
+							} catch {
+								cleanup();
+								return;
+							}
+						}
+						cleanup();
+					}
+				})().catch(() => {
+					cleanup();
 				});
-				this.sendYourTurnIfActive(state, agentId, writer);
 			}
 
-			return this.streamResponse(readable);
+			return this.streamResponse(readable, cleanup);
 		}
 
 		if (request.method === "GET" && url.pathname === "/spectate") {
-			return this.handleSpectate(request);
-		}
-
-		if (request.method === "GET" && url.pathname === "/events") {
 			return this.handleSpectate(request);
 		}
 
@@ -1140,8 +923,43 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		request.signal.addEventListener("abort", onAbort, { once: true });
 	}
 
-	private streamResponse(readable: ReadableStream<Uint8Array>) {
-		return new Response(readable, {
+	private streamResponse(
+		readable: ReadableStream<Uint8Array>,
+		onClose?: () => void,
+	) {
+		let settled = false;
+		const settle = () => {
+			if (settled) return;
+			settled = true;
+			onClose?.();
+		};
+		const reader = readable.getReader();
+		const wrapped = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				try {
+					const { done, value } = await reader.read();
+					if (done) {
+						settle();
+						controller.close();
+						return;
+					}
+					if (value) controller.enqueue(value);
+				} catch (error) {
+					settle();
+					controller.error(error);
+				}
+			},
+			async cancel(reason) {
+				try {
+					await reader.cancel(reason);
+				} catch {
+					// ignore
+				} finally {
+					settle();
+				}
+			},
+		});
+		return new Response(wrapped, {
 			headers: {
 				"content-type": "text/event-stream",
 				"cache-control": "no-cache",
@@ -1167,25 +985,84 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		await this.sendEventWithTimeout(writer, event, data, SSE_WRITE_TIMEOUT_MS);
 	}
 
+	private parseAfterId(request: Request) {
+		const raw = new URL(request.url).searchParams.get("afterId");
+		const parsed = raw ? Number.parseInt(raw, 10) : 0;
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+	}
+
+	private async getLatestRecordedEventId(matchId: string) {
+		const row = await this.env.DB.prepare(
+			"SELECT MAX(id) as id FROM match_events WHERE match_id = ?",
+		)
+			.bind(matchId)
+			.first<{ id: number | null }>();
+		return typeof row?.id === "number" ? row.id : 0;
+	}
+
+	private async replayRecordedEvents(
+		writer: StreamWriter,
+		matchId: string,
+		afterId: number,
+	) {
+		if (afterId <= 0) return false;
+		const { results } = await this.env.DB.prepare(
+			[
+				"SELECT id, match_id, ts, event_type, payload_json",
+				"FROM match_events",
+				"WHERE match_id = ? AND id > ?",
+				"ORDER BY id ASC",
+				"LIMIT 5000",
+			].join(" "),
+		)
+			.bind(matchId, afterId)
+			.all<{
+				id: number;
+				match_id: string;
+				ts: string;
+				event_type: string;
+				payload_json: string;
+			}>();
+		let replayedTerminal = false;
+		for (const row of results ?? []) {
+			let payload: unknown = null;
+			try {
+				payload = JSON.parse(row.payload_json);
+			} catch {
+				payload = null;
+			}
+			const envelope = buildStoredMatchEventEnvelope({
+				eventId: row.id,
+				matchId: row.match_id,
+				ts: row.ts,
+				eventType: row.event_type,
+				payload,
+			});
+			if (!envelope) continue;
+			if (envelope.event === "match_ended") {
+				replayedTerminal = true;
+			}
+			await this.sendEvent(writer, envelope.event, envelope);
+		}
+		return replayedTerminal;
+	}
+
 	private async broadcastState(state: MatchState) {
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
 		await this.broadcast(
 			[...this.spectators, ...this.allAgentWriters()],
 			"state",
-			buildStateEvent(matchId, state.game),
-		);
-		for (const agentId of state.players) {
-			this.sendWsToAgent(agentId, {
-				type: "state",
+			buildLiveStateEvent({
+				ts: state.updatedAt,
 				matchId,
 				stateVersion: state.stateVersion,
-				stateSnapshot: state.game,
-			});
-		}
+				state: state.game,
+			}),
+		);
 	}
 
-	private broadcastYourTurn(state: MatchState) {
+	private async broadcastYourTurn(state: MatchState) {
 		if (state.status !== "active") return;
 		const active = getActiveAgentId(state.game);
 		if (!active) return;
@@ -1193,17 +1070,16 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		if (!writers) return;
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
-		const payload = buildYourTurnEvent(matchId, state.stateVersion);
+		const payload = buildLiveYourTurnEvent({
+			ts: state.updatedAt,
+			matchId,
+			stateVersion: state.stateVersion,
+		});
 		for (const writer of writers) {
 			void this.sendEvent(writer, "your_turn", payload).catch(() => {
 				writers.delete(writer);
 			});
 		}
-		this.sendWsToAgent(active, {
-			type: "your_turn",
-			matchId,
-			stateVersion: state.stateVersion,
-		});
 	}
 
 	private sendYourTurnIfActive(
@@ -1219,24 +1095,27 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		void this.sendEvent(
 			writer,
 			"your_turn",
-			buildYourTurnEvent(matchId, state.stateVersion),
+			buildLiveYourTurnEvent({
+				ts: state.updatedAt,
+				matchId,
+				stateVersion: state.stateVersion,
+			}),
 		);
-		this.sendWsToAgent(agentId, {
-			type: "your_turn",
-			matchId,
-			stateVersion: state.stateVersion,
-		});
 	}
 
 	private async broadcastGameEnd(state: MatchState, reason: string) {
 		const matchId = this.matchId ?? this.ctx.id.name;
 		if (!matchId) return;
-		const payload = buildMatchEndedEvent(
+		const eventId = await this.getLatestRecordedEventId(matchId);
+		const payload = buildMatchEndedEvent({
+			eventId,
+			ts: state.updatedAt,
 			matchId,
-			state.winnerAgentId ?? null,
-			state.loserAgentId ?? null,
+			stateVersion: state.stateVersion,
+			winnerAgentId: state.winnerAgentId ?? null,
+			loserAgentId: state.loserAgentId ?? null,
 			reason,
-		);
+		});
 		await this.broadcast(
 			[...this.spectators, ...this.allAgentWriters()],
 			"match_ended",
@@ -1247,15 +1126,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			"game_ended",
 			buildGameEndedAliasEvent(payload),
 		);
-		for (const agentId of state.players) {
-			this.sendWsToAgent(agentId, {
-				type: "match_ended",
-				matchId,
-				winnerAgentId: state.winnerAgentId ?? null,
-				endReason: reason,
-				finalStateVersion: state.stateVersion,
-			});
-		}
 	}
 
 	private allAgentWriters(): StreamWriter[] {
@@ -1295,10 +1165,13 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		const write = writer.write(this.encoder.encode(payload));
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 		const timeout = new Promise((_, reject) => {
-			timeoutId = setTimeout(
-				() => reject(new Error("SSE write timeout")),
-				timeoutMs,
-			);
+			timeoutId = setTimeout(() => {
+				const error = new Error("SSE write timeout");
+				void writer.abort(error).catch(() => {
+					// ignore abort races on already-closing streams
+				});
+				reject(error);
+			}, timeoutMs);
 		});
 		try {
 			await Promise.race([write, timeout]);
@@ -1351,7 +1224,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		payload: unknown,
 	) {
 		const matchId = await this.resolveMatchId();
-		if (!matchId) return;
+		if (!matchId) return 0;
 		try {
 			if (eventType === "match_ended") {
 				await this.env.DB.prepare(
@@ -1371,7 +1244,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						matchId,
 					)
 					.run();
-				return;
+				return await this.getLatestRecordedEventId(matchId);
 			}
 			await this.env.DB.prepare(
 				"INSERT INTO match_events(match_id, turn, event_type, payload_json) VALUES (?, ?, ?, ?)",
@@ -1383,8 +1256,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					JSON.stringify(payload ?? null),
 				)
 				.run();
+			return await this.getLatestRecordedEventId(matchId);
 		} catch (error) {
 			console.error("Failed to record match event", error);
+			return 0;
 		}
 	}
 
@@ -1424,22 +1299,21 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 
 		await this.ctx.storage.put("state", nextState);
-		await Promise.all(
-			nextState.players.map((agentId) => this.clearDisconnectDeadline(agentId)),
-		);
-		await this.broadcastState(nextState);
-		await this.broadcastGameEnd(nextState, reason);
-		await this.finalizeMatch(nextState, reason);
 		await this.recordEvent(nextState, "move_forfeit", {
 			loserAgentId,
 			winnerAgentId: winnerAgentId ?? null,
 			reason,
+			stateVersion: nextState.stateVersion,
 		});
 		await this.recordEvent(nextState, "match_ended", {
+			stateVersion: nextState.stateVersion,
 			winnerAgentId: winnerAgentId ?? null,
 			loserAgentId,
 			reason,
 		});
+		await this.broadcastState(nextState);
+		await this.broadcastGameEnd(nextState, reason);
+		await this.finalizeMatch(nextState, reason);
 		return nextState;
 	}
 
@@ -1557,48 +1431,69 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		let state = await this.ctx.storage.get<MatchState>("state");
 		if (state) {
 			state = await this.maybeEnforceTurnTimeout(state);
-			state = await this.maybeEnforceDisconnectTimeout(state);
 		}
 		const { readable, writer, close } = this.createStream();
 		this.spectators.add(writer);
-		this.handleAbort(request, () => {
+		let cleanedUp = false;
+		let testTimeout: ReturnType<typeof setTimeout> | null = null;
+		const cleanup = () => {
+			if (cleanedUp) return;
+			cleanedUp = true;
+			if (testTimeout !== null) {
+				clearTimeout(testTimeout);
+				testTimeout = null;
+			}
 			this.spectators.delete(writer);
 			void close();
-		});
+		};
+		if (this.env.TEST_MODE) {
+			testTimeout = setTimeout(cleanup, TEST_STREAM_MAX_LIFETIME_MS);
+		}
+		this.handleAbort(request, cleanup);
 
 		if (state) {
-			const matchId = await this.resolveMatchId();
-			if (!matchId) {
-				return new Response("Match id unavailable.", { status: 409 });
-			}
-			void this.sendEvent(
-				writer,
-				"state",
-				buildStateEvent(matchId, state.game),
-			).catch(() => {
-				this.spectators.delete(writer);
-			});
-			if (state.status === "ended") {
-				const endedPayload = buildMatchEndedEvent(
-					matchId,
-					state.winnerAgentId ?? null,
-					state.loserAgentId ?? null,
-					state.endReason ?? "ended",
+			const afterId = this.parseAfterId(request);
+			void (async () => {
+				const matchId = await this.resolveMatchId();
+				if (!matchId) {
+					cleanup();
+					return;
+				}
+				const replayedTerminal =
+					afterId > 0
+						? await this.replayRecordedEvents(writer, matchId, afterId)
+						: false;
+				await this.sendEvent(
+					writer,
+					"state",
+					buildLiveStateEvent({
+						ts: state.updatedAt,
+						matchId,
+						stateVersion: state.stateVersion,
+						state: state.game,
+					}),
 				);
-				void this.sendEvent(writer, "match_ended", endedPayload).catch(() => {
-					this.spectators.delete(writer);
+				if (state.status !== "ended" || replayedTerminal) return;
+				const endedPayload = buildLiveMatchEndedEvent({
+					ts: state.updatedAt,
+					matchId,
+					stateVersion: state.stateVersion,
+					winnerAgentId: state.winnerAgentId ?? null,
+					loserAgentId: state.loserAgentId ?? null,
+					reason: state.endReason ?? "ended",
 				});
-				void this.sendEvent(
+				await this.sendEvent(writer, "match_ended", endedPayload);
+				await this.sendEvent(
 					writer,
 					"game_ended",
 					buildGameEndedAliasEvent(endedPayload),
-				).catch(() => {
-					this.spectators.delete(writer);
-				});
-			}
+				);
+			})().catch(() => {
+				cleanup();
+			});
 		}
 
-		return this.streamResponse(readable);
+		return this.streamResponse(readable, cleanup);
 	}
 
 	private async notifyFeaturedEnded(matchId: string) {
@@ -1652,6 +1547,28 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			return stored;
 		}
 		return null;
+	}
+
+	private async resetForTest() {
+		await this.ctx.storage.deleteAlarm();
+		for (const writer of this.spectators) {
+			try {
+				await writer.close();
+			} catch {
+				// ignore
+			}
+		}
+		this.spectators.clear();
+		for (const [agentId, writers] of this.agentStreams.entries()) {
+			for (const writer of writers) {
+				try {
+					await writer.close();
+				} catch {
+					// ignore
+				}
+			}
+			this.agentStreams.delete(agentId);
+		}
 	}
 }
 

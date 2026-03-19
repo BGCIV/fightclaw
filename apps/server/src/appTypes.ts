@@ -21,6 +21,7 @@ export type AppBindings = {
 	ADMIN_KEY: string;
 	INTERNAL_RUNNER_KEY?: string;
 	MATCHMAKING_ELO_RANGE?: string;
+	MATCHMAKER_SHARDS?: string;
 	TURN_TIMEOUT_SECONDS?: string;
 	TEST_MODE?: string;
 	MATCHMAKER: DurableObjectNamespace;

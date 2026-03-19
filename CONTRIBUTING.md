@@ -21,6 +21,12 @@ Required Pages env vars:
 - `SENTRY_ORG`: Sentry organization slug (build-time only)
 - `SENTRY_PROJECT`: Sentry project slug (build-time only)
 
+Local env templates:
+- Root deploy/runtime template: `.env.example`
+- Server local template: `apps/server/.env.example`
+- Web local template: `apps/web/.env.example`
+- Infra local template: `packages/infra/.env.example`
+
 ### Build Configuration
 - Root directory: `/`
 - Build command: `pnpm install && pnpm -C apps/web run build`

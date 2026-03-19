@@ -17,12 +17,11 @@
 	},
 	"dependencies": {
 		"@fightclaw/engine": "workspace:*",
-		"ws": "^8.18.3",
+		"@fightclaw/protocol": "workspace:*",
 		"zod": "catalog:"
 	},
 	"devDependencies": {
 		"@fightclaw/config": "workspace:*",
-		"@types/ws": "^8.18.1",
 		"typescript": "catalog:"
 	}
 }

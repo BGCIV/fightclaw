@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { Move } from "@fightclaw/engine";
+import type { MatchEventEnvelope } from "@fightclaw/protocol";
 import type { ArenaClient } from "./client";
-import {
-	HttpLongPollEventSource,
-	parseQueueEvent,
-	WsEventSource,
-} from "./eventSources";
+import { ArenaHttpError } from "./errors";
 import type {
-	MatchEventSource,
+	MatchEventHandler,
 	MoveSubmitResponse,
+	QueueWaitEvent,
 	RunMatchOptions,
 	RunMatchResult,
-	RunnerEvent,
+	RunnerSession,
+	RunnerSessionOptions,
 } from "./types";
 
 const DEFAULT_TIMEOUT_FALLBACK_MOVE: Move = {
@@ -58,7 +57,7 @@ const resolveTerminalFromMove = (
 		const winner = result.state.winnerAgentId ?? null;
 		return {
 			matchId: "",
-			transport: "http",
+			transport: "sse",
 			reason: result.state.endReason ?? "terminal",
 			winnerAgentId: winner,
 			loserAgentId: normalizeLoser(agentId, opponentId, winner),
@@ -67,7 +66,7 @@ const resolveTerminalFromMove = (
 	if (result.matchStatus !== "ended") return null;
 	return {
 		matchId: "",
-		transport: "http",
+		transport: "sse",
 		reason: result.reasonCode ?? result.reason ?? "ended",
 		winnerAgentId: result.winnerAgentId ?? null,
 		loserAgentId: normalizeLoser(
@@ -78,22 +77,219 @@ const resolveTerminalFromMove = (
 	};
 };
 
+const parseQueueEvent = (events: QueueWaitEvent[]) => {
+	for (const event of events) {
+		if (event.event === "match_found" && typeof event.matchId === "string") {
+			return {
+				type: "match_found" as const,
+				matchId: event.matchId,
+				opponentId: event.payload.opponentId ?? null,
+			};
+		}
+	}
+	return null;
+};
+
+const shouldFailStreamConnect = (error: unknown) => {
+	return (
+		error instanceof ArenaHttpError &&
+		error.status >= 400 &&
+		error.status < 500 &&
+		error.status !== 429
+	);
+};
+
+const asTerminalResult = (
+	event: MatchEventEnvelope,
+	matchId: string,
+	agentId: string,
+	opponentId: string | null,
+): RunMatchResult | null => {
+	if (event.event !== "match_ended" && event.event !== "game_ended") {
+		return null;
+	}
+	const winner = event.payload.winnerAgentId ?? null;
+	return {
+		matchId,
+		transport: "sse",
+		reason: event.payload.reasonCode ?? event.payload.reason ?? "ended",
+		winnerAgentId: winner,
+		loserAgentId:
+			event.payload.loserAgentId ?? normalizeLoser(agentId, opponentId, winner),
+	};
+};
+
+export const createRunnerSession = (
+	client: ArenaClient,
+	options: RunnerSessionOptions = {},
+): RunnerSession => {
+	const queueWaitTimeoutSeconds = options.queueWaitTimeoutSeconds ?? 30;
+	const queueTimeoutMs = options.queueTimeoutMs ?? 10 * 60 * 1000;
+	const streamReconnectDelayMs = options.streamReconnectDelayMs ?? 250;
+
+	let agentId: string | null = null;
+	let matchId: string | null = null;
+	let opponentId: string | null = null;
+	let lastEventId = 0;
+	let startPromise: Promise<{
+		agentId: string;
+		matchId: string;
+		opponentId: string | null;
+	}> | null = null;
+	let stopStream: (() => void) | null = null;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let closed = false;
+
+	const clearReconnectTimer = () => {
+		if (!reconnectTimer) return;
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	};
+
+	const stopActiveStream = () => {
+		if (!stopStream) return;
+		const stop = stopStream;
+		stopStream = null;
+		stop();
+	};
+
+	const close = () => {
+		closed = true;
+		clearReconnectTimer();
+		stopActiveStream();
+	};
+
+	const start = async () => {
+		if (startPromise) return await startPromise;
+		startPromise = (async () => {
+			const me = await client.me();
+			agentId = me.agentId;
+
+			const joined = await client.queueJoin();
+			matchId = joined.matchId;
+			opponentId = joined.opponentId ?? null;
+
+			if (joined.status !== "ready") {
+				const startedAt = Date.now();
+				while (true) {
+					if (Date.now() - startedAt > queueTimeoutMs) {
+						throw new Error("Timed out waiting for queue match.");
+					}
+					const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					const queueEvent = parseQueueEvent(waited.events);
+					if (!queueEvent) continue;
+					matchId = queueEvent.matchId;
+					opponentId = queueEvent.opponentId;
+					break;
+				}
+			}
+
+			if (!matchId) {
+				throw new Error("Runner session did not resolve a matchId.");
+			}
+
+			return {
+				agentId,
+				matchId,
+				opponentId,
+			};
+		})().catch((error) => {
+			startPromise = null;
+			throw error;
+		});
+
+		return await startPromise;
+	};
+
+	const connect = async (handler: MatchEventHandler): Promise<() => void> => {
+		const started = await start();
+		closed = false;
+		clearReconnectTimer();
+		stopActiveStream();
+
+		const scheduleReconnect = () => {
+			if (closed || reconnectTimer) return;
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				void connectStream();
+			}, streamReconnectDelayMs);
+		};
+
+		const connectStream = async () => {
+			if (closed) return;
+			try {
+				const nextStop = await client.subscribeMatchStream(
+					started.matchId,
+					async (event) => {
+						lastEventId = Math.max(lastEventId, event.eventId);
+						await handler(event);
+					},
+					{
+						afterId: lastEventId,
+						onClose: () => {
+							if (closed) return;
+							scheduleReconnect();
+						},
+					},
+				);
+				if (closed) {
+					nextStop();
+					return;
+				}
+				stopStream = nextStop;
+			} catch (error) {
+				if (shouldFailStreamConnect(error)) {
+					throw error;
+				}
+				scheduleReconnect();
+			}
+		};
+
+		await connectStream();
+		return () => close();
+	};
+
+	return {
+		get agentId() {
+			return agentId;
+		},
+		get matchId() {
+			return matchId;
+		},
+		get opponentId() {
+			return opponentId;
+		},
+		get lastEventId() {
+			return lastEventId;
+		},
+		start,
+		connect,
+		close,
+	};
+};
+
 export const runMatch = async (
 	client: ArenaClient,
 	options: RunMatchOptions,
 ): Promise<RunMatchResult> => {
-	const preferredTransport = options.preferredTransport ?? "ws";
-	const allowTransportFallback = options.allowTransportFallback ?? true;
-	const wsOpenTimeoutMs = options.wsOpenTimeoutMs ?? 3_000;
-	const queueWaitTimeoutSeconds = options.queueWaitTimeoutSeconds ?? 30;
-	const queueTimeoutMs = options.queueTimeoutMs ?? 10 * 60 * 1000;
-	const httpPollIntervalMs = options.httpPollIntervalMs ?? 1_500;
 	const moveProviderTimeoutMs = options.moveProviderTimeoutMs;
 	const moveProviderTimeoutFallbackMove =
 		options.moveProviderTimeoutFallbackMove ?? DEFAULT_TIMEOUT_FALLBACK_MOVE;
+	const session =
+		options.session ??
+		createRunnerSession(client, {
+			queueTimeoutMs: options.queueTimeoutMs,
+			queueWaitTimeoutSeconds: options.queueWaitTimeoutSeconds,
+			streamReconnectDelayMs: options.streamReconnectDelayMs,
+		});
+	const started = await session.start();
+	const agentId = started.agentId;
+	const matchId = started.matchId;
+	const opponentId = started.opponentId;
+
 	const resolveMove = async (stateVersion: number): Promise<Move> => {
 		const moveContext = {
-			agentId: me.agentId,
+			agentId,
 			matchId,
 			stateVersion,
 		};
@@ -120,138 +316,35 @@ export const runMatch = async (
 		}
 	};
 
-	const me = await client.me();
-	const joined = await client.queueJoin();
-	let matchId = joined.matchId;
-	const opponentId = joined.opponentId ?? null;
-
-	if (joined.status !== "ready") {
-		const startedAt = Date.now();
-		while (true) {
-			if (Date.now() - startedAt > queueTimeoutMs) {
-				throw new Error("Timed out waiting for queue match.");
-			}
-			const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
-			const queueEvent = parseQueueEvent(waited.events);
-			if (!queueEvent) continue;
-			if (queueEvent.type === "match_found") {
-				matchId = queueEvent.matchId;
-				break;
-			}
-		}
-	}
-
-	const createHttpSource = () =>
-		new HttpLongPollEventSource(
-			client,
-			matchId,
-			me.agentId,
-			httpPollIntervalMs,
-		);
-	const preferredSource =
-		preferredTransport === "http"
-			? createHttpSource()
-			: new WsEventSource(client, matchId, wsOpenTimeoutMs);
-	let source = preferredSource;
 	let lastObservedVersion = -1;
 	const handledTurns = new Set<number>();
 	let turnLoopInFlight = false;
-	let transport = source.kind;
+	let settled = false;
 
-	const stopFns: Array<() => void> = [];
-
-	let terminal: RunMatchResult;
 	try {
-		terminal = await new Promise<RunMatchResult>((resolve, reject) => {
-			let fallbackStarted = false;
-			const startHttpFallback = () => {
-				fallbackStarted = true;
-				const fallbackSource = createHttpSource();
-				void startSource(fallbackSource);
-				source = fallbackSource;
-				transport = source.kind;
+		return await new Promise<RunMatchResult>((resolve, reject) => {
+			const fail = (error: Error) => {
+				if (settled) return;
+				settled = true;
+				session.close();
+				reject(error);
 			};
 
-			const startSource = (candidate: MatchEventSource) => {
-				return candidate
-					.start(async (event) => {
-						// Once fallback is active, treat WS as dead to avoid stale turn signals.
-						if (candidate.kind === "ws" && fallbackStarted) return;
-						transport = candidate.kind;
-						await handleEvent(event, candidate.kind);
-					})
-					.then((stop) => {
-						stopFns.push(stop);
-					})
-					.catch((error) => {
-						if (candidate.kind === "ws" && fallbackStarted) return;
-						if (
-							candidate.kind === "ws" &&
-							allowTransportFallback &&
-							!fallbackStarted
-						) {
-							startHttpFallback();
-							return;
-						}
-						reject(error);
-					});
+			const finish = (result: RunMatchResult) => {
+				if (settled) return;
+				settled = true;
+				session.close();
+				resolve(result);
 			};
 
-			const handleEvent = async (
-				event: RunnerEvent,
-				sourceKind: MatchEventSource["kind"],
-			) => {
-				if (event.type === "state") {
-					lastObservedVersion = event.stateVersion;
-					return;
-				}
-				if (event.type === "match_ended") {
-					resolve({
-						matchId,
-						transport,
-						reason: event.reason ?? "ended",
-						winnerAgentId: event.winnerAgentId ?? null,
-						loserAgentId:
-							event.loserAgentId ??
-							normalizeLoser(
-								me.agentId,
-								opponentId,
-								event.winnerAgentId ?? null,
-							),
-					});
-					return;
-				}
-				if (event.type === "error") {
-					if (sourceKind === "ws" && fallbackStarted) {
-						return;
-					}
-					if (transport === "ws" && fallbackStarted) {
-						return;
-					}
-					if (
-						sourceKind === "ws" &&
-						allowTransportFallback &&
-						!fallbackStarted
-					) {
-						startHttpFallback();
-						return;
-					}
-					reject(new Error(`Match event source error: ${event.error}`));
-					return;
-				}
-				if (event.type !== "your_turn") return;
-
+			const handleTurn = async (event: MatchEventEnvelope) => {
 				const initialExpectedVersion =
-					event.stateVersion >= 0 ? event.stateVersion : lastObservedVersion;
-				if (initialExpectedVersion < 0) {
-					return;
-				}
-				if (handledTurns.has(initialExpectedVersion)) {
-					return;
-				}
-				if (turnLoopInFlight) {
-					return;
-				}
+					typeof event.stateVersion === "number"
+						? event.stateVersion
+						: lastObservedVersion;
+				if (initialExpectedVersion < 0) return;
+				if (handledTurns.has(initialExpectedVersion)) return;
+				if (turnLoopInFlight) return;
 				turnLoopInFlight = true;
 
 				try {
@@ -283,14 +376,13 @@ export const runMatch = async (
 
 						const terminalFromMove = resolveTerminalFromMove(
 							response,
-							me.agentId,
+							agentId,
 							opponentId,
 						);
 						if (terminalFromMove) {
-							resolve({
+							finish({
 								...terminalFromMove,
 								matchId,
-								transport,
 							});
 							return;
 						}
@@ -305,7 +397,7 @@ export const runMatch = async (
 						}
 
 						const activeAgentId = getActiveAgentIdFromGame(response.state.game);
-						if (activeAgentId !== me.agentId) {
+						if (activeAgentId !== agentId) {
 							break;
 						}
 
@@ -313,17 +405,41 @@ export const runMatch = async (
 						actionsApplied += 1;
 					}
 				} catch (error) {
-					reject(error);
+					fail(error instanceof Error ? error : new Error(String(error)));
 				} finally {
 					turnLoopInFlight = false;
 				}
 			};
-			void startSource(source);
+
+			const handleEvent = async (event: MatchEventEnvelope) => {
+				if (
+					typeof event.stateVersion === "number" &&
+					event.stateVersion > lastObservedVersion
+				) {
+					lastObservedVersion = event.stateVersion;
+				}
+
+				const terminal = asTerminalResult(event, matchId, agentId, opponentId);
+				if (terminal) {
+					finish(terminal);
+					return;
+				}
+
+				if (event.event === "error") {
+					fail(new Error(`Match stream error: ${event.payload.error}`));
+					return;
+				}
+
+				if (event.event === "your_turn") {
+					await handleTurn(event);
+				}
+			};
+
+			void session.connect(handleEvent).catch((error) => {
+				fail(error instanceof Error ? error : new Error(String(error)));
+			});
 		});
 	} finally {
-		for (const stop of stopFns) {
-			stop();
-		}
+		session.close();
 	}
-	return terminal;
 };

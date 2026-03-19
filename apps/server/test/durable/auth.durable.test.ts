@@ -1,6 +1,6 @@
 import { SELF } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
-import { readSseText } from "../helpers";
+import { afterEach, describe, expect, it } from "vitest";
+import { openSse, resetDb, setupMatch } from "../helpers";
 
 const matchId = "11111111-1111-4111-8111-111111111111";
 
@@ -10,6 +10,11 @@ const matchId = "11111111-1111-4111-8111-111111111111";
 // See TEST_SUITE_REVISION.md Priority 6.
 
 describe("auth", () => {
+	afterEach(async () => {
+		await resetDb();
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	});
+
 	it("requires auth for queue", async () => {
 		const res = await SELF.fetch("https://example.com/v1/matches/queue", {
 			method: "POST",
@@ -36,33 +41,35 @@ describe("auth", () => {
 	});
 
 	it("allows public state and spectate", async () => {
+		const { matchId: publicMatchId } = await setupMatch(
+			"PublicAlpha",
+			"public-alpha-key",
+			"PublicBeta",
+			"public-beta-key",
+		);
 		const stateRes = await SELF.fetch(
-			`https://example.com/v1/matches/${matchId}/state`,
+			`https://example.com/v1/matches/${publicMatchId}/state`,
 		);
 		expect(stateRes.status).toBe(200);
 
-		const controller = new AbortController();
-		const spectateRes = await SELF.fetch(
-			`https://example.com/v1/matches/${matchId}/spectate`,
-			{
-				signal: controller.signal,
-			},
+		const stream = await openSse(
+			`https://example.com/v1/matches/${publicMatchId}/spectate`,
 		);
-		expect(spectateRes.status).toBe(200);
-		await readSseText(spectateRes);
-		controller.abort();
+		try {
+			expect(stream.res.status).toBe(200);
+		} finally {
+			await stream.close();
+		}
 	});
 
-	it("allows public events stream", async () => {
-		const controller = new AbortController();
-		const eventsRes = await SELF.fetch(
-			`https://example.com/v1/matches/${matchId}/events`,
-			{
-				signal: controller.signal,
-			},
+	it("allows public spectate stream", async () => {
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/spectate`,
 		);
-		expect(eventsRes.status).toBe(200);
-		await readSseText(eventsRes);
-		controller.abort();
+		try {
+			expect(stream.res.status).toBe(200);
+		} finally {
+			await stream.close();
+		}
 	});
 });

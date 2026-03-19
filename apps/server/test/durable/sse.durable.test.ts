@@ -1,8 +1,11 @@
-import { SELF } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { currentPlayer, listLegalMoves } from "@fightclaw/engine";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
+	authHeader,
 	bindRunnerAgent,
+	openSse,
+	pollUntil,
 	readSseUntil,
 	resetDb,
 	runnerHeaders,
@@ -14,6 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	await resetDb();
 	// Allow stream aborts to propagate and DOs to settle before next test.
 	await new Promise((resolve) => setTimeout(resolve, 100));
 });
@@ -22,35 +26,17 @@ const SSE_TIMEOUT_MS = 15000;
 const SSE_MAX_BYTES = 1_000_000;
 const TEST_TIMEOUT_MS = SSE_TIMEOUT_MS + 5000;
 
-const openSse = async (url: string, headers?: Record<string, string>) => {
-	const controller = new AbortController();
-	const res = await SELF.fetch(url, {
-		headers,
-		signal: controller.signal,
-	});
-	const close = async () => {
-		if (!controller.signal.aborted) controller.abort();
-		try {
-			await res.body?.cancel();
-		} catch {
-			// ignore
-		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	};
-	return { res, controller, close };
-};
-
 // Note: Additional SSE tests (your_turn isolation, game_ended events) were removed
 // due to workerd teardown instability. See TEST_SUITE_REVISION.md Priority 4.
 // This smoke test verifies basic SSE functionality.
 
 it(
-	"events stream sends initial state",
+	"spectate stream sends initial state",
 	async () => {
 		const { matchId } = await setupMatch();
 
 		const stream = await openSse(
-			`https://example.com/v1/matches/${matchId}/events`,
+			`https://example.com/v1/matches/${matchId}/spectate`,
 		);
 
 		let text = "";
@@ -62,7 +48,8 @@ it(
 				SSE_MAX_BYTES,
 				{
 					throwOnTimeout: true,
-					label: "events initial state",
+					label: "spectate initial state",
+					abortController: stream.controller,
 				},
 			);
 			text = result.text;
@@ -75,12 +62,232 @@ it(
 );
 
 it(
-	"events stream emits engine_events after successful move",
+	"agent stream emits canonical engine_events envelopes after a move",
 	async () => {
 		const { matchId, agentA } = await setupMatch();
 
 		const stream = await openSse(
-			`https://example.com/v1/matches/${matchId}/events`,
+			`https://example.com/v1/matches/${matchId}/stream`,
+			authHeader(agentA.key),
+		);
+
+		try {
+			const waitForEngineEvents = readSseUntil(
+				stream.res,
+				(value) => value.includes("event: engine_events"),
+				SSE_TIMEOUT_MS,
+				SSE_MAX_BYTES,
+				{
+					throwOnTimeout: true,
+					label: "agent stream engine_events",
+					abortController: stream.controller,
+				},
+			);
+
+			const stateRes = await SELF.fetch(
+				`https://example.com/v1/matches/${matchId}/state`,
+				{
+					headers: authHeader(agentA.key),
+				},
+			);
+			const stateJson = (await stateRes.json()) as {
+				state: { stateVersion: number } | null;
+			};
+			const expectedVersion = stateJson.state?.stateVersion ?? 0;
+
+			await SELF.fetch(`https://example.com/v1/matches/${matchId}/move`, {
+				method: "POST",
+				headers: {
+					...authHeader(agentA.key),
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					moveId: crypto.randomUUID(),
+					expectedVersion,
+					move: { action: "fortify", unitId: "A-1" },
+				}),
+			});
+
+			const result = await waitForEngineEvents;
+			const frame =
+				result.framesPreview.find((value) =>
+					value.includes("event: engine_events"),
+				) ?? null;
+			expect(frame).toBeTruthy();
+
+			const dataLine =
+				frame?.split("\n").find((line) => line.startsWith("data: ")) ?? null;
+			expect(dataLine).toBeTruthy();
+
+			const payload = JSON.parse(String(dataLine).slice("data: ".length)) as {
+				event?: string;
+				eventId?: unknown;
+				stateVersion?: unknown;
+				payload?: {
+					engineEvents?: unknown[];
+				};
+			};
+
+			expect(payload.event).toBe("engine_events");
+			expect(typeof payload.eventId).toBe("number");
+			expect(typeof payload.stateVersion).toBe("number");
+			expect(Array.isArray(payload.payload?.engineEvents)).toBe(true);
+		} finally {
+			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"spectator stream replays missed canonical events when afterId is provided",
+	async () => {
+		const { matchId, agentA } = await setupMatch();
+
+		const stateRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/state`,
+		);
+		const stateJson = (await stateRes.json()) as {
+			state: { stateVersion: number } | null;
+		};
+		const expectedVersion = stateJson.state?.stateVersion ?? 0;
+
+		await SELF.fetch(`https://example.com/v1/matches/${matchId}/move`, {
+			method: "POST",
+			headers: {
+				...authHeader(agentA.key),
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				moveId: crypto.randomUUID(),
+				expectedVersion,
+				move: { action: "fortify", unitId: "A-1" },
+			}),
+		});
+
+		const firstPageRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/log?limit=1`,
+		);
+		const firstPage = (await firstPageRes.json()) as {
+			nextAfterId?: number | null;
+		};
+		const afterId = firstPage.nextAfterId ?? 0;
+
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/spectate?afterId=${afterId}`,
+		);
+
+		try {
+			const result = await readSseUntil(
+				stream.res,
+				(value) => value.includes("event: engine_events"),
+				SSE_TIMEOUT_MS,
+				SSE_MAX_BYTES,
+				{
+					throwOnTimeout: true,
+					label: "spectate afterId replay",
+					abortController: stream.controller,
+				},
+			);
+			const frame =
+				result.framesPreview.find((value) =>
+					value.includes("event: engine_events"),
+				) ?? null;
+			expect(frame).toBeTruthy();
+			const dataLine =
+				frame?.split("\n").find((line) => line.startsWith("data: ")) ?? null;
+			expect(dataLine).toBeTruthy();
+			const payload = JSON.parse(String(dataLine).slice("data: ".length)) as {
+				event?: string;
+				eventId?: unknown;
+			};
+			expect(payload.event).toBe("engine_events");
+			expect(typeof payload.eventId).toBe("number");
+			expect((payload.eventId as number) > afterId).toBe(true);
+		} finally {
+			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"agent stream replays the remaining terminal tail when resumed just before match_ended",
+	async () => {
+		const { matchId, agentA } = await setupMatch();
+
+		const finishRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/finish`,
+			{
+				method: "POST",
+				headers: {
+					...authHeader(agentA.key),
+					"content-type": "application/json",
+					"x-admin-key": env.ADMIN_KEY,
+				},
+				body: JSON.stringify({ reason: "forfeit" }),
+			},
+		);
+		expect(finishRes.ok).toBe(true);
+
+		const terminalPage = await pollUntil(
+			async () => {
+				const res = await SELF.fetch(
+					`https://example.com/v1/matches/${matchId}/log?limit=50`,
+				);
+				expect(res.ok).toBe(true);
+				return (await res.json()) as {
+					events: Array<{ event: string; eventId: number }>;
+				};
+			},
+			({ events }) => events.some((event) => event.event === "match_ended"),
+		);
+
+		const terminalEvent = terminalPage.events.find(
+			(event) => event.event === "match_ended",
+		);
+		expect(terminalEvent).toBeTruthy();
+		if (!terminalEvent) throw new Error("Missing terminal log event.");
+
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/stream?afterId=${Math.max(
+				0,
+				terminalEvent.eventId - 1,
+			)}`,
+			authHeader(agentA.key),
+		);
+		expect(stream.res.ok).toBe(true);
+
+		try {
+			const result = await readSseUntil(
+				stream.res,
+				(value) => value.includes("event: match_ended"),
+				SSE_TIMEOUT_MS,
+				SSE_MAX_BYTES,
+				{
+					throwOnTimeout: true,
+					label: "agent stream terminal tail replay",
+					abortController: stream.controller,
+				},
+			);
+			const matchEndedCount = (result.text.match(/event: match_ended/g) ?? [])
+				.length;
+			expect(matchEndedCount).toBe(1);
+			expect(result.text).toContain("event: match_ended");
+		} finally {
+			await stream.close();
+		}
+	},
+	TEST_TIMEOUT_MS,
+);
+
+it(
+	"spectate stream emits engine_events after successful move",
+	async () => {
+		const { matchId, agentA } = await setupMatch();
+
+		const stream = await openSse(
+			`https://example.com/v1/matches/${matchId}/spectate`,
 		);
 
 		try {
@@ -91,7 +298,11 @@ it(
 				(value) => value.includes("event: engine_events"),
 				SSE_TIMEOUT_MS,
 				SSE_MAX_BYTES,
-				{ throwOnTimeout: true, label: "engine_events" },
+				{
+					throwOnTimeout: true,
+					label: "engine_events",
+					abortController: stream.controller,
+				},
 			);
 
 			const stateRes = await SELF.fetch(
@@ -129,12 +340,14 @@ it(
 
 			const payload = JSON.parse(String(dataLine).slice("data: ".length)) as {
 				event?: string;
-				engineEvents?: unknown[];
+				payload?: {
+					engineEvents?: unknown[];
+				};
 			};
 
 			expect(payload.event).toBe("engine_events");
-			const engineEvents = Array.isArray(payload.engineEvents)
-				? payload.engineEvents
+			const engineEvents = Array.isArray(payload.payload?.engineEvents)
+				? payload.payload.engineEvents
 				: [];
 			expect(
 				engineEvents.some((event) => {
@@ -151,14 +364,14 @@ it(
 );
 
 it(
-	"events stream emits sanitized agent_thought for accepted internal moves",
+	"spectate stream emits sanitized agent_thought for accepted internal moves",
 	async () => {
 		const { matchId, agentA, agentB } = await setupMatch();
 		await bindRunnerAgent(agentA.id);
 		await bindRunnerAgent(agentB.id);
 
 		const stream = await openSse(
-			`https://example.com/v1/matches/${matchId}/events`,
+			`https://example.com/v1/matches/${matchId}/spectate`,
 		);
 
 		try {
@@ -167,7 +380,11 @@ it(
 				(value) => value.includes("event: agent_thought"),
 				SSE_TIMEOUT_MS,
 				SSE_MAX_BYTES,
-				{ throwOnTimeout: true, label: "agent_thought" },
+				{
+					throwOnTimeout: true,
+					label: "agent_thought",
+					abortController: stream.controller,
+				},
 			);
 
 			const stateRes = await SELF.fetch(
@@ -216,12 +433,16 @@ it(
 			expect(dataLine).toBeTruthy();
 			const payload = JSON.parse(String(dataLine).slice("data: ".length)) as {
 				event?: string;
-				text?: string;
-				player?: string;
+				payload?: {
+					text?: string;
+					player?: string;
+				};
 			};
 			expect(payload.event).toBe("agent_thought");
-			expect(payload.player === "A" || payload.player === "B").toBe(true);
-			expect(payload.text).toBe("Attack now. Keep pressure.");
+			expect(
+				payload.payload?.player === "A" || payload.payload?.player === "B",
+			).toBe(true);
+			expect(payload.payload?.text).toBe("Attack now. Keep pressure.");
 		} finally {
 			await stream.close();
 		}

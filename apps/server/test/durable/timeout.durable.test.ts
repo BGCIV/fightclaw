@@ -1,9 +1,14 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { authHeader, createAgent, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
+});
+
+afterEach(async () => {
+	await resetDb();
+	await new Promise((resolve) => setTimeout(resolve, 100));
 });
 
 const setupMatch = async () => {
@@ -130,7 +135,7 @@ it("forfeits opportunistically on state fetch after timeout", async () => {
 	expect(resultRow?.reason).toBe("turn_timeout");
 });
 
-it("disables turn timeout when TURN_TIMEOUT_SECONDS is 0", async () => {
+it("falls back to default timeout when TURN_TIMEOUT_SECONDS is 0", async () => {
 	const { matchId } = await setupMatch();
 
 	const match = (env as unknown as Record<string, unknown>).MATCH as
@@ -174,12 +179,12 @@ it("disables turn timeout when TURN_TIMEOUT_SECONDS is 0", async () => {
 	const stateJson = (await stateRes.json()) as {
 		state: { status?: string } | null;
 	};
-	expect(stateJson.state?.status).toBe("active");
+	expect(stateJson.state?.status).toBe("ended");
 
 	const resultRow = await env.DB.prepare(
 		"SELECT reason FROM match_results WHERE match_id = ?",
 	)
 		.bind(matchId)
 		.first<{ reason: string | null }>();
-	expect(resultRow).toBeNull();
+	expect(resultRow?.reason).toBe("turn_timeout");
 });

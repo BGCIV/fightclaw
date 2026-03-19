@@ -1,6 +1,15 @@
 import type { MatchState } from "@fightclaw/engine";
 import type { CSSProperties, ReactNode } from "react";
+import type {
+	BroadcastAgentCard,
+	BroadcastFeaturedDesk,
+	BroadcastResultSummary,
+	BroadcastTickerItem,
+} from "@/lib/spectator-desk";
+import { ActionTicker } from "./action-ticker";
+import { AgentBroadcastCard } from "./agent-broadcast-card";
 import { HexBoard, type HexBoardProps } from "./hex-board";
+import { ResultBand } from "./result-band";
 import { ThoughtPanel } from "./thought-panel";
 
 type SpectatorArenaProps = {
@@ -9,7 +18,22 @@ type SpectatorArenaProps = {
 	topBarRight?: ReactNode;
 	topBarCenterFallback?: string;
 	hudPassPulse?: boolean;
-} & SpectatorArenaMainProps;
+	emptyStateLabel?: string;
+	featuredDesk: BroadcastFeaturedDesk;
+	agentCards: {
+		A: BroadcastAgentCard;
+		B: BroadcastAgentCard;
+	};
+	tickerItems: BroadcastTickerItem[];
+	resultSummary: BroadcastResultSummary | null;
+} & Pick<
+	HexBoardProps,
+	| "effects"
+	| "unitAnimStates"
+	| "dyingUnitIds"
+	| "damageNumbers"
+	| "lungeTargets"
+>;
 
 export type SpectatorArenaMainProps = {
 	state: MatchState | null;
@@ -70,14 +94,14 @@ export function SpectatorArenaMain({
 export function SpectatorArena({
 	statusBadge,
 	state,
-	thoughtsA,
-	thoughtsB,
-	isThinkingA,
-	isThinkingB,
 	topBarRight,
 	topBarCenterFallback = "WAR OF ATTRITION",
 	emptyStateLabel = "Awaiting state stream...",
 	hudPassPulse = false,
+	featuredDesk,
+	agentCards,
+	tickerItems,
+	resultSummary,
 	effects,
 	unitAnimStates,
 	dyingUnitIds,
@@ -88,42 +112,63 @@ export function SpectatorArena({
 		<div className="spectator-landing">
 			<div className="spectator-top-bar">
 				<span className="status-badge">{statusBadge}</span>
-				<span className="top-bar-center">
-					{state ? (
-						<>
-							T{state.turn}{" "}
-							<span
-								className={
-									state.activePlayer === "A"
-										? "player-a-color"
-										: "player-b-color"
-								}
-							>
-								{state.activePlayer}
-							</span>{" "}
-							| AP {state.actionsRemaining}
-							{hudPassPulse ? " | PASS" : ""}
-						</>
-					) : (
-						topBarCenterFallback
-					)}
-				</span>
-				{topBarRight}
+				<div className="top-bar-center">
+					<div className="top-bar-primary">
+						{state ? (
+							<>
+								T{state.turn}{" "}
+								<span
+									className={
+										state.activePlayer === "A"
+											? "player-a-color"
+											: "player-b-color"
+									}
+								>
+									{state.activePlayer}
+								</span>{" "}
+								| AP {state.actionsRemaining}
+								{hudPassPulse ? " | PASS" : ""}
+							</>
+						) : (
+							topBarCenterFallback
+						)}
+					</div>
+					<div className="top-bar-secondary">
+						<span>{featuredDesk.label}</span>
+						<span>{featuredDesk.playersLabel}</span>
+					</div>
+				</div>
+				<div className="top-bar-right">{topBarRight}</div>
 			</div>
-
-			<SpectatorArenaMain
-				state={state}
-				thoughtsA={thoughtsA}
-				thoughtsB={thoughtsB}
-				isThinkingA={isThinkingA}
-				isThinkingB={isThinkingB}
-				emptyStateLabel={emptyStateLabel}
-				effects={effects}
-				unitAnimStates={unitAnimStates}
-				dyingUnitIds={dyingUnitIds}
-				damageNumbers={damageNumbers}
-				lungeTargets={lungeTargets}
-			/>
+			<div className="spectator-broadcast-shell">
+				{resultSummary ? (
+					<ResultBand summary={resultSummary} agentCards={agentCards} />
+				) : null}
+				<div className="spectator-broadcast-grid">
+					<AgentBroadcastCard card={agentCards.A} />
+					<div className="spectator-stage">
+						<div className="spectator-stage-board">
+							{state ? (
+								<HexBoard
+									state={state}
+									effects={effects}
+									unitAnimStates={unitAnimStates}
+									dyingUnitIds={dyingUnitIds}
+									damageNumbers={damageNumbers}
+									lungeTargets={lungeTargets}
+									activePlayer={state.activePlayer}
+								/>
+							) : (
+								<div className="spectator-board-empty">
+									<div className="muted">{emptyStateLabel}</div>
+								</div>
+							)}
+						</div>
+						<ActionTicker items={tickerItems} />
+					</div>
+					<AgentBroadcastCard card={agentCards.B} />
+				</div>
+			</div>
 		</div>
 	);
 }

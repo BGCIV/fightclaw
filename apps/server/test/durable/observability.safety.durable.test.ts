@@ -1,5 +1,5 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	authHeader,
 	bindRunnerAgent,
@@ -11,6 +11,11 @@ import {
 describe("observability safety", () => {
 	beforeEach(async () => {
 		await resetDb();
+	});
+
+	afterEach(async () => {
+		await resetDb();
+		await new Promise((r) => setTimeout(r, 100));
 	});
 
 	describe("Sentry disabled", () => {

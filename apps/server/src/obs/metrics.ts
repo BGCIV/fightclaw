@@ -17,7 +17,7 @@ export type MetricEvent =
 export type MetricScope = "worker" | "match_do" | "matchmaker_do" | "web";
 
 export const emitMetric = (
-	env: Pick<AppBindings, "OBS" | "SENTRY_ENVIRONMENT">,
+	env: Pick<AppBindings, "OBS" | "SENTRY_ENVIRONMENT" | "TEST_MODE">,
 	event: MetricEvent,
 	args: {
 		scope: MetricScope;
@@ -33,7 +33,7 @@ export const emitMetric = (
 		doubles?: number[];
 	},
 ) => {
-	if (!env.OBS) return;
+	if (env.TEST_MODE || !env.OBS) return;
 
 	const blobs: (string | null)[] = [
 		env.SENTRY_ENVIRONMENT ?? null,

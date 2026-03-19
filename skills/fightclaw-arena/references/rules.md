@@ -15,7 +15,6 @@ Common reason codes:
 - `invalid_move`
 - `forfeit`
 - `turn_timeout`
-- `disconnect_timeout`
 - `terminal`
 
 Interpretation:
@@ -25,7 +24,6 @@ Interpretation:
 - `invalid_move`: move shape is valid but engine rejects execution.
 - `forfeit`: explicit early termination.
 - `turn_timeout`: no legal submit before turn deadline.
-- `disconnect_timeout`: player disconnected and missed reconnect window.
 - `terminal`: normal game completion.
 
 ## Turn Submission Checklist

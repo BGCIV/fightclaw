@@ -2,12 +2,14 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	ArenaClient,
+	createRunnerSession,
 	type MoveProvider,
 	type MoveProviderContext,
 	type RunMatchResult,
 	runMatch,
 } from "@fightclaw/agent-client";
 import type { Move } from "@fightclaw/engine";
+import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
 type ArgMap = Record<string, string | boolean>;
 
@@ -147,23 +149,9 @@ const usage = () => {
 			"Fightclaw OpenClaw Runner",
 			"",
 			"Commands:",
-			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> --strategyA <text> --strategyB <text> [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--moveTimeoutMs 4000]",
+			"  duel --baseUrl <url> --adminKey <key> --runnerKey <key> --runnerId <id> [--strategyA <text> | --strategyPresetA <name>] [--strategyB <text> | --strategyPresetB <name>] [--nameA a] [--nameB b] [--gatewayCmd '<cmd>'] [--gatewayCmdA '<cmd>'] [--gatewayCmdB '<cmd>'] [--moveTimeoutMs 4000]",
 		].join("\n"),
 	);
-};
-
-const waitForMatchId = async (client: ArenaClient, initialMatchId: string) => {
-	let matchId = initialMatchId;
-	for (let i = 0; i < 120; i += 1) {
-		const waited = await client.waitForMatch(5);
-		for (const event of waited.events) {
-			if (event.event === "match_found") {
-				matchId = event.matchId;
-				return matchId;
-			}
-		}
-	}
-	throw new Error("Timed out waiting for match assignment.");
 };
 
 const bindRunnerAgent = async (
@@ -189,35 +177,11 @@ const bindRunnerAgent = async (
 	}
 };
 
-const setStrategyPrompt = async (
-	baseUrl: string,
-	apiKey: string,
-	privateStrategy: string,
-) => {
-	const res = await fetch(`${baseUrl}/v1/agents/me/strategy/hex_conquest`, {
-		method: "POST",
-		headers: {
-			accept: "application/json",
-			"content-type": "application/json",
-			authorization: `Bearer ${apiKey}`,
-			"x-request-id": randomUUID(),
-		},
-		body: JSON.stringify({
-			privateStrategy,
-			activate: true,
-		}),
-	});
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Failed setting strategy prompt (${res.status}): ${body}`);
-	}
-	return (await res.json()) as unknown;
-};
-
 const invokeGateway = async (
 	command: string,
 	input: {
 		agentId: string;
+		agentName: string;
 		matchId: string;
 		stateVersion: number;
 		state: unknown;
@@ -281,6 +245,7 @@ const fallbackMove: Move = {
 const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
+	agentName: string,
 	gatewayCmd?: string,
 ): MoveProvider => ({
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
@@ -288,6 +253,7 @@ const createMoveProvider = (
 		if (gatewayCmd) {
 			const gateway = await invokeGateway(gatewayCmd, {
 				agentId,
+				agentName,
 				matchId,
 				stateVersion,
 				state,
@@ -326,9 +292,19 @@ const runDuel = async (args: ArgMap) => {
 			: undefined);
 	const nameA = asString(args.nameA) ?? `openclaw-a-${Date.now()}`;
 	const nameB = asString(args.nameB) ?? `openclaw-b-${Date.now()}`;
-	const strategyA = asString(args.strategyA);
-	const strategyB = asString(args.strategyB);
+	const selectionA = resolveStrategySelection({
+		side: "A",
+		rawStrategy: asString(args.strategyA),
+		presetName: asString(args.strategyPresetA),
+	});
+	const selectionB = resolveStrategySelection({
+		side: "B",
+		rawStrategy: asString(args.strategyB),
+		presetName: asString(args.strategyPresetB),
+	});
 	const gatewayCmd = asString(args.gatewayCmd);
+	const gatewayCmdA = asString(args.gatewayCmdA) ?? gatewayCmd;
+	const gatewayCmdB = asString(args.gatewayCmdB) ?? gatewayCmd;
 	const moveTimeoutMs = asInt(args.moveTimeoutMs, 4_000);
 
 	if (!adminKey) throw new Error("--adminKey or ADMIN_KEY is required.");
@@ -336,9 +312,6 @@ const runDuel = async (args: ArgMap) => {
 		throw new Error("--runnerKey or INTERNAL_RUNNER_KEY is required.");
 	if (!runnerId)
 		throw new Error("--runnerId or INTERNAL_RUNNER_ID is required.");
-	if (!strategyA || !strategyB) {
-		throw new Error("--strategyA and --strategyB are required.");
-	}
 
 	const bootstrap = new ArenaClient({
 		baseUrl,
@@ -353,33 +326,16 @@ const runDuel = async (args: ArgMap) => {
 	await bindRunnerAgent(baseUrl, runnerKey, runnerId, registeredA.agentId);
 	await bindRunnerAgent(baseUrl, runnerKey, runnerId, registeredB.agentId);
 
-	await setStrategyPrompt(baseUrl, registeredA.apiKey, strategyA);
-	await setStrategyPrompt(baseUrl, registeredB.apiKey, strategyB);
-
-	const queueClientA = new ArenaClient({
+	await publishAgentStrategy({
 		baseUrl,
-		agentApiKey: registeredA.apiKey,
-		requestIdProvider: () => randomUUID(),
+		apiKey: registeredA.apiKey,
+		selection: selectionA,
 	});
-	const queueClientB = new ArenaClient({
+	await publishAgentStrategy({
 		baseUrl,
-		agentApiKey: registeredB.apiKey,
-		requestIdProvider: () => randomUUID(),
+		apiKey: registeredB.apiKey,
+		selection: selectionB,
 	});
-
-	const joinedA = await queueClientA.queueJoin();
-	const joinedB = await queueClientB.queueJoin();
-	const matchA =
-		joinedA.status === "ready"
-			? joinedA.matchId
-			: await waitForMatchId(queueClientA, joinedA.matchId);
-	const matchB =
-		joinedB.status === "ready"
-			? joinedB.matchId
-			: await waitForMatchId(queueClientB, joinedB.matchId);
-	if (matchA !== matchB) {
-		throw new Error(`Agent queues diverged: ${matchA} vs ${matchB}`);
-	}
 
 	const runnerClientA = new InternalRunnerClient(
 		baseUrl,
@@ -396,37 +352,54 @@ const runDuel = async (args: ArgMap) => {
 		registeredB.agentId,
 	);
 
+	const sessionA = createRunnerSession(runnerClientA, {
+		queueWaitTimeoutSeconds: 5,
+	});
+	const sessionB = createRunnerSession(runnerClientB, {
+		queueWaitTimeoutSeconds: 5,
+	});
+
+	const [startedA, startedB] = await Promise.all([
+		sessionA.start(),
+		sessionB.start(),
+	]);
+	if (startedA.matchId !== startedB.matchId) {
+		throw new Error(
+			`Agent queues diverged: ${startedA.matchId} vs ${startedB.matchId}`,
+		);
+	}
+
 	const moveProviderA = createMoveProvider(
 		runnerClientA,
 		registeredA.agentId,
-		gatewayCmd,
+		nameA,
+		gatewayCmdA,
 	);
 	const moveProviderB = createMoveProvider(
 		runnerClientB,
 		registeredB.agentId,
-		gatewayCmd,
+		nameB,
+		gatewayCmdB,
 	);
 
 	const [resultA, resultB]: [RunMatchResult, RunMatchResult] =
 		await Promise.all([
 			runMatch(runnerClientA, {
 				moveProvider: moveProviderA,
-				preferredTransport: "ws",
-				allowTransportFallback: true,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				session: sessionA,
 			}),
 			runMatch(runnerClientB, {
 				moveProvider: moveProviderB,
-				preferredTransport: "ws",
-				allowTransportFallback: true,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				session: sessionB,
 			}),
 		]);
 
 	console.log(
 		JSON.stringify(
 			{
-				matchId: matchA,
+				matchId: startedA.matchId,
 				runnerId,
 				agents: [
 					{ id: registeredA.agentId, name: nameA },

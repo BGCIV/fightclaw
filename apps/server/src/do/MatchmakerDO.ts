@@ -1,4 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+	FEATURED_STREAM_VERSION,
+	type FeaturedSnapshot,
+	type FeaturedStreamEnvelope,
+} from "@fightclaw/protocol";
 import type { AppBindings } from "../appTypes";
 import { ELO_START } from "../constants/rating";
 import { RUNNER_ID_RE } from "../constants/runner";
@@ -10,9 +15,6 @@ import {
 	type NoEventsEvent,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
-import { type AgentWsOutbound, agentWsInboundSchema } from "../protocol/ws";
-import { parseBearerToken } from "../utils/auth";
-import { sha256Hex } from "../utils/crypto";
 import { doFetchWithRetry } from "../utils/durable";
 import { isRecord } from "../utils/typeGuards";
 
@@ -28,7 +30,7 @@ const ACTIVE_MATCH_PREFIX = "activeMatch:";
 const RECENT_PREFIX = "recent:";
 const QUEUE_TTL_MS = 10 * 60 * 1000;
 const FEATURED_STREAM_INTERVAL_MS = 1000;
-const WS_QUEUE_LEAVE_GRACE_MS = 15_000;
+const TEST_STREAM_MAX_LIFETIME_MS = 2000;
 
 type MatchmakerEnv = {
 	DB: D1Database;
@@ -60,28 +62,14 @@ type ActiveMatchEntry = {
 	setAtMs: number;
 };
 type MatchmakerEvent = MatchFoundEvent | NoEventsEvent;
-type FeaturedStatus = "active" | "ended";
-type FeaturedSnapshot = {
-	matchId: string | null;
-	status: FeaturedStatus | null;
-	players: string[] | null;
-};
 type FeaturedCache = FeaturedSnapshot & { checkedAt: number };
+type StoredMatchStatus = "active" | "ended";
 
 export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	private waiters = new Map<string, Set<(event: MatchmakerEvent) => void>>();
-	private sessions = new Map<string, Set<WebSocket>>();
-	private pendingQueueLeaveTimers = new Map<
-		string,
-		ReturnType<typeof setTimeout>
-	>();
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-
-		if (request.method === "GET" && url.pathname === "/ws") {
-			return this.handleAgentWs(request);
-		}
 
 		if (request.method === "POST" && url.pathname === "/__test__/reset") {
 			if (!this.env.TEST_MODE) {
@@ -91,11 +79,6 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			if (!auth.ok) return auth.response;
 			await this.ctx.storage.deleteAll();
 			this.waiters.clear();
-			this.sessions.clear();
-			for (const timeout of this.pendingQueueLeaveTimers.values()) {
-				clearTimeout(timeout);
-			}
-			this.pendingQueueLeaveTimers.clear();
 			return Response.json({ ok: true });
 		}
 
@@ -240,230 +223,32 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		}
 	}
 
-	private sendWs(socket: WebSocket, payload: AgentWsOutbound): boolean {
-		try {
-			socket.send(JSON.stringify(payload));
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	private sendToAgentSession(agentId: string, payload: AgentWsOutbound) {
-		const sockets = this.sessions.get(agentId);
-		if (!sockets || sockets.size === 0) return;
-		for (const socket of sockets) {
-			const ok = this.sendWs(socket, payload);
-			if (!ok) sockets.delete(socket);
-		}
-		if (sockets.size === 0) this.sessions.delete(agentId);
-	}
-
-	private async resolveAgentId(request: Request): Promise<string | null> {
-		const direct = request.headers.get("x-agent-id");
-		if (direct) return direct;
-
-		const token = parseBearerToken(
-			request.headers.get("authorization") ?? undefined,
-		);
-		if (!token || !this.env.API_KEY_PEPPER) return null;
-		const hash = await sha256Hex(`${this.env.API_KEY_PEPPER}${token}`);
-		const row = await this.env.DB.prepare(
-			[
-				"SELECT a.id as agent_id, a.verified_at as verified_at",
-				"FROM api_keys k",
-				"JOIN agents a ON a.id = k.agent_id",
-				"WHERE k.key_hash = ? AND k.revoked_at IS NULL",
-				"LIMIT 1",
-			].join(" "),
-		)
-			.bind(hash)
-			.first<{ agent_id: string | null; verified_at: string | null }>();
-		if (!row?.agent_id || !row.verified_at) return null;
-		return row.agent_id;
-	}
-
-	private async queueStatusForAgent(
-		agentId: string,
-	): Promise<QueueStatusResponse> {
-		const response = await this.handleQueueStatus(
-			new Request("https://do/queue/status", {
-				headers: { "x-agent-id": agentId },
-			}),
-		);
-		return (await response.json()) as QueueStatusResponse;
-	}
-
-	private async handleAgentWs(request: Request): Promise<Response> {
-		if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-			return new Response("Expected websocket upgrade.", { status: 426 });
-		}
-		const socket = (request as Request & { webSocket?: WebSocket }).webSocket;
-		if (!socket) return new Response("Missing websocket.", { status: 400 });
-		const agentId = await this.resolveAgentId(request);
-		if (!agentId) return new Response("Agent id is required.", { status: 400 });
-
-		socket.accept();
-		this.clearPendingQueueLeave(agentId);
-		const existing = this.sessions.get(agentId) ?? new Set<WebSocket>();
-		existing.add(socket);
-		this.sessions.set(agentId, existing);
-
-		this.sendToAgentSession(agentId, { type: "hello_ok", agentId });
-		const status = await this.queueStatusForAgent(agentId);
-		if (status.status === "waiting") {
-			this.sendToAgentSession(agentId, {
-				type: "queue_status",
-				status: "queued",
-				matchId: status.matchId,
-			});
-		} else if (status.status === "ready") {
-			this.sendToAgentSession(agentId, {
-				type: "queue_status",
-				status: "matched",
-				matchId: status.matchId,
-				opponentAgentId: status.opponentId,
-			});
-		} else {
-			this.sendToAgentSession(agentId, {
-				type: "queue_status",
-				status: "idle",
-			});
-		}
-
-		socket.addEventListener("message", (event: MessageEvent) => {
-			const text =
-				typeof event.data === "string"
-					? event.data
-					: event.data instanceof ArrayBuffer
-						? new TextDecoder().decode(event.data)
-						: "";
-			let parsed: unknown = null;
-			try {
-				parsed = JSON.parse(text);
-			} catch {
-				parsed = null;
-			}
-
-			const envelope = agentWsInboundSchema.safeParse(parsed);
-			if (!envelope.success) {
-				this.sendWs(socket, { type: "error", error: "Invalid WS message." });
-				return;
-			}
-
-			if (envelope.data.type === "ping") {
-				this.sendWs(socket, { type: "hello_ok", agentId });
-				return;
-			}
-
-			if (envelope.data.type === "queue_leave") {
-				void this.handleQueueLeave(
-					new Request("https://do/queue/leave", {
-						method: "DELETE",
-						headers: { "x-agent-id": agentId },
-					}),
-				).then(async () => {
-					const latest = await this.queueStatusForAgent(agentId);
-					if (latest.status === "idle") {
-						this.sendToAgentSession(agentId, {
-							type: "queue_status",
-							status: "idle",
-						});
-					}
-				});
-				return;
-			}
-
-			if (envelope.data.type === "queue_join") {
-				this.clearPendingQueueLeave(agentId);
-				void this.handleQueueJoin(
-					new Request("https://do/queue/join", {
-						method: "POST",
-						headers: {
-							"x-agent-id": agentId,
-							"content-type": "application/json",
-						},
-						body: JSON.stringify({ mode: envelope.data.mode }),
-					}),
-				).then(async (response) => {
-					if (!response.ok) {
-						const body = (await response.json().catch(() => null)) as unknown;
-						const error =
-							isRecord(body) && typeof body.error === "string"
-								? body.error
-								: "queue_join_failed";
-						this.sendToAgentSession(agentId, {
-							type: "error",
-							error,
-						});
-						return;
-					}
-					const body = (await response.json()) as QueueJoinResponse;
-					if (body.status === "waiting") {
-						this.sendToAgentSession(agentId, {
-							type: "queue_status",
-							status: "queued",
-							matchId: body.matchId,
-						});
-						return;
-					}
-					if (body.opponentId) {
-						this.sendToAgentSession(agentId, {
-							type: "queue_status",
-							status: "matched",
-							matchId: body.matchId,
-							opponentAgentId: body.opponentId,
-						});
-						this.sendToAgentSession(agentId, {
-							type: "match_found",
-							matchId: body.matchId,
-							opponentAgentId: body.opponentId,
-							wsPath: `/v1/matches/${body.matchId}/ws`,
-						});
-					}
-				});
-				return;
-			}
-
-			this.sendWs(socket, {
-				type: "error",
-				error: "Use /v1/matches/:id/ws for move_submit.",
-			});
-		});
-
-		const cleanup = () => {
-			const sockets = this.sessions.get(agentId);
-			if (!sockets) return;
-			sockets.delete(socket);
-			if (sockets.size === 0) {
-				this.sessions.delete(agentId);
-				this.schedulePendingQueueLeave(agentId);
-			}
-		};
-		socket.addEventListener("close", cleanup);
-		socket.addEventListener("error", cleanup);
-
-		return new Response(null, { status: 101, webSocket: socket });
-	}
-
 	private async handleFeaturedStream(request: Request): Promise<Response> {
 		const encoder = new TextEncoder();
+		let closeStream: (() => void) | null = null;
 		const stream = new ReadableStream<Uint8Array>({
 			start: async (controller) => {
 				let closed = false;
-				let lastFeaturedId: string | null = null;
-				let lastStateVersion: number | null = null;
-				let endedAnnouncedFor: string | null = null;
+				let lastSnapshotJson: string | null = null;
+				let testTimeout: ReturnType<typeof setTimeout> | null = null;
 
 				const close = () => {
 					if (closed) return;
 					closed = true;
+					if (testTimeout !== null) {
+						clearTimeout(testTimeout);
+						testTimeout = null;
+					}
 					try {
 						controller.close();
 					} catch {
 						// noop
 					}
 				};
+				closeStream = close;
+				if (this.env.TEST_MODE) {
+					testTimeout = setTimeout(close, TEST_STREAM_MAX_LIFETIME_MS);
+				}
 
 				if (request.signal.aborted) {
 					close();
@@ -474,80 +259,18 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 				while (!closed) {
 					try {
 						const snapshot = await this.resolveFeatured({ verifyDo: true });
-						if (snapshot.matchId !== lastFeaturedId) {
-							lastFeaturedId = snapshot.matchId;
-							lastStateVersion = null;
-							endedAnnouncedFor = null;
+						const nextSnapshotJson = JSON.stringify(snapshot);
+						if (nextSnapshotJson !== lastSnapshotJson) {
+							lastSnapshotJson = nextSnapshotJson;
+							const payload = {
+								streamVersion: FEATURED_STREAM_VERSION,
+								ts: new Date().toISOString(),
+								event: "featured_snapshot",
+								payload: snapshot,
+							} satisfies FeaturedStreamEnvelope;
 							controller.enqueue(
-								encoder.encode(
-									formatSse("featured_changed", {
-										matchId: snapshot.matchId,
-									}),
-								),
+								encoder.encode(formatSse("featured_snapshot", payload)),
 							);
-						}
-
-						if (snapshot.matchId) {
-							const id = this.env.MATCH.idFromName(snapshot.matchId);
-							const stub = this.env.MATCH.get(id);
-							const resp = await doFetchWithRetry(stub, "https://do/state");
-							if (resp.ok) {
-								const payload = (await resp.json()) as {
-									state?: {
-										stateVersion?: number;
-										status?: string;
-										game?: unknown;
-										winnerAgentId?: string | null;
-										loserAgentId?: string | null;
-										endReason?: string;
-									} | null;
-								};
-								const state = payload.state;
-								if (
-									state &&
-									typeof state.stateVersion === "number" &&
-									state.stateVersion !== lastStateVersion
-								) {
-									lastStateVersion = state.stateVersion;
-									controller.enqueue(
-										encoder.encode(
-											formatSse("state", {
-												eventVersion: 1,
-												event: "state",
-												matchId: snapshot.matchId,
-												state: state.game ?? null,
-											}),
-										),
-									);
-								}
-
-								if (
-									state?.status === "ended" &&
-									endedAnnouncedFor !== snapshot.matchId
-								) {
-									endedAnnouncedFor = snapshot.matchId;
-									const endedPayload = {
-										eventVersion: 1,
-										event: "match_ended",
-										matchId: snapshot.matchId,
-										winnerAgentId: state.winnerAgentId ?? null,
-										loserAgentId: state.loserAgentId ?? null,
-										reason: state.endReason ?? "ended",
-										reasonCode: state.endReason ?? "ended",
-									};
-									controller.enqueue(
-										encoder.encode(formatSse("match_ended", endedPayload)),
-									);
-									controller.enqueue(
-										encoder.encode(
-											formatSse("game_ended", {
-												...endedPayload,
-												event: "game_ended",
-											}),
-										),
-									);
-								}
-							}
 						}
 					} catch {
 						// Keep stream alive on transient DO/read errors.
@@ -559,7 +282,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 				}
 			},
 			cancel: () => {
-				// noop
+				closeStream?.();
 			},
 		});
 
@@ -751,8 +474,6 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 					{ status: 403 },
 				);
 			}
-			this.clearPendingQueueLeave(agentId);
-
 			const activeMatch = await this.resolveActiveMatch(agentId);
 			if (activeMatch) {
 				const response: QueueJoinResponse = {
@@ -884,11 +605,21 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 				await this.enqueueEvent(
 					opponent.agentId,
-					buildMatchFoundEvent(matchId, agentId),
+					buildMatchFoundEvent({
+						eventId: nowMs,
+						ts: new Date(nowMs).toISOString(),
+						matchId,
+						opponentId: agentId,
+					}),
 				);
 				await this.enqueueEvent(
 					agentId,
-					buildMatchFoundEvent(matchId, opponent.agentId),
+					buildMatchFoundEvent({
+						eventId: nowMs,
+						ts: new Date(nowMs).toISOString(),
+						matchId,
+						opponentId: opponent.agentId,
+					}),
 				);
 
 				const response: QueueJoinResponse = {
@@ -929,8 +660,6 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 					{ status: 400 },
 				);
 			}
-			this.clearPendingQueueLeave(agentId);
-
 			const activeMatch = await this.resolveActiveMatch(agentId);
 			if (activeMatch) {
 				const response: QueueStatusResponse = {
@@ -1166,7 +895,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 		let matchId =
 			(await this.ctx.storage.get<string>(FEATURED_MATCH_KEY)) ?? null;
-		let status: FeaturedStatus | null = null;
+		let status: StoredMatchStatus | null = null;
 
 		if (matchId) {
 			status = await this.getMatchStatus(matchId);
@@ -1197,7 +926,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 	private async buildFeaturedSnapshot(
 		matchId: string | null,
-		status: FeaturedStatus | null,
+		status: StoredMatchStatus | null,
 	): Promise<FeaturedSnapshot> {
 		if (!matchId || status !== "active") {
 			return { matchId: null, status: null, players: null };
@@ -1213,7 +942,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 	private async pickNextFeatured(
 		verifyDo: boolean,
-	): Promise<{ matchId: string | null; status: FeaturedStatus | null }> {
+	): Promise<{ matchId: string | null; status: StoredMatchStatus | null }> {
 		const queue =
 			(await this.ctx.storage.get<string[]>(FEATURED_QUEUE_KEY)) ?? [];
 		let selected: string | null = null;
@@ -1258,7 +987,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 
 	private async getMatchStatus(
 		matchId: string,
-	): Promise<FeaturedStatus | null> {
+	): Promise<StoredMatchStatus | null> {
 		const row = await this.env.DB.prepare(
 			"SELECT status FROM matches WHERE id = ?",
 		)
@@ -1294,23 +1023,6 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	}
 
 	private async enqueueEvent(agentId: string, event: MatchmakerEvent) {
-		if (event.event === "match_found") {
-			this.sendToAgentSession(agentId, {
-				type: "queue_status",
-				status: "matched",
-				matchId: event.matchId,
-				opponentAgentId: event.opponentId,
-			});
-			if (typeof event.opponentId === "string") {
-				this.sendToAgentSession(agentId, {
-					type: "match_found",
-					matchId: event.matchId,
-					opponentAgentId: event.opponentId,
-					wsPath: `/v1/matches/${event.matchId}/ws`,
-				});
-			}
-		}
-
 		const waiters = this.waiters.get(agentId);
 		if (waiters && waiters.size > 0) {
 			const [first] = waiters;
@@ -1349,7 +1061,13 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			let resolver: (event: MatchmakerEvent) => void;
 			const timer = setTimeout(() => {
 				this.removeWaiter(agentId, resolver);
-				resolve(buildNoEventsEvent());
+				resolve(
+					buildNoEventsEvent({
+						eventId: Date.now(),
+						ts: new Date().toISOString(),
+						matchId: null,
+					}),
+				);
 			}, timeoutMs);
 
 			resolver = (event: MatchmakerEvent) => {
@@ -1374,32 +1092,5 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 		if (waiters.size === 0) {
 			this.waiters.delete(agentId);
 		}
-	}
-
-	private clearPendingQueueLeave(agentId: string): void {
-		const timeout = this.pendingQueueLeaveTimers.get(agentId);
-		if (!timeout) return;
-		clearTimeout(timeout);
-		this.pendingQueueLeaveTimers.delete(agentId);
-	}
-
-	private schedulePendingQueueLeave(agentId: string): void {
-		this.clearPendingQueueLeave(agentId);
-		const timeout = setTimeout(() => {
-			void this.withQueueMutex(async () => {
-				this.pendingQueueLeaveTimers.delete(agentId);
-				const sockets = this.sessions.get(agentId);
-				if (sockets && sockets.size > 0) {
-					return;
-				}
-				await this.handleQueueLeave(
-					new Request("https://do/queue/leave", {
-						method: "DELETE",
-						headers: { "x-agent-id": agentId },
-					}),
-				);
-			});
-		}, WS_QUEUE_LEAVE_GRACE_MS);
-		this.pendingQueueLeaveTimers.set(agentId, timeout);
 	}
 }

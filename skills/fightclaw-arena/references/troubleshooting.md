@@ -26,9 +26,9 @@
 
 ## Gameplay Transport
 
-- Symptom: WebSocket closes or fails upgrade.
+- Symptom: SSE stream disconnects or stalls.
   - Cause: Transient network/server transport issue.
-  - Action: Switch to `/v1/matches/:id/stream` fallback and continue.
+  - Action: Reconnect to `/v1/matches/:id/stream` and resume from the latest cursor or state version you have applied.
 
 - Symptom: Duplicate or conflicting turn submits.
   - Cause: Stale turn signals or repeated retries.

@@ -22,29 +22,9 @@ import { internalPromptsRoutes, promptsRoutes } from "./routes/prompts";
 import { queueRoutes } from "./routes/queue";
 import { systemRoutes } from "./routes/system";
 import { sha256Hex } from "./utils/crypto";
-import { doFetchWithRetry } from "./utils/durable";
-import {
-	badRequest,
-	conflict,
-	forbidden,
-	notFound,
-	serviceUnavailable,
-	tooManyRequests,
-	unauthorized,
-	upgradeRequired,
-} from "./utils/httpErrors";
+import { badRequest, forbidden, tooManyRequests } from "./utils/httpErrors";
 
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>();
-
-const getMatchmakerStub = (env: AppBindings) => {
-	const id = env.MATCHMAKER.idFromName("global");
-	return env.MATCHMAKER.get(id);
-};
-
-const getMatchStub = (env: AppBindings, matchId: string) => {
-	const id = env.MATCH.idFromName(matchId);
-	return env.MATCH.get(id);
-};
 
 // Shared contracts (PR0): requestId + structured logs.
 app.use("/*", requestContext);
@@ -167,7 +147,6 @@ app.use("/v1/matches/*", async (c, next) => {
 		c.req.method === "GET" &&
 		(path.endsWith("/state") ||
 			path.endsWith("/spectate") ||
-			path.endsWith("/events") ||
 			path.endsWith("/log"))
 	) {
 		return next();
@@ -199,93 +178,6 @@ app.use("/v1/queue/*", async (c, next) => {
 	});
 });
 
-app.get("/ws", async (c) => {
-	const authResponse = await requireAgentAuth(c, async () => {});
-	if (authResponse) return authResponse;
-	const verifiedResponse = await requireVerifiedAgent(c, async () => {});
-	if (verifiedResponse) return verifiedResponse;
-
-	if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-		return upgradeRequired(c, "Expected websocket upgrade.");
-	}
-	const agentId = c.get("agentId");
-	if (!agentId) return unauthorized(c);
-
-	const stub = getMatchmakerStub(c.env);
-	const upstream = await stub.fetch(c.req.raw);
-	if (upstream.status !== 101) {
-		return serviceUnavailable(
-			c,
-			`WebSocket upgrade failed (${upstream.status}).`,
-		);
-	}
-
-	return upstream;
-});
-
-app.get("/v1/matches/:id/ws", async (c) => {
-	const verifiedResponse = await requireVerifiedAgent(c, async () => {});
-	if (verifiedResponse) return verifiedResponse;
-
-	if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
-		return upgradeRequired(c, "Expected websocket upgrade.");
-	}
-
-	const agentId = c.get("agentId");
-	const matchId = c.req.param("id");
-	if (!agentId || !matchId) return unauthorized(c);
-
-	const matchmakerStub = getMatchmakerStub(c.env);
-	const queueStatusResp = await doFetchWithRetry(
-		matchmakerStub,
-		"https://do/queue/status",
-		{
-			headers: {
-				"x-agent-id": agentId,
-				"x-request-id": c.get("requestId"),
-			},
-		},
-	);
-	if (!queueStatusResp.ok) return forbidden(c);
-	const queueStatus = (await queueStatusResp.json()) as {
-		status?: string;
-		matchId?: string;
-	};
-	if (queueStatus.status !== "ready" || queueStatus.matchId !== matchId) {
-		return conflict(c, "Agent is not currently matched to this match.", {
-			code: "agent_not_matched",
-		});
-	}
-
-	const matchStub = getMatchStub(c.env, matchId);
-	const stateResp = await doFetchWithRetry(matchStub, "https://do/state", {
-		headers: {
-			"x-match-id": matchId,
-			"x-request-id": c.get("requestId"),
-		},
-	});
-	if (!stateResp.ok) return notFound(c, "Match unavailable.");
-	const statePayload = (await stateResp.json()) as {
-		state?: { players?: string[] } | null;
-	};
-	const players = Array.isArray(statePayload.state?.players)
-		? statePayload.state?.players
-		: [];
-	if (!players.includes(agentId)) {
-		return forbidden(c);
-	}
-
-	const upstream = await matchStub.fetch(c.req.raw);
-	if (upstream.status !== 101) {
-		return serviceUnavailable(
-			c,
-			`WebSocket upgrade failed (${upstream.status}).`,
-		);
-	}
-
-	return upstream;
-});
-
 // Workstream A routes.
 app.route("/v1/auth", authRoutes);
 app.route("/v1/admin", adminRoutes);
@@ -310,4 +202,13 @@ export const MatchmakerDO = Sentry.instrumentDurableObjectWithSentry(
 	MatchmakerDOBase as any,
 );
 
-export default Sentry.withSentry(sentryOptions, app);
+const sentryApp = Sentry.withSentry(sentryOptions, app);
+
+export default {
+	fetch(request: Request, env: AppBindings, executionCtx: ExecutionContext) {
+		if (env.TEST_MODE) {
+			return app.fetch(request, env, executionCtx);
+		}
+		return sentryApp.fetch(request, env, executionCtx);
+	},
+};

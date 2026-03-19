@@ -101,3 +101,46 @@ it("rejects internal move for unbound runner-agent pair", async () => {
 	const json = (await res.json()) as { code?: string };
 	expect(json.code).toBe("runner_agent_not_bound");
 });
+
+it("rejects oversized publicThought on internal move payload", async () => {
+	const { matchId, agentA, agentB } = await setupMatch();
+	await bindRunnerAgent(agentA.id);
+	await bindRunnerAgent(agentB.id);
+
+	const stateRes = await SELF.fetch(
+		`https://example.com/v1/matches/${matchId}/state`,
+	);
+	const payload = (await stateRes.json()) as {
+		state: { stateVersion: number; game: unknown } | null;
+	};
+	const state = payload.state;
+	expect(state).toBeTruthy();
+
+	const game = (state?.game ?? null) as Parameters<typeof listLegalMoves>[0];
+	const activeId = currentPlayer(game);
+	const moves = listLegalMoves(game);
+	const move = moves[0];
+	const actingId = activeId === agentA.id ? agentA.id : agentB.id;
+
+	const res = await SELF.fetch(
+		`https://example.com/v1/internal/matches/${matchId}/move`,
+		{
+			method: "POST",
+			headers: {
+				...runnerHeaders(),
+				"content-type": "application/json",
+				"x-agent-id": actingId,
+			},
+			body: JSON.stringify({
+				moveId: crypto.randomUUID(),
+				expectedVersion: state?.stateVersion ?? 0,
+				move,
+				publicThought: "a".repeat(281),
+			}),
+		},
+	);
+
+	expect(res.status).toBe(400);
+	const json = (await res.json()) as { error?: string };
+	expect(json.error).toContain("Invalid move payload");
+});

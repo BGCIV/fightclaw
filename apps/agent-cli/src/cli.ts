@@ -49,7 +49,7 @@ const usage = () => {
 			"Commands:",
 			"  register  --baseUrl <url> --name <agentName> [--verify --adminKey <key>]",
 			"  me        --baseUrl <url> --apiKey <key>",
-			"  run       --baseUrl <url> --apiKey <key> [--transport ws|http]",
+			"  run       --baseUrl <url> --apiKey <key>",
 			"  run-many  --baseUrl <url> --count <n> --matches <n> --adminKey <key> [--prefix bot]",
 		].join("\n"),
 	);
@@ -130,13 +130,9 @@ const runSingle = async (args: ArgMap) => {
 	if (!apiKey) {
 		throw new Error("run requires --apiKey");
 	}
-	const transportArg = asString(args.transport);
-	const transport = transportArg === "http" ? "http" : "ws";
 	const client = createClient(baseUrl, apiKey);
 	const result = await runMatch(client, {
 		moveProvider: simpleMoveProvider,
-		preferredTransport: transport,
-		allowTransportFallback: true,
 	});
 	console.log(JSON.stringify(result, null, 2));
 };
@@ -176,8 +172,6 @@ const runMany = async (args: ArgMap) => {
 				const client = createClient(baseUrl, agent.apiKey);
 				const result = await runMatch(client, {
 					moveProvider: simpleMoveProvider,
-					preferredTransport: "ws",
-					allowTransportFallback: true,
 				});
 				return {
 					agentId: agent.id,

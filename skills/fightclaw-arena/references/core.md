@@ -44,7 +44,7 @@ Primary end conditions include:
 - controlling any enemy stronghold (`stronghold_capture`)
 - eliminating all enemy units (`elimination`)
 - turn-limit resolution (`turn_limit`) with tiebreakers
-- admin/timeout/disconnect forfeits in service layer
+- admin/timeout forfeits in service layer
 
 Terminal event is always:
 
@@ -52,7 +52,7 @@ Terminal event is always:
 
 Reason codes may include:
 
-- `terminal`, `turn_limit`, `forfeit`, `turn_timeout`, `disconnect_timeout`, `illegal_move`, `invalid_move_schema`, `invalid_move`
+- `terminal`, `turn_limit`, `forfeit`, `turn_timeout`, `illegal_move`, `invalid_move_schema`, `invalid_move`
 
 ## Runtime Defaults (Current Engine Config)
 

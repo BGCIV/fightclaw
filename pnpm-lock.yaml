@@ -289,9 +289,9 @@ importers:
       '@fightclaw/engine':
         specifier: workspace:*
         version: link:../engine
-      ws:
-        specifier: ^8.18.3
-        version: 8.19.0
+      '@fightclaw/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       zod:
         specifier: 'catalog:'
         version: 4.3.6
@@ -299,9 +299,6 @@ importers:
       '@fightclaw/config':
         specifier: workspace:*
         version: link:../config
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -382,6 +379,10 @@ importers:
         version: 5.9.3
 
   packages/protocol:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
     devDependencies:
       '@fightclaw/config':
         specifier: workspace:*

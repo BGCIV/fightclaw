@@ -8,15 +8,24 @@ import {
 } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	buildHexConquestStrategyPrompt,
+	listHexConquestBaselinePresetIds,
+} from "../src/presets/hexConquestBaselines";
+import {
+	type BaselineScoreboard,
+	buildBaselineScoreboard,
+	renderBaselineScoreboardMarkdown,
+} from "../src/reporting/baselineScoreboard";
 import { analyzeBehaviorFromArtifacts } from "../src/reporting/behaviorMetrics";
 
 type Scenario = "midfield" | "melee" | "all_infantry" | "all_cavalry";
-type Strategy = "strategic" | "defensive" | "aggressive";
+type BenchmarkProfileId = string;
 
 interface Matchup {
 	scenario: Scenario;
-	bot1: Strategy;
-	bot2: Strategy;
+	bot1: BenchmarkProfileId;
+	bot2: BenchmarkProfileId;
 	seed: number;
 }
 
@@ -69,8 +78,8 @@ type ApiMatchStatus = "ok" | "failed" | "skipped";
 interface ApiMatchTelemetry {
 	matchup: string;
 	scenario: Scenario;
-	bot1: Strategy;
-	bot2: Strategy;
+	bot1: BenchmarkProfileId;
+	bot2: BenchmarkProfileId;
 	seed: number;
 	output: string;
 	status: ApiMatchStatus;
@@ -155,24 +164,15 @@ const scenarios: Scenario[] = [
 	"all_cavalry",
 ];
 
-const mirroredPairs: Array<[Strategy, Strategy]> = [
-	["strategic", "defensive"],
-	["defensive", "strategic"],
-	["strategic", "aggressive"],
-	["aggressive", "strategic"],
-	["aggressive", "defensive"],
-	["defensive", "aggressive"],
-	["defensive", "defensive"],
-];
-
 const BOARD_COLUMNS = 17;
 const TURN_LIMIT = 40;
 const ACTIONS_PER_TURN = 7;
+const baselinePresetIds = listHexConquestBaselinePresetIds();
 
 function formatMatchupName(
 	scenario: Scenario,
-	bot1: Strategy,
-	bot2: Strategy,
+	bot1: BenchmarkProfileId,
+	bot2: BenchmarkProfileId,
 ): string {
 	return `${scenario}__${bot1}_vs_${bot2}`;
 }
@@ -375,13 +375,15 @@ function runCmdAsync(
 	})();
 }
 
-function collectMatchups(baseSeed: number): Matchup[] {
+export function collectMatchups(baseSeed: number): Matchup[] {
 	const out: Matchup[] = [];
 	let seed = baseSeed;
 	for (const scenario of scenarios) {
-		for (const [bot1, bot2] of mirroredPairs) {
-			out.push({ scenario, bot1, bot2, seed });
-			seed += 1;
+		for (const bot1 of baselinePresetIds) {
+			for (const bot2 of baselinePresetIds) {
+				out.push({ scenario, bot1, bot2, seed });
+				seed += 1;
+			}
 		}
 	}
 	return out;
@@ -616,6 +618,20 @@ function normalizeApiGraduationLane(
 		return "api_smoke";
 	}
 	return "api_full";
+}
+
+export function writeScoreboardArtifacts(
+	outputDir: string,
+	scoreboard: BaselineScoreboard,
+): {
+	jsonPath: string;
+	markdownPath: string;
+} {
+	const jsonPath = path.join(outputDir, "scoreboard.json");
+	const markdownPath = path.join(outputDir, "scoreboard.md");
+	writeFileSync(jsonPath, JSON.stringify(scoreboard, null, 2));
+	writeFileSync(markdownPath, renderBaselineScoreboardMarkdown(scoreboard));
+	return { jsonPath, markdownPath };
 }
 
 function completionRateThresholdForLane(lane: ApiGraduationLane): number {
@@ -975,9 +991,9 @@ async function main() {
 					"mockllm",
 					"--bot2",
 					"mockllm",
-					"--strategy1",
+					"--preset1",
 					matchup.bot1,
-					"--strategy2",
+					"--preset2",
 					matchup.bot2,
 					"--seed",
 					String(matchup.seed),
@@ -998,45 +1014,53 @@ async function main() {
 			);
 		}
 		const apiLaneDirInSim = path.join(outputBaseInSim, "api_lane");
-		const apiPairs = mirroredPairs.slice(0, 3);
 		let apiSeed = baseSeed + 10_000;
 		const apiTasks: Array<{
 			scenario: Scenario;
-			bot1: Strategy;
-			bot2: Strategy;
+			bot1: BenchmarkProfileId;
+			bot2: BenchmarkProfileId;
 			seed: number;
 			output: string;
 			matchup: string;
 		}> = [];
-		for (const scenario of scenarios) {
-			for (const [bot1, bot2] of apiPairs) {
-				const matchup = formatMatchupName(scenario, bot1, bot2);
-				const output = path.join(apiLaneDirInSim, matchup);
-				if (
-					shouldSkipCompletedMatchup(
-						path.join(simDir, output),
-						apiGamesPerMatchup,
-						resume,
-					)
-				) {
-					skippedApiMatchups.push(path.basename(output));
-					apiMatchTelemetry.push({
-						matchup,
-						scenario,
-						bot1,
-						bot2,
-						seed: apiSeed,
-						output,
-						status: "skipped",
-						durationMs: 0,
-						attempts: 0,
-					});
-					apiSeed += 1;
-					continue;
-				}
-				apiTasks.push({ scenario, bot1, bot2, seed: apiSeed, output, matchup });
+		for (const matchup of matchups) {
+			const matchupName = formatMatchupName(
+				matchup.scenario,
+				matchup.bot1,
+				matchup.bot2,
+			);
+			const output = path.join(apiLaneDirInSim, matchupName);
+			if (
+				shouldSkipCompletedMatchup(
+					path.join(simDir, output),
+					apiGamesPerMatchup,
+					resume,
+				)
+			) {
+				skippedApiMatchups.push(path.basename(output));
+				apiMatchTelemetry.push({
+					matchup: matchupName,
+					scenario: matchup.scenario,
+					bot1: matchup.bot1,
+					bot2: matchup.bot2,
+					seed: apiSeed,
+					output,
+					status: "skipped",
+					durationMs: 0,
+					attempts: 0,
+				});
 				apiSeed += 1;
+				continue;
 			}
+			apiTasks.push({
+				scenario: matchup.scenario,
+				bot1: matchup.bot1,
+				bot2: matchup.bot2,
+				seed: apiSeed,
+				output,
+				matchup: matchupName,
+			});
+			apiSeed += 1;
 		}
 		await runWithConcurrency(apiTasks, apiParallelMatchups, async (task) => {
 			const result = await runCmdAsync(
@@ -1063,10 +1087,10 @@ async function main() {
 					model,
 					"--model2",
 					model,
-					"--strategy1",
-					task.bot1,
-					"--strategy2",
-					task.bot2,
+					"--prompt1",
+					buildHexConquestStrategyPrompt(task.bot1),
+					"--prompt2",
+					buildHexConquestStrategyPrompt(task.bot2),
 					"--llmParallelCalls",
 					String(Math.max(1, apiLlmParallelCalls)),
 					"--llmTimeoutMs",
@@ -1515,7 +1539,15 @@ async function main() {
 	};
 
 	const summaryPath = path.join(outputBaseAbs, "benchmark-summary.json");
+	const scoreboard = buildBaselineScoreboard({
+		fastLaneDir: fastLaneAbs,
+		behaviorByMatchup,
+		apiLaneDir: withApi ? apiLaneAbs : undefined,
+		apiTelemetry: withApi ? apiMatchTelemetry : undefined,
+	});
 	writeFileSync(summaryPath, JSON.stringify(benchmarkSummary, null, 2));
+	const { jsonPath: scoreboardPath, markdownPath: scoreboardMarkdownPath } =
+		writeScoreboardArtifacts(outputBaseAbs, scoreboard);
 	if (withApi && apiGraduation) {
 		const nextHistory: ApiGraduationHistoryEntry[] = [
 			...apiGraduationHistory,
@@ -1531,6 +1563,8 @@ async function main() {
 
 	console.log("\nBenchmark complete.");
 	console.log(`Summary: ${summaryPath}`);
+	console.log(`Scoreboard: ${scoreboardPath}`);
+	console.log(`Scoreboard Markdown: ${scoreboardMarkdownPath}`);
 }
 
 const isExecutedDirectly = (() => {

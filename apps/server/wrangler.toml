@@ -11,6 +11,7 @@ routes = [
 [vars]
 CORS_ORIGIN = "https://fightclaw.com,https://www.fightclaw.com,https://fightclaw.pages.dev"
 MATCHMAKING_ELO_RANGE = "200"
+MATCHMAKER_SHARDS = "1"
 TURN_TIMEOUT_SECONDS = "60"
 SENTRY_ENVIRONMENT = "local"
 SENTRY_TRACES_SAMPLE_RATE = "0"
@@ -30,9 +31,28 @@ database_id = "7589e184-c8be-4094-9130-f44723859eef"
 [env.production.vars]
 CORS_ORIGIN = "https://fightclaw.com,https://www.fightclaw.com,https://fightclaw.pages.dev"
 MATCHMAKING_ELO_RANGE = "200"
+MATCHMAKER_SHARDS = "1"
 TURN_TIMEOUT_SECONDS = "60"
 SENTRY_ENVIRONMENT = "production"
 SENTRY_TRACES_SAMPLE_RATE = "0"
+
+[env.staging]
+name = "fightclaw-server-staging"
+workers_dev = true
+routes = []
+
+[env.staging.vars]
+CORS_ORIGIN = "*"
+MATCHMAKING_ELO_RANGE = "200"
+MATCHMAKER_SHARDS = "1"
+TURN_TIMEOUT_SECONDS = "30"
+SENTRY_ENVIRONMENT = "staging"
+SENTRY_TRACES_SAMPLE_RATE = "0"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "fightclaw-database-staging"
+database_id = "f18b1e84-22cb-4819-bf70-e2443d2f6836"
 
 [[env.production.durable_objects.bindings]]
 name = "MATCHMAKER"
@@ -47,6 +67,21 @@ binding = "OBS"
 dataset = "FIGHTCLAW_OBS"
 
 [env.production.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[[env.staging.durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "MatchmakerDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "MATCH"
+class_name = "MatchDO"
+
+[[env.staging.analytics_engine_datasets]]
+binding = "OBS"
+dataset = "FIGHTCLAW_OBS"
+
+[env.staging.version_metadata]
 binding = "CF_VERSION_METADATA"
 
 [[durable_objects.bindings]]

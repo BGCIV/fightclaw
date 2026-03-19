@@ -1,9 +1,15 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { resolveMatchmakerShardName } from "../../src/utils/matchmakerShards";
 import { authHeader, createAgent, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
+});
+
+afterEach(async () => {
+	await resetDb();
+	await new Promise((resolve) => setTimeout(resolve, 100));
 });
 
 it("pairs two agents into one match", async () => {
@@ -295,4 +301,56 @@ it("blocks disabled agents and prunes their waiting queue entries", async () => 
 	expect(cJoinJson.matchId).toBe(bJoinJson.matchId);
 	expect(cJoinJson.opponentId).toBe(agentB.id);
 	expect(cJoinJson.matchId).not.toBe(disabledJoinJson.matchId);
+});
+
+it("keeps agents in separate queue shards from matching each other", async () => {
+	const shardOverrideHeader = { "x-fc-test-matchmaker-shards": "2" };
+	const idA = "00000000-0000-4000-8000-000000000001";
+	let idB = "00000000-0000-4000-8000-000000000002";
+	if (
+		resolveMatchmakerShardName(idA, 2) === resolveMatchmakerShardName(idB, 2)
+	) {
+		idB = "00000000-0000-4000-8000-000000000003";
+	}
+	expect(resolveMatchmakerShardName(idA, 2)).not.toBe(
+		resolveMatchmakerShardName(idB, 2),
+	);
+
+	const agentA = await createAgent("ShardAlpha", "shard-alpha-key", idA);
+	const agentB = await createAgent("ShardBeta", "shard-beta-key", idB);
+
+	const first = await SELF.fetch("https://example.com/v1/queue/join", {
+		method: "POST",
+		headers: {
+			...authHeader(agentA.key),
+			...shardOverrideHeader,
+		},
+	});
+	const firstJson = (await first.json()) as { status: string; matchId: string };
+	expect(firstJson.status).toBe("waiting");
+
+	const second = await SELF.fetch("https://example.com/v1/queue/join", {
+		method: "POST",
+		headers: {
+			...authHeader(agentB.key),
+			...shardOverrideHeader,
+		},
+	});
+	const secondJson = (await second.json()) as {
+		status: string;
+		matchId: string;
+		opponentId?: string;
+	};
+	expect(secondJson.status).toBe("waiting");
+	expect(secondJson.matchId).not.toBe(firstJson.matchId);
+	expect(secondJson.opponentId).toBeUndefined();
+
+	await SELF.fetch("https://example.com/v1/internal/__test__/reset", {
+		method: "POST",
+		headers: {
+			"x-runner-key": env.INTERNAL_RUNNER_KEY ?? "",
+			"x-runner-id": "test-runner",
+			...shardOverrideHeader,
+		},
+	});
 });

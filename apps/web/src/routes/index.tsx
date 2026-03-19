@@ -8,15 +8,36 @@ import {
 	type Move,
 } from "@fightclaw/engine";
 import { env } from "@fightclaw/env/web";
-import type { AgentThoughtEvent } from "@fightclaw/protocol";
+import {
+	type AgentThoughtEvent,
+	type EngineEventsEvent,
+	type FeaturedSnapshot,
+	FeaturedStreamEnvelopeSchema,
+	type GameEndedEvent,
+	type MatchEndedEvent,
+	type MatchEventEnvelope,
+	MatchEventEnvelopeSchema,
+	type MatchStartedEvent,
+} from "@fightclaw/protocol";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { SpectatorArena } from "@/components/arena/spectator-arena";
 import {
-	type EngineEventsEnvelopeV1,
+	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
+import {
+	appendBroadcastTickerItem,
+	type BroadcastTickerItem,
+	buildSpectatorDeskProjection,
+	isTerminalDeskEvent,
+	projectBroadcastTickerItem,
+} from "@/lib/spectator-desk";
+import {
+	applyFeaturedUpdate,
+	type FeaturedLiveState,
+} from "./featured-updates";
 
 export const Route = createFileRoute("/")({
 	component: SpectatorLanding,
@@ -28,38 +49,40 @@ export const Route = createFileRoute("/")({
 	}),
 });
 
-type FeaturedResponse = {
-	matchId: string | null;
-	status: string | null;
-	players: string[] | null;
-};
-
-type StateEvent = {
-	eventVersion: 1;
-	event: "state";
-	matchId: string | null;
-	state: MatchState;
+type MatchLogResponse = {
+	matchId: string;
+	events: MatchEventEnvelope[];
+	hasMore?: boolean;
+	nextAfterId?: number | null;
 };
 
 const MAX_THOUGHTS = 80;
+const STREAM_RECONNECT_DELAY_MS = 1000;
 
 function SpectatorLanding() {
 	const search = Route.useSearch();
 	const replayMatchId = search.replayMatchId ?? null;
 
-	const [featured, setFeatured] = useState<FeaturedResponse | null>(null);
+	const [featuredState, setFeaturedState] = useState<FeaturedLiveState>({
+		featured: null,
+		hasSeenStream: false,
+	});
 	const [latestState, setLatestState] = useState<MatchState | null>(null);
 	const [connectionStatus, setConnectionStatus] = useState<
 		"idle" | "connecting" | "live" | "replay" | "error"
 	>("idle");
 	const replayFollowStarted = useRef(false);
+	const replayAfterIdRef = useRef(0);
 	const [replayShouldFollowLive, setReplayShouldFollowLive] = useState(false);
 	const [thoughtsA, setThoughtsA] = useState<string[]>([]);
 	const [thoughtsB, setThoughtsB] = useState<string[]>([]);
-	const [isThinkingA, setIsThinkingA] = useState(false);
-	const [isThinkingB, setIsThinkingB] = useState(false);
+	const [tickerItems, setTickerItems] = useState<BroadcastTickerItem[]>([]);
+	const [terminalEvent, setTerminalEvent] = useState<
+		MatchEndedEvent | GameEndedEvent | null
+	>(null);
 	const thoughtEventIdsRef = useRef(new Set<string>());
 
+	const featured = featuredState.featured;
 	const matchId = replayMatchId ?? featured?.matchId ?? null;
 
 	const {
@@ -76,9 +99,75 @@ function SpectatorLanding() {
 		onApplyBaseState: (state) => setLatestState(state),
 	});
 
+	const resetBroadcastState = useEffectEvent(() => {
+		setThoughtsA([]);
+		setThoughtsB([]);
+		setTickerItems([]);
+		setTerminalEvent(null);
+		thoughtEventIdsRef.current.clear();
+	});
+
+	const applyThoughtEvent = useEffectEvent((event: AgentThoughtEvent) => {
+		const player = event.payload.player;
+		if (player !== "A" && player !== "B") return;
+		const id = `${event.stateVersion}:${event.payload.moveId}:${player}`;
+		if (thoughtEventIdsRef.current.has(id)) return;
+		thoughtEventIdsRef.current.add(id);
+		const setter = player === "A" ? setThoughtsA : setThoughtsB;
+		setter((prev) => [...prev, event.payload.text].slice(-MAX_THOUGHTS));
+	});
+
+	const applyLiveEnvelope = useEffectEvent((event: MatchEventEnvelope) => {
+		replayAfterIdRef.current = Math.max(
+			replayAfterIdRef.current,
+			event.eventId,
+		);
+		switch (event.event) {
+			case "state": {
+				const state = parseStateFromEnvelope(event);
+				if (!state) return;
+				setLatestState(state);
+				setConnectionStatus("live");
+				return;
+			}
+			case "engine_events":
+				setTickerItems((current) => {
+					const item = projectBroadcastTickerItem(event as EngineEventsEvent);
+					return item ? appendBroadcastTickerItem(current, item) : current;
+				});
+				enqueueEngineEvents(event as EngineEventsEnvelope);
+				setConnectionStatus("live");
+				return;
+			case "agent_thought":
+				applyThoughtEvent(event);
+				setConnectionStatus("live");
+				return;
+			case "match_ended":
+			case "game_ended":
+				setTerminalEvent(event);
+				setConnectionStatus("live");
+				return;
+			default:
+				return;
+		}
+	});
+
+	const applyFeaturedLiveUpdate = useEffectEvent(
+		(source: "fetch" | "stream", snapshot: FeaturedSnapshot) => {
+			setFeaturedState((current) =>
+				applyFeaturedUpdate(current, source, snapshot),
+			);
+		},
+	);
+
 	useEffect(() => {
 		if (replayMatchId) return;
 		let active = true;
+		let source: EventSource | null = null;
+		setFeaturedState((current) => ({
+			featured: current.featured,
+			hasSeenStream: false,
+		}));
 
 		const fetchFeatured = async () => {
 			try {
@@ -86,21 +175,44 @@ function SpectatorLanding() {
 				if (!res.ok) {
 					throw new Error(`Featured request failed (${res.status})`);
 				}
-				const json = (await res.json()) as FeaturedResponse;
+				const json = (await res.json()) as FeaturedSnapshot;
 				if (!active) return;
-				setFeatured(json);
+				applyFeaturedLiveUpdate("fetch", json);
 			} catch {
 				if (!active) return;
-				setFeatured({ matchId: null, status: null, players: null });
+				applyFeaturedLiveUpdate("fetch", {
+					matchId: null,
+					status: null,
+					players: null,
+				});
 			}
 		};
 
 		void fetchFeatured();
-		const interval = window.setInterval(fetchFeatured, 15000);
+
+		source = new EventSource(`${env.VITE_SERVER_URL}/v1/featured/stream`);
+		source.addEventListener(
+			"featured_snapshot",
+			(message: MessageEvent<string>) => {
+				if (!active) return;
+				try {
+					const parsed = FeaturedStreamEnvelopeSchema.parse(
+						JSON.parse(message.data),
+					);
+					applyFeaturedLiveUpdate("stream", parsed.payload);
+				} catch {
+					// Ignore malformed featured stream frames and rely on the next update.
+				}
+			},
+		);
+		source.addEventListener("error", () => {
+			if (!active) return;
+			void fetchFeatured();
+		});
 
 		return () => {
 			active = false;
-			window.clearInterval(interval);
+			source?.close();
 		};
 	}, [replayMatchId]);
 
@@ -111,128 +223,58 @@ function SpectatorLanding() {
 			resetAnimator();
 			setLatestState(null);
 			setConnectionStatus("idle");
-			setThoughtsA([]);
-			setThoughtsB([]);
-			setIsThinkingA(false);
-			setIsThinkingB(false);
-			thoughtEventIdsRef.current.clear();
+			resetBroadcastState();
+			replayAfterIdRef.current = 0;
 			return;
 		}
 
 		let active = true;
+		let source: EventSource | null = null;
+		let reconnectTimer: number | null = null;
+
 		resetAnimator();
 		setLatestState(null);
 		setConnectionStatus("connecting");
-		setThoughtsA([]);
-		setThoughtsB([]);
-		setIsThinkingA(false);
-		setIsThinkingB(false);
-		thoughtEventIdsRef.current.clear();
+		resetBroadcastState();
+		replayAfterIdRef.current = 0;
 
-		const fetchState = async () => {
-			try {
-				const res = await fetch(
-					`${env.VITE_SERVER_URL}/v1/matches/${matchId}/state`,
-				);
-				if (!res.ok) {
-					throw new Error(`State request failed (${res.status})`);
-				}
-				const json = (await res.json()) as { state?: unknown } | null;
-				const state = parseStateFromEnvelope(json);
+		const connect = (afterId: number) => {
+			if (!active) return;
+			source?.close();
+			source = new EventSource(buildSpectateUrl(matchId, afterId));
+
+			const onEnvelope = (message: MessageEvent<string>) => {
 				if (!active) return;
-				if (state) {
-					setLatestState(state);
-				}
-			} catch {
-				/* state unavailable */
-			}
+				const envelope = parseMatchEvent(message.data);
+				if (!envelope) return;
+				applyLiveEnvelope(envelope);
+			};
+
+			source.addEventListener("state", onEnvelope as EventListener);
+			source.addEventListener("engine_events", onEnvelope as EventListener);
+			source.addEventListener("agent_thought", onEnvelope as EventListener);
+			source.addEventListener("match_ended", onEnvelope as EventListener);
+			source.addEventListener("game_ended", onEnvelope as EventListener);
+			source.addEventListener("error", () => {
+				if (!active) return;
+				source?.close();
+				setConnectionStatus("connecting");
+				reconnectTimer = window.setTimeout(() => {
+					connect(replayAfterIdRef.current);
+				}, STREAM_RECONNECT_DELAY_MS);
+			});
 		};
 
-		void fetchState();
-
-		const eventSource = new EventSource(
-			`${env.VITE_SERVER_URL}/v1/matches/${matchId}/spectate`,
-		);
-
-		const handleStateEvent = (event: MessageEvent<string>) => {
-			let payload: StateEvent | null = null;
-			try {
-				payload = JSON.parse(event.data) as StateEvent;
-			} catch {
-				return;
-			}
-			if (!payload || payload.eventVersion !== 1 || payload.event !== "state")
-				return;
-			if (!active) return;
-			const state = parseStateFromEnvelope(payload);
-			if (!state) return;
-			setLatestState(state);
-			setConnectionStatus("live");
-		};
-
-		const handleEngineEvents = (event: MessageEvent<string>) => {
-			let payload: EngineEventsEnvelopeV1 | null = null;
-			try {
-				payload = JSON.parse(event.data) as EngineEventsEnvelopeV1;
-			} catch {
-				return;
-			}
-
-			if (
-				!payload ||
-				payload.eventVersion !== 1 ||
-				payload.event !== "engine_events"
-			) {
-				return;
-			}
-			if (!active) return;
-			enqueueEngineEvents(payload);
-		};
-
-		const handleAgentThought = (event: MessageEvent<string>) => {
-			let payload: AgentThoughtEvent | null = null;
-			try {
-				payload = JSON.parse(event.data) as AgentThoughtEvent;
-			} catch {
-				return;
-			}
-			if (!payload) return;
-			if (!active) return;
-			if (
-				payload.eventVersion !== 1 ||
-				payload.event !== "agent_thought" ||
-				(payload.player !== "A" && payload.player !== "B")
-			) {
-				return;
-			}
-			const id = `${payload.stateVersion}:${payload.moveId}:${payload.player}`;
-			if (thoughtEventIdsRef.current.has(id)) return;
-			thoughtEventIdsRef.current.add(id);
-
-			const { player: p, text } = payload;
-			const setter = p === "A" ? setThoughtsA : setThoughtsB;
-			setter((prev) => [...prev, text].slice(-MAX_THOUGHTS));
-		};
-
-		eventSource.addEventListener("state", handleStateEvent as EventListener);
-		eventSource.addEventListener(
-			"engine_events",
-			handleEngineEvents as EventListener,
-		);
-		eventSource.addEventListener(
-			"agent_thought",
-			handleAgentThought as EventListener,
-		);
-		eventSource.addEventListener("error", () => {
-			if (!active) return;
-			setConnectionStatus("error");
-		});
+		connect(0);
 
 		return () => {
 			active = false;
-			eventSource.close();
+			source?.close();
+			if (reconnectTimer !== null) {
+				window.clearTimeout(reconnectTimer);
+			}
 		};
-	}, [enqueueEngineEvents, matchId, replayMatchId, resetAnimator]);
+	}, [matchId, replayMatchId, resetAnimator]);
 
 	useEffect(() => {
 		if (!replayMatchId) {
@@ -244,157 +286,169 @@ function SpectatorLanding() {
 		let active = true;
 		replayFollowStarted.current = false;
 		setReplayShouldFollowLive(false);
+		replayAfterIdRef.current = 0;
 		resetAnimator();
-		setFeatured({ matchId: replayMatchId, status: "replay", players: null });
+		setFeaturedState({
+			featured: {
+				matchId: replayMatchId,
+				status: "replay",
+				players: null,
+			},
+			hasSeenStream: false,
+		});
 		setLatestState(null);
 		setConnectionStatus("connecting");
-		setThoughtsA([]);
-		setThoughtsB([]);
-		setIsThinkingA(false);
-		setIsThinkingB(false);
-		thoughtEventIdsRef.current.clear();
+		resetBroadcastState();
 
 		const runReplay = async () => {
 			try {
-				const res = await fetch(
-					`${env.VITE_SERVER_URL}/v1/matches/${replayMatchId}/log?limit=5000`,
-				);
-				if (!res.ok) {
-					throw new Error(`Log request failed (${res.status})`);
+				const pageLimit = 1000;
+				let afterId = 0;
+				let pageMatchId: string | null = null;
+				const allEvents: MatchEventEnvelope[] = [];
+
+				for (let page = 0; page < 100; page += 1) {
+					const res = await fetch(
+						`${env.VITE_SERVER_URL}/v1/matches/${replayMatchId}/log?limit=${pageLimit}&afterId=${afterId}`,
+					);
+					if (!res.ok) {
+						throw new Error(`Log request failed (${res.status})`);
+					}
+					const pageJson = (await res.json()) as MatchLogResponse;
+					pageMatchId = pageJson.matchId;
+					if (pageJson.events.length === 0) {
+						const nextAfterId =
+							typeof pageJson.nextAfterId === "number"
+								? pageJson.nextAfterId
+								: null;
+						if (
+							nextAfterId === null ||
+							nextAfterId <= afterId ||
+							pageJson.hasMore !== true
+						) {
+							break;
+						}
+						afterId = nextAfterId;
+						continue;
+					}
+					allEvents.push(...pageJson.events);
+					const nextAfterId =
+						typeof pageJson.nextAfterId === "number"
+							? pageJson.nextAfterId
+							: (pageJson.events[pageJson.events.length - 1]?.eventId ?? null);
+					if (nextAfterId === null || nextAfterId <= afterId) break;
+					afterId = nextAfterId;
+					if (pageJson.hasMore !== true) break;
 				}
 
-				const json = (await res.json()) as MatchLogResponseV1;
 				if (!active) return;
 
-				const started = json.events.find(
-					(event) => event.eventType === "match_started",
+				const started = allEvents.find(
+					(event): event is MatchStartedEvent =>
+						event.event === "match_started",
 				);
-				const startedPayload = isRecord(started?.payload)
-					? started.payload
-					: null;
-				const seedRaw = startedPayload?.seed;
-				const playersRaw = startedPayload?.players;
-				const replayEngineConfig = parseReplayEngineConfig(
-					startedPayload?.engineConfig,
-				);
+				if (!started) {
+					throw new Error("Replay missing match_started metadata.");
+				}
 
 				const seed =
-					typeof seedRaw === "number" && Number.isFinite(seedRaw)
-						? seedRaw
+					typeof started.payload.seed === "number" &&
+					Number.isFinite(started.payload.seed)
+						? started.payload.seed
 						: null;
-				const players = Array.isArray(playersRaw)
-					? playersRaw.filter((value) => typeof value === "string")
+				const players = Array.isArray(started.payload.players)
+					? started.payload.players.filter(
+							(value): value is string => typeof value === "string",
+						)
 					: null;
+				const replayEngineConfig = parseReplayEngineConfig(
+					started.payload.engineConfig,
+				);
 
 				if (seed === null || !players || players.length !== 2) {
 					throw new Error("Replay missing match_started metadata.");
 				}
 
-				setFeatured({
-					matchId: replayMatchId,
-					status: "replay",
-					players,
+				setFeaturedState({
+					featured: {
+						matchId: pageMatchId ?? replayMatchId,
+						status: "replay",
+						players,
+					},
+					hasSeenStream: false,
 				});
 
 				let state = createInitialState(seed, replayEngineConfig, players);
 				setLatestState(state);
 				setConnectionStatus("replay");
+				let replayTicker: BroadcastTickerItem[] = [];
 
-				const moveRows = json.events
-					.filter((event) => event.eventType === "move_applied")
-					.sort((a, b) => a.id - b.id);
-				const thoughtByMoveId = new Map<
-					string,
-					Array<{ player: "A" | "B"; text: string; stateVersion: number }>
-				>();
-				for (const row of json.events) {
-					if (row.eventType !== "agent_thought") continue;
-					const payload = isRecord(row.payload) ? row.payload : null;
-					const moveId =
-						typeof payload?.moveId === "string" ? payload.moveId : null;
-					const player = payload?.player;
-					const text = payload?.text;
-					const stateVersion = payload?.stateVersion;
-					if (
-						!moveId ||
-						(player !== "A" && player !== "B") ||
-						typeof text !== "string" ||
-						typeof stateVersion !== "number" ||
-						!Number.isFinite(stateVersion)
-					) {
-						continue;
-					}
-					const existing = thoughtByMoveId.get(moveId) ?? [];
-					existing.push({ player, text, stateVersion });
-					thoughtByMoveId.set(moveId, existing);
+				const thoughtByMoveId = new Map<string, AgentThoughtEvent[]>();
+				for (const event of allEvents) {
+					if (event.event !== "agent_thought") continue;
+					const existing = thoughtByMoveId.get(event.payload.moveId) ?? [];
+					existing.push(event);
+					thoughtByMoveId.set(event.payload.moveId, existing);
 				}
 
-				let replayed = 0;
+				const moveEvents = allEvents
+					.filter(
+						(event): event is EngineEventsEvent =>
+							event.event === "engine_events",
+					)
+					.sort((a, b) => a.eventId - b.eventId);
 
-				for (const row of moveRows) {
+				for (const event of moveEvents) {
 					if (!active) return;
-					const payload = isRecord(row.payload) ? row.payload : null;
-					const moveRaw = payload?.move;
-					if (!moveRaw || typeof moveRaw !== "object") continue;
+					const move = event.payload.move;
+					if (!move || typeof move !== "object") continue;
 
-					const move = moveRaw as Move;
-					const result = applyMove(state, move);
+					const result = applyMove(state, move as Move);
 					if (!result.ok) {
 						throw new Error(
-							`Replay engine rejected move at row ${row.id}: ${result.error}`,
+							`Replay engine rejected move at event ${event.eventId}: ${result.error}`,
 						);
 					}
 					state = result.state;
 
-					const engineEventsRaw = payload?.engineEvents;
-					const engineEvents = Array.isArray(engineEventsRaw)
-						? (engineEventsRaw as EngineEvent[])
+					const engineEvents = Array.isArray(event.payload.engineEvents)
+						? (event.payload.engineEvents as EngineEvent[])
 						: result.engineEvents;
 
-					const agentId =
-						typeof payload?.agentId === "string" ? payload.agentId : "unknown";
-					const moveId =
-						typeof payload?.moveId === "string"
-							? payload.moveId
-							: `replay:${row.id}`;
-					const stateVersion =
-						typeof payload?.stateVersion === "number" &&
-						Number.isFinite(payload.stateVersion)
-							? payload.stateVersion
-							: replayed + 1;
-
-					const envelope: EngineEventsEnvelopeV1 = {
-						eventVersion: 1,
-						event: "engine_events",
-						matchId: replayMatchId,
-						stateVersion,
-						agentId,
-						moveId,
-						move,
-						engineEvents,
-						ts: typeof row.ts === "string" ? row.ts : new Date().toISOString(),
+					const envelope: EngineEventsEnvelope = {
+						...event,
+						payload: {
+							agentId: event.payload.agentId,
+							moveId: event.payload.moveId,
+							move,
+							engineEvents,
+						},
 					};
 
-					enqueueEngineEvents(envelope, { postState: state });
-					const thoughts = thoughtByMoveId.get(moveId) ?? [];
-					for (const thought of thoughts) {
-						const id = `${thought.stateVersion}:${moveId}:${thought.player}`;
-						if (thoughtEventIdsRef.current.has(id)) continue;
-						thoughtEventIdsRef.current.add(id);
-						if (thought.player === "A") {
-							setThoughtsA((prev) =>
-								[...prev, thought.text].slice(-MAX_THOUGHTS),
-							);
-						} else {
-							setThoughtsB((prev) =>
-								[...prev, thought.text].slice(-MAX_THOUGHTS),
-							);
-						}
+					const tickerItem = projectBroadcastTickerItem(event);
+					if (tickerItem) {
+						replayTicker = appendBroadcastTickerItem(replayTicker, tickerItem);
 					}
-					replayed += 1;
+					enqueueEngineEvents(envelope, { postState: state });
+					const thoughts = thoughtByMoveId.get(event.payload.moveId) ?? [];
+					for (const thought of thoughts) {
+						applyThoughtEvent(thought);
+					}
 				}
 
-				if (state.status === "active") {
+				setTickerItems(replayTicker);
+				const replayTerminal =
+					allEvents.findLast?.(isTerminalDeskEvent) ??
+					[...allEvents].reverse().find(isTerminalDeskEvent) ??
+					null;
+				setTerminalEvent(replayTerminal);
+
+				replayAfterIdRef.current = allEvents.reduce(
+					(maxEventId, event) => Math.max(maxEventId, event.eventId),
+					0,
+				);
+
+				if (state.status === "active" && !replayTerminal) {
 					setReplayShouldFollowLive(true);
 				}
 			} catch {
@@ -418,86 +472,46 @@ function SpectatorLanding() {
 
 		replayFollowStarted.current = true;
 		let active = true;
+		let source: EventSource | null = null;
+		let reconnectTimer: number | null = null;
 
-		const eventSource = new EventSource(
-			`${env.VITE_SERVER_URL}/v1/matches/${replayMatchId}/spectate`,
-		);
-
-		const handleStateEvent = (event: MessageEvent<string>) => {
-			let payload: StateEvent | null = null;
-			try {
-				payload = JSON.parse(event.data) as StateEvent;
-			} catch {
-				return;
-			}
-			if (!payload || payload.eventVersion !== 1 || payload.event !== "state")
-				return;
+		const connect = (afterId: number) => {
 			if (!active) return;
-			const state = parseStateFromEnvelope(payload);
-			if (!state) return;
-			setLatestState(state);
-			setConnectionStatus("live");
+			source?.close();
+			source = new EventSource(buildSpectateUrl(replayMatchId, afterId));
+
+			const onEnvelope = (message: MessageEvent<string>) => {
+				if (!active) return;
+				const envelope = parseMatchEvent(message.data);
+				if (!envelope) return;
+				applyLiveEnvelope(envelope);
+			};
+
+			source.addEventListener("state", onEnvelope as EventListener);
+			source.addEventListener("engine_events", onEnvelope as EventListener);
+			source.addEventListener("agent_thought", onEnvelope as EventListener);
+			source.addEventListener("match_ended", onEnvelope as EventListener);
+			source.addEventListener("game_ended", onEnvelope as EventListener);
+			source.addEventListener("error", () => {
+				if (!active) return;
+				source?.close();
+				setConnectionStatus("connecting");
+				reconnectTimer = window.setTimeout(() => {
+					connect(replayAfterIdRef.current);
+				}, STREAM_RECONNECT_DELAY_MS);
+			});
 		};
 
-		const handleEngineEvents = (event: MessageEvent<string>) => {
-			let payload: EngineEventsEnvelopeV1 | null = null;
-			try {
-				payload = JSON.parse(event.data) as EngineEventsEnvelopeV1;
-			} catch {
-				return;
-			}
-			if (
-				!payload ||
-				payload.eventVersion !== 1 ||
-				payload.event !== "engine_events"
-			) {
-				return;
-			}
-			if (!active) return;
-			enqueueEngineEvents(payload);
-		};
-
-		const handleAgentThought = (event: MessageEvent<string>) => {
-			let payload: AgentThoughtEvent | null = null;
-			try {
-				payload = JSON.parse(event.data) as AgentThoughtEvent;
-			} catch {
-				return;
-			}
-			if (
-				!payload ||
-				payload.eventVersion !== 1 ||
-				payload.event !== "agent_thought" ||
-				(payload.player !== "A" && payload.player !== "B")
-			) {
-				return;
-			}
-			if (!active) return;
-			const id = `${payload.stateVersion}:${payload.moveId}:${payload.player}`;
-			if (thoughtEventIdsRef.current.has(id)) return;
-			thoughtEventIdsRef.current.add(id);
-			if (payload.player === "A") {
-				setThoughtsA((prev) => [...prev, payload.text].slice(-MAX_THOUGHTS));
-			} else {
-				setThoughtsB((prev) => [...prev, payload.text].slice(-MAX_THOUGHTS));
-			}
-		};
-
-		eventSource.addEventListener("state", handleStateEvent as EventListener);
-		eventSource.addEventListener(
-			"engine_events",
-			handleEngineEvents as EventListener,
-		);
-		eventSource.addEventListener(
-			"agent_thought",
-			handleAgentThought as EventListener,
-		);
+		connect(replayAfterIdRef.current);
 
 		return () => {
 			active = false;
-			eventSource.close();
+			source?.close();
+			if (reconnectTimer !== null) {
+				window.clearTimeout(reconnectTimer);
+			}
 		};
-	}, [enqueueEngineEvents, isAnimating, replayMatchId, replayShouldFollowLive]);
+	}, [isAnimating, replayMatchId, replayShouldFollowLive]);
 
 	const statusBadge = useMemo(() => {
 		switch (connectionStatus) {
@@ -514,14 +528,42 @@ function SpectatorLanding() {
 		}
 	}, [connectionStatus]);
 
+	const deskProjection = useMemo(
+		() =>
+			buildSpectatorDeskProjection({
+				connectionStatus,
+				featured,
+				state: latestState,
+				thoughtsA,
+				thoughtsB,
+				tickerItems,
+				terminalEvent,
+			}),
+		[
+			connectionStatus,
+			featured,
+			latestState,
+			thoughtsA,
+			thoughtsB,
+			tickerItems,
+			terminalEvent,
+		],
+	);
+
 	return (
 		<SpectatorArena
 			statusBadge={statusBadge}
+			featuredDesk={deskProjection.featuredDesk}
+			agentCards={deskProjection.agentCards}
+			tickerItems={deskProjection.tickerItems}
+			resultSummary={deskProjection.resultSummary}
+			topBarCenterFallback={deskProjection.featuredDesk.label}
+			topBarRight={
+				<span className="top-bar-right-label">
+					{deskProjection.topBarRightLabel}
+				</span>
+			}
 			state={latestState}
-			thoughtsA={thoughtsA}
-			thoughtsB={thoughtsB}
-			isThinkingA={isThinkingA}
-			isThinkingB={isThinkingB}
 			hudPassPulse={hudFx.passPulse}
 			effects={effects}
 			unitAnimStates={unitAnimStates}
@@ -532,21 +574,33 @@ function SpectatorLanding() {
 	);
 }
 
-type MatchLogRowV1 = {
-	id: number;
-	ts: string;
-	eventType: string;
-	payload: unknown | null;
-	payloadParseError?: true;
-};
-
-type MatchLogResponseV1 = {
-	matchId: string;
-	events: MatchLogRowV1[];
-};
+function buildSpectateUrl(matchId: string, afterId: number) {
+	const url = new URL(
+		`${env.VITE_SERVER_URL}/v1/matches/${encodeURIComponent(matchId)}/spectate`,
+	);
+	if (afterId > 0) {
+		url.searchParams.set("afterId", String(afterId));
+	}
+	return url.toString();
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMatchEvent(input: string | unknown): MatchEventEnvelope | null {
+	const raw =
+		typeof input === "string"
+			? (() => {
+					try {
+						return JSON.parse(input) as unknown;
+					} catch {
+						return null;
+					}
+				})()
+			: input;
+	const parsed = MatchEventEnvelopeSchema.safeParse(raw);
+	return parsed.success ? (parsed.data as MatchEventEnvelope) : null;
 }
 
 function parseStateFromEnvelope(input: unknown): MatchState | null {
@@ -555,7 +609,13 @@ function parseStateFromEnvelope(input: unknown): MatchState | null {
 	}
 
 	const container =
-		"state" in input ? ((input as { state?: unknown }).state ?? null) : input;
+		"payload" in input &&
+		isRecord((input as { payload?: unknown }).payload) &&
+		"state" in (input as { payload: Record<string, unknown> }).payload
+			? ((input as { payload: { state?: unknown } }).payload.state ?? null)
+			: "state" in input
+				? ((input as { state?: unknown }).state ?? null)
+				: null;
 	if (!container || typeof container !== "object") {
 		return null;
 	}

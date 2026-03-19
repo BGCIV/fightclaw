@@ -50,6 +50,7 @@ coverage
 # Misc
 *.tgz
 .cache
+.worktrees/
 tmp
 temp
 apps/sim/out/

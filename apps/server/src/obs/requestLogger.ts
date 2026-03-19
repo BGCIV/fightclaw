@@ -96,6 +96,10 @@ export const requestLogger = async (c: AppContext, next: Next) => {
 
 	const contentType = c.res.headers.get("content-type") ?? "";
 	if (contentType.includes("text/event-stream") && c.res.body) {
+		if (c.env.TEST_MODE) {
+			end("stream_test_mode");
+			return;
+		}
 		const signal = c.req.raw.signal;
 		if (signal) {
 			signal.addEventListener(
