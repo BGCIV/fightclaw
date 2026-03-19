@@ -14,6 +14,7 @@ import { makeLlmBot } from "./bots/llmBot";
 import { makeMockLlmBot } from "./bots/mockLlmBot";
 import { makeRandomLegalBot } from "./bots/randomBot";
 import { playMatch, replayMatch } from "./match";
+import { resolveHexConquestBaselineCliBotConfig } from "./presets/hexConquestBaselines";
 import { analyzeBehaviorFromArtifacts } from "./reporting/behaviorMetrics";
 import type { DashboardData } from "./reporting/dashboardGenerator";
 import { generateDashboard } from "./reporting/dashboardGenerator";
@@ -576,12 +577,28 @@ function createCliContext(argv: Args): CliContext {
 		boardColumns: boardColumns as 17 | 21,
 	};
 
-	const bot1Type = (stringArg(argv, "bot1") ?? "greedy") as BotType;
-	const bot2Type = (stringArg(argv, "bot2") ?? "random") as BotType;
-	const prompt1 = stringArg(argv, "prompt1");
-	const prompt2 = stringArg(argv, "prompt2");
-	const strategy1 = stringArg(argv, "strategy1");
-	const strategy2 = stringArg(argv, "strategy2");
+	const preset1 = stringArg(argv, "preset1");
+	const preset2 = stringArg(argv, "preset2");
+	const resolvedP1 = resolveHexConquestBaselineCliBotConfig({
+		presetId: preset1,
+		explicitBotType: stringArg(argv, "bot1"),
+		explicitPrompt: stringArg(argv, "prompt1"),
+		explicitStrategy: stringArg(argv, "strategy1"),
+		fallbackBotType: "greedy",
+	});
+	const resolvedP2 = resolveHexConquestBaselineCliBotConfig({
+		presetId: preset2,
+		explicitBotType: stringArg(argv, "bot2"),
+		explicitPrompt: stringArg(argv, "prompt2"),
+		explicitStrategy: stringArg(argv, "strategy2"),
+		fallbackBotType: "random",
+	});
+	const bot1Type = resolvedP1.botType as BotType;
+	const bot2Type = resolvedP2.botType as BotType;
+	const prompt1 = resolvedP1.prompt;
+	const prompt2 = resolvedP2.prompt;
+	const strategy1 = resolvedP1.strategy;
+	const strategy2 = resolvedP2.strategy;
 
 	const baseUrl = stringArg(argv, "baseUrl");
 	const baseUrl1 = stringArg(argv, "baseUrl1") ?? baseUrl;
@@ -964,7 +981,13 @@ function printUsageAndExit(): never {
 		"  --bot1 TYPE    P1 bot type: random, greedy, aggressive, mockllm, llm (default: greedy)",
 	);
 	console.error(
+		"  --preset1 ID   Named hex_conquest preset for P1 (e.g., balanced_beta)",
+	);
+	console.error(
 		"  --bot2 TYPE    P2 bot type: random, greedy, aggressive, mockllm, llm (default: random)",
+	);
+	console.error(
+		"  --preset2 ID   Named hex_conquest preset for P2 (e.g., objective_beta)",
 	);
 	console.error(
 		'  --prompt1 TXT  Inline prompt for P1 mockllm/llm bot (e.g., "Always attack first")',
