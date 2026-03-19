@@ -8,6 +8,11 @@ import {
 } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	type BaselineScoreboard,
+	buildBaselineScoreboard,
+	renderBaselineScoreboardMarkdown,
+} from "../src/reporting/baselineScoreboard";
 import { analyzeBehaviorFromArtifacts } from "../src/reporting/behaviorMetrics";
 
 type Scenario = "midfield" | "melee" | "all_infantry" | "all_cavalry";
@@ -616,6 +621,20 @@ function normalizeApiGraduationLane(
 		return "api_smoke";
 	}
 	return "api_full";
+}
+
+export function writeScoreboardArtifacts(
+	outputDir: string,
+	scoreboard: BaselineScoreboard,
+): {
+	jsonPath: string;
+	markdownPath: string;
+} {
+	const jsonPath = path.join(outputDir, "scoreboard.json");
+	const markdownPath = path.join(outputDir, "scoreboard.md");
+	writeFileSync(jsonPath, JSON.stringify(scoreboard, null, 2));
+	writeFileSync(markdownPath, renderBaselineScoreboardMarkdown(scoreboard));
+	return { jsonPath, markdownPath };
 }
 
 function completionRateThresholdForLane(lane: ApiGraduationLane): number {
@@ -1515,7 +1534,15 @@ async function main() {
 	};
 
 	const summaryPath = path.join(outputBaseAbs, "benchmark-summary.json");
+	const scoreboard = buildBaselineScoreboard({
+		fastLaneDir: fastLaneAbs,
+		behaviorByMatchup,
+		apiLaneDir: withApi ? apiLaneAbs : undefined,
+		apiTelemetry: withApi ? apiMatchTelemetry : undefined,
+	});
 	writeFileSync(summaryPath, JSON.stringify(benchmarkSummary, null, 2));
+	const { jsonPath: scoreboardPath, markdownPath: scoreboardMarkdownPath } =
+		writeScoreboardArtifacts(outputBaseAbs, scoreboard);
 	if (withApi && apiGraduation) {
 		const nextHistory: ApiGraduationHistoryEntry[] = [
 			...apiGraduationHistory,
@@ -1531,6 +1558,8 @@ async function main() {
 
 	console.log("\nBenchmark complete.");
 	console.log(`Summary: ${summaryPath}`);
+	console.log(`Scoreboard: ${scoreboardPath}`);
+	console.log(`Scoreboard Markdown: ${scoreboardMarkdownPath}`);
 }
 
 const isExecutedDirectly = (() => {
