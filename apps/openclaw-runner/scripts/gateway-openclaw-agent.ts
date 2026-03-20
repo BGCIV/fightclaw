@@ -44,14 +44,21 @@ type TurnContextSummary = {
 	ownRecentThoughts: string[];
 };
 
-const debugEnabled = process.env.OPENCLAW_DEBUG === "1";
+const EMPTY_TURN_CONTEXT: TurnContextSummary = {
+	turnInfo: null,
+	enemyRecentMoves: [],
+	enemyRecentThoughts: [],
+	ownRecentMoves: [],
+	ownRecentThoughts: [],
+};
+
 const BOOTSTRAP_CACHE_PATH = join(
 	process.env.OPENCLAW_BOOTSTRAP_CACHE_DIR?.trim() || tmpdir(),
 	"fightclaw-openclaw-bootstrap.json",
 );
 
 export const resolveOpenClawBin = (env: NodeJS.ProcessEnv = process.env) => {
-	const raw = env.OPENCLAW_BIN?.trim();
+	const raw = env.OPENCLAW_LOCAL_BIN?.trim() || env.OPENCLAW_BIN?.trim();
 	return raw && raw.length > 0 ? raw : "openclaw";
 };
 
@@ -105,11 +112,7 @@ const shorten = (value: string, maxChars = 160) => {
 	return `${cleaned.slice(0, maxChars - 1)}…`;
 };
 
-const shortenJson = (value: unknown, maxChars = 260) => {
-	const serialized =
-		typeof value === "string" ? value : JSON.stringify(value ?? null);
-	return shorten(serialized, maxChars);
-};
+const debugEnabled = process.env.OPENCLAW_DEBUG === "1";
 
 const summarizeState = (state: MatchState) => {
 	const units = Object.values(state.units ?? {});
@@ -148,6 +151,12 @@ const summarizeState = (state: MatchState) => {
 				}
 			: null,
 	};
+};
+
+const shortenJson = (value: unknown, maxChars = 260) => {
+	const serialized =
+		typeof value === "string" ? value : JSON.stringify(value ?? null);
+	return shorten(serialized, maxChars);
 };
 
 const asStringArray = (value: unknown): string[] => {
@@ -246,13 +255,7 @@ const normalizePartyContext = (
 
 const summarizeTurnContext = (raw: unknown): TurnContextSummary => {
 	if (!isRecord(raw)) {
-		return {
-			turnInfo: null,
-			enemyRecentMoves: [],
-			enemyRecentThoughts: [],
-			ownRecentMoves: [],
-			ownRecentThoughts: [],
-		};
+		return EMPTY_TURN_CONTEXT;
 	}
 
 	const ownFromNested = normalizePartyContext(raw.own);
@@ -418,12 +421,12 @@ const buildBootstrapPrefix = (input: {
 	return [
 		`SYSTEM_INIT: You are Fightclaw agent "${input.agentName}" (${input.agentId}).`,
 		"You are running in production turn-loop mode.",
-		"Treat Fightclaw game rules and strategy references as preloaded local knowledge.",
-		"Do not ask for rule docs or missing setup context during live turns.",
-		"Each turn you will receive a TURN_PAYLOAD JSON object with match state and recent context.",
+		"Treat Fightclaw game rules/strategy as preloaded local knowledge from skill references.",
+		"Do not ask for rules docs or missing setup context during turns.",
+		"Each turn you will receive a TURN_PAYLOAD JSON object with match state + context.",
 		'You must reply in ONE line of valid JSON only: {"move": <one legal move object>, "publicThought": "<short sentence>"}',
 		"publicThought must be concise, public-safe, and in-character.",
-		`strategyPrompt=${JSON.stringify(input.strategyPrompt ?? "none")}`,
+		`strategyPrompt=${input.strategyPrompt ?? "none"}`,
 	].join("\n");
 };
 
@@ -433,12 +436,6 @@ const buildTurnPayload = (input: {
 	state: MatchState;
 	legalMoves: Move[];
 	turnContext: TurnContextSummary;
-	turnActionIndex?: number;
-	remainingActionBudget?: number;
-	previousActionsThisTurn?: unknown;
-	finishOverlay?: boolean;
-	strategyDirective?: string;
-	strategyPrompt?: string | null;
 }) => {
 	const summary = summarizeState(input.state);
 	const fallback = (values: string[]) =>
@@ -447,14 +444,6 @@ const buildTurnPayload = (input: {
 	return {
 		matchId: input.matchId,
 		stateVersion: input.stateVersion,
-		turnActionIndex: input.turnActionIndex ?? 1,
-		remainingActionBudget: input.remainingActionBudget ?? 1,
-		previousActionsThisTurn: input.previousActionsThisTurn ?? [],
-		finishOverlay: input.finishOverlay === true,
-		...(input.strategyDirective
-			? { strategyDirective: input.strategyDirective }
-			: {}),
-		...(input.strategyPrompt ? { strategyPrompt: input.strategyPrompt } : {}),
 		boardSummary: summary,
 		turnInfo: input.turnContext.turnInfo ?? "none",
 		recentEnemyMoves: fallback(input.turnContext.enemyRecentMoves),
@@ -486,17 +475,23 @@ export const buildPrompt = (input: {
 		typeof input.strategyDirective === "string"
 			? input.strategyDirective.trim()
 			: "";
-	const strategyPrompt =
-		typeof input.strategyPrompt === "string" ? input.strategyPrompt.trim() : "";
 	const wantsFinishOverlay =
 		input.finishOverlay || strategyDirective.length > 0;
-	const promptLines = [
+	const turnContext = input.turnContext ?? EMPTY_TURN_CONTEXT;
+	const turnPayload = buildTurnPayload({
+		matchId: input.matchId,
+		stateVersion: input.stateVersion,
+		state: input.state,
+		legalMoves: input.legalMoves,
+		turnContext,
+	});
+	const sections = [
 		...(input.includeBootstrap
 			? [
 					buildBootstrapPrefix({
 						agentId: input.agentId,
 						agentName: input.agentName,
-						strategyPrompt: strategyPrompt || null,
+						strategyPrompt: input.strategyPrompt ?? null,
 					}),
 				]
 			: []),
@@ -505,65 +500,31 @@ export const buildPrompt = (input: {
 		"You may be called multiple times during the same player-turn.",
 		"Do not end the turn after one merely safe action if a legal high-value follow-up improves combat position, objective pressure, economy, or stronghold threat.",
 		"End the turn when no legal follow-up materially improves the position.",
+		...(wantsFinishOverlay
+			? [
+					"Prefer a legal terminal or high-pressure line when it is available.",
+					"Take the terminal line when it is legal.",
+					"If a legal attack or decisive follow-up exists, do not choose end_turn yet.",
+				]
+			: []),
 		"Respond with JSON only (no markdown, no prose), one line:",
 		'{"move": <one legal move object>, "publicThought": "<short public-safe sentence>"}',
 		"Do not invent fields. Do not output invalid JSON.",
+		...(strategyDirective.length > 0
+			? [`strategyDirective=${JSON.stringify(strategyDirective)}`]
+			: []),
+		...(input.strategyPrompt
+			? [`strategyPrompt=${JSON.stringify(input.strategyPrompt)}`]
+			: []),
 		`matchId=${input.matchId}, stateVersion=${input.stateVersion}`,
 		`turnActionIndex=${String(input.turnActionIndex ?? 1)}`,
 		`remainingActionBudget=${String(input.remainingActionBudget ?? 1)}`,
 		`previousActionsThisTurn=${JSON.stringify(input.previousActionsThisTurn ?? [])}`,
 		`stateSummary=${JSON.stringify(summary)}`,
+		`turnContextSummary=${JSON.stringify(turnPayload)}`,
 		`legalMoves=${JSON.stringify(input.legalMoves)}`,
 	];
-	if (wantsFinishOverlay) {
-		promptLines.splice(
-			4,
-			0,
-			"Prefer a legal terminal or high-pressure line when it is available.",
-			"Take the terminal line when it is legal.",
-			"If a legal attack or decisive follow-up exists, do not choose end_turn yet.",
-		);
-	}
-	if (strategyDirective.length > 0) {
-		promptLines.splice(
-			8,
-			0,
-			`strategyDirective=${JSON.stringify(strategyDirective)}`,
-		);
-	}
-	if (strategyPrompt.length > 0) {
-		promptLines.splice(
-			9,
-			0,
-			`strategyPrompt=${JSON.stringify(strategyPrompt)}`,
-		);
-	}
-	if (input.turnContext || input.includeBootstrap) {
-		promptLines.push(
-			`TURN_PAYLOAD=${JSON.stringify(
-				buildTurnPayload({
-					matchId: input.matchId,
-					stateVersion: input.stateVersion,
-					state: input.state,
-					legalMoves: input.legalMoves,
-					turnContext: input.turnContext ?? {
-						turnInfo: null,
-						enemyRecentMoves: [],
-						enemyRecentThoughts: [],
-						ownRecentMoves: [],
-						ownRecentThoughts: [],
-					},
-					turnActionIndex: input.turnActionIndex,
-					remainingActionBudget: input.remainingActionBudget,
-					previousActionsThisTurn: input.previousActionsThisTurn,
-					finishOverlay: input.finishOverlay,
-					strategyDirective: strategyDirective || undefined,
-					strategyPrompt: strategyPrompt || null,
-				}),
-			)}`,
-		);
-	}
-	return promptLines.join("\n");
+	return sections.join("\n");
 };
 
 const extractJsonObject = (text: string): Record<string, unknown> | null => {
@@ -634,9 +595,9 @@ const callOpenClawAgent = async (args: {
 	message: string;
 }): Promise<string> => {
 	const sshTarget = process.env.OPENCLAW_SSH_TARGET?.trim();
-	const localBin =
-		process.env.OPENCLAW_LOCAL_BIN?.trim() || resolveOpenClawBin();
-	const remoteBin = process.env.OPENCLAW_REMOTE_BIN?.trim() || localBin;
+	const remoteBin =
+		process.env.OPENCLAW_REMOTE_BIN?.trim() || "/usr/local/bin/openclaw";
+	const localBin = resolveOpenClawBin();
 	const shQuote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
 	const command = sshTarget ? "ssh" : localBin;
 	const commandArgs = (() => {
@@ -785,8 +746,8 @@ const main = async () => {
 		process.env.OPENCLAW_AGENT_LOCAL === "1" ||
 		process.env.OPENCLAW_AGENT_LOCAL?.toLowerCase() === "true";
 	const channel = process.env.OPENCLAW_AGENT_CHANNEL?.trim() || "last";
-	const strategyPrompt = normalizeStrategyPrompt(payload.strategyPrompt);
 	const turnContext = summarizeTurnContext(payload.turnContext);
+	const strategyPrompt = normalizeStrategyPrompt(payload.strategyPrompt);
 	const sessionId = resolveSessionId({
 		matchId: payload.matchId ?? "match",
 		agentSelector,
@@ -833,9 +794,7 @@ const main = async () => {
 			await markBootstrapComplete(sessionId);
 		}
 		const textReply = extractTextReply(rawAgent);
-		const decoded = textReply
-			? extractJsonObject(textReply)
-			: extractJsonObject(rawAgent);
+		const decoded = textReply ? extractJsonObject(textReply) : null;
 		if (!decoded) {
 			const publicThoughtFromModel = textReply?.trim()
 				? sanitizeModelTextForPublicThought(textReply)
@@ -846,14 +805,15 @@ const main = async () => {
 					: debugEnabled
 						? ` raw=${shorten(rawAgent, 120)}`
 						: "";
-			const fallback = buildLegalFallback(
-				state,
-				"Model reply was not parseable JSON; selected deterministic legal fallback.",
+			process.stdout.write(
+				JSON.stringify(
+					buildLegalFallback(
+						state,
+						publicThoughtFromModel ??
+							`Model reply was not parseable JSON; selected deterministic legal fallback.${debug}`,
+					),
+				),
 			);
-			fallback.publicThought =
-				publicThoughtFromModel ??
-				`${fallback.publicThought ?? "Selected deterministic legal fallback."}${debug}`;
-			process.stdout.write(JSON.stringify(fallback));
 			return;
 		}
 
@@ -890,12 +850,14 @@ const main = async () => {
 		const errorText = debugEnabled
 			? ` (${shorten(error instanceof Error ? error.message : String(error), 120)})`
 			: "";
-		const fallback = buildLegalFallback(
-			state,
-			"Agent call failed; selected deterministic legal fallback.",
+		process.stdout.write(
+			JSON.stringify(
+				buildLegalFallback(
+					state,
+					`Agent call failed; selected deterministic legal fallback.${errorText}`,
+				),
+			),
 		);
-		fallback.publicThought = `${fallback.publicThought ?? "Agent call failed; selected deterministic legal fallback."}${errorText}`;
-		process.stdout.write(JSON.stringify(fallback));
 	}
 };
 

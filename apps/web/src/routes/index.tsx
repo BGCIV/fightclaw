@@ -13,7 +13,6 @@ import {
 	type EngineEventsEvent,
 	type FeaturedSnapshot,
 	FeaturedStreamEnvelopeSchema,
-	type GameEndedEvent,
 	type MatchEndedEvent,
 	type MatchEventEnvelope,
 	MatchEventEnvelopeSchema,
@@ -97,7 +96,6 @@ function createSpectateStreamController(input: {
 		source.addEventListener("engine_events", onEnvelope as EventListener);
 		source.addEventListener("agent_thought", onEnvelope as EventListener);
 		source.addEventListener("match_ended", onEnvelope as EventListener);
-		source.addEventListener("game_ended", onEnvelope as EventListener);
 		source.addEventListener("error", () => {
 			if (!active) return;
 			source?.close();
@@ -137,9 +135,9 @@ function SpectatorLanding() {
 	const [thoughtsA, setThoughtsA] = useState<string[]>([]);
 	const [thoughtsB, setThoughtsB] = useState<string[]>([]);
 	const [tickerItems, setTickerItems] = useState<BroadcastTickerItem[]>([]);
-	const [terminalEvent, setTerminalEvent] = useState<
-		MatchEndedEvent | GameEndedEvent | null
-	>(null);
+	const [terminalEvent, setTerminalEvent] = useState<MatchEndedEvent | null>(
+		null,
+	);
 	const [publicIdentityById, setPublicIdentityById] =
 		useState<PublicAgentIdentityMap>({});
 	const thoughtEventIdsRef = useRef(new Set<string>());
@@ -218,7 +216,6 @@ function SpectatorLanding() {
 				setConnectionStatus("live");
 				return;
 			case "match_ended":
-			case "game_ended":
 				setTerminalEvent(event);
 				setConnectionStatus("live");
 				return;

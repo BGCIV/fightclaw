@@ -9,7 +9,6 @@ import { MoveSchema } from "@fightclaw/engine";
 import type {
 	EngineEventsEvent,
 	FeaturedSnapshot,
-	GameEndedEvent,
 	MatchEndedEvent,
 	MatchEventEnvelope,
 } from "@fightclaw/protocol";
@@ -81,7 +80,7 @@ export type BroadcastDeskInput = {
 	thoughtsA: string[];
 	thoughtsB: string[];
 	tickerItems: BroadcastTickerItem[];
-	terminalEvent: MatchEndedEvent | GameEndedEvent | null;
+	terminalEvent: MatchEndedEvent | null;
 	publicIdentityById: PublicAgentIdentityMap;
 };
 
@@ -156,8 +155,8 @@ export function projectBroadcastTickerItem(
 
 export function isTerminalDeskEvent(
 	event: MatchEventEnvelope,
-): event is MatchEndedEvent | GameEndedEvent {
-	return event.event === "match_ended" || event.event === "game_ended";
+): event is MatchEndedEvent {
+	return event.event === "match_ended";
 }
 
 export function projectPublicCommentary(thoughts: string[]): string {
@@ -262,7 +261,7 @@ function buildStyleTag(
 
 function buildResultSummary(
 	state: MatchState | null,
-	terminalEvent: MatchEndedEvent | GameEndedEvent | null,
+	terminalEvent: MatchEndedEvent | null,
 ): BroadcastResultSummary | null {
 	if (!terminalEvent && state?.status !== "ended") return null;
 
