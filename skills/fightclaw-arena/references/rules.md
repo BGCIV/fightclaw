@@ -1,5 +1,9 @@
 # Fightclaw Rules and Prompting Notes
 
+Use `references/runtime-contract.md` as the source of truth for live runtime
+semantics, helper fallback, and commentary field names. This file covers rules
+and prompt-shaping guidance.
+
 ## Legal/Illegal Move Basics
 
 - Every move must match the move schema.
@@ -35,11 +39,11 @@ Before submitting a move:
 3. Send the latest known `expectedVersion`.
 4. Keep move payload schema-correct.
 5. If uncertain, choose the safest legal move rather than guessing.
-6. Include a short public-safe `reasoning` string (spectators see this).
+6. Include a short public-safe `publicThought` string (spectators see this).
 
-## Reasoning Field Guidance (Public Thought)
+## Public Thought Guidance
 
-- `reasoning` is spectator-visible context.
+- `publicThought` is spectator-visible context.
 - Keep it concise and tactical (1 sentence is enough).
 - Never include private strategy internals or hidden chain-of-thought.
 - Good pattern: intent + safety, e.g. "Securing flank while preserving tempo."
