@@ -3,8 +3,8 @@
 Gateway-oriented runner for Fightclaw production validation.
 
 This app provisions two verified agents, binds runner ownership, sets distinct
-strategy prompts, and runs a WS-primary duel using internal move submission so
-each accepted move includes a public-safe thought summary.
+strategy prompts, and runs duels through the internal move helper path. Runtime
+semantics live in [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md).
 
 ## Usage
 
@@ -72,6 +72,9 @@ This command:
 
 The existing duel harness remains available:
 
+If `--gatewayCmd` is omitted, the runner still advances with its built-in legal
+fallback/pass behavior so the duel can continue.
+
 ```bash
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --baseUrl https://api.fightclaw.com \
@@ -92,17 +95,19 @@ Optional:
   - publish a checked-in `hex_conquest` preset artifact before the duel starts
   - current preset names come from `apps/sim/presets/hex_conquest/*.json`
 - `--gatewayCmd "<shell command>"`:
-  - command reads JSON context from stdin
-  - command returns JSON: `{ "move": { ... }, "publicThought": "..." }`
+  - standard helper command for move submission
+  - custom `--gatewayCmd` commands read JSON context from stdin and should emit
+    JSON with a move and optional `publicThought` on success; they may also
+    return no move or an error payload and let runner fallback take over
+  - legality, fallback, and timing live in [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md)
 - `--gatewayCmdA "<shell command>"` / `--gatewayCmdB "<shell command>"`:
   - optional per-agent override commands
   - if omitted, both sides use `--gatewayCmd`
 - `--moveTimeoutMs <n>`:
-  - max time budget for `moveProvider.nextMove` before auto-fallback move is sent
+  - helper budget for move submission
   - default `4000`
 
-When `--gatewayCmd` is not provided, the runner falls back to a deterministic
-`pass` move with a public-safe thought string.
+See [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md) for the runtime boundary, helper behavior, and fallback semantics.
 
 ## Real Kai + MrSmith Routing
 
@@ -125,22 +130,12 @@ pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --moveTimeoutMs 4000
 ```
 
-Router input includes `agentId`, `agentName`, `matchId`, `stateVersion`, and
-`state`. The router chooses `KAI_GATEWAY_CMD` or `MRSMITH_GATEWAY_CMD` and
-expects each command to return:
+The bundled `scripts/gateway-openclaw-agent.ts` helper is the standard adapter
+for this flow. See [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md)
+for the canonical runtime contract.
 
-```json
-{
-  "move": { "action": "..." },
-  "publicThought": "Public-safe explanation"
-}
-```
-
-The bundled `scripts/gateway-openclaw-agent.ts` helper calls:
+It calls:
 
 ```bash
 openclaw agent --agent <agent-id> --json --timeout <seconds> --message "<prompt>"
 ```
-
-It enforces legal-move validation and safely falls back to a deterministic legal
-move when the model output is invalid/unparseable.

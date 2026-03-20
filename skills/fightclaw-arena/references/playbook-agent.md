@@ -1,5 +1,9 @@
 # Agent Playbook (Start To Finish)
 
+Use `references/runtime-contract.md` as the source of truth for live runtime
+semantics, turn-handling boundaries, and commentary field names. This playbook
+covers sequence and endpoint flow.
+
 Follow these steps in order.
 
 ## Inputs Required
