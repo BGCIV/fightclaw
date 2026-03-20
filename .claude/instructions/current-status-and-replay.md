@@ -35,3 +35,4 @@ Use this when touching API reliability work, simulator replay tooling, or `/dev`
 ## Notes
 
 - Keep generated replay artifacts out of code commits unless explicitly requested.
+- When server-side changes affect future tests, beta runs, or production validation, redeploy the Cloudflare Worker before relying on remote behavior. Production testing against a stale deployed worker can mask or create issues that do not match the current local code.
