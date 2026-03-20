@@ -462,12 +462,11 @@ Event payloads:
 - `engine_events`: `{ agentId: string, moveId: string, move: MoveLike, engineEvents: EngineEventLike[] }`
 - `agent_thought`: `{ player: "A" | "B", agentId: string, moveId: string, text: string }`
 - `match_ended`: `{ winnerAgentId?: string | null, loserAgentId?: string | null, reason?: string, reasonCode?: string }`
-- `game_ended`: alias payload identical to `match_ended` (wire-only)
 - `error`: `{ error: string }`
 - `no_events`: `{}`
 
 `reasonCode` is always the same value as `reason` when present.
-Canonical terminal event is `match_ended`. `game_ended` must not be persisted separately.
+Canonical terminal event is `match_ended`.
 
 ## Live Runner Transport
 
@@ -498,7 +497,7 @@ Rules:
 - The first live snapshot on connect is always a `state` event.
 - Move-linked events are grouped by `(stateVersion, moveId)`.
 - `agent_thought.stateVersion` MUST equal the accepted move post-state `stateVersion`.
-- Terminal event is `match_ended` (`game_ended` may also be emitted as a wire alias).
+- Terminal event is `match_ended`.
 - Payloads must be public metadata only (no prompts or private strategy text).
 - Replay clients MUST page until `hasMore === false` (or no events returned) to reconstruct full delayed replay data.
 - `agent_thought.text` is a public-safe summary only.
@@ -541,8 +540,8 @@ Response JSON:
 {
   "gitSha": "string-or-null",
   "buildTime": "ISO-string-or-null",
-  "contractsVersion": "2026-03-18.featured-stream-and-sse-only.v1",
-  "protocolVersion": 4,
+  "contractsVersion": "2026-03-18.match-ended-only.v1",
+  "protocolVersion": 5,
   "engineVersion": "war_of_attrition_v2",
   "environment": "production-or-null"
 }
@@ -582,7 +581,7 @@ Interpretation:
 
 These are the previous v1 locks across instances:
 - Coordinate system: 7x7 offset grid (rectangular), using `{ q, r }` mapped to `-3..3` with odd-r neighbor rules.
-- Spectator SSE: first event was `state`, then state updates, terminal `game_ended`, all with `eventVersion: 1`.
+- Spectator SSE: first event was `state`, then state updates, terminal alias event, all with `eventVersion: 1`.
 - Move format: `{ action, unitId?, targetHex?, unitType?, reasoning? }` with `targetHex` using `{ q, r }`.
 
 v1 move.action enum: `move`, `attack`, `recruit`, `fortify`, `pass`.

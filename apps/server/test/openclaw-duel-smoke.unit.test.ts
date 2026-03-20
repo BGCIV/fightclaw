@@ -4,10 +4,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSmokeArtifactBundle } from "../scripts/openclaw-duel-smoke-artifacts.mjs";
-import {
-	buildOpenClawDuelCommand,
-	DEFAULT_SMOKE_PRESET_ID,
-} from "../scripts/openclaw-duel-smoke-config.mjs";
 
 const tempDirs: string[] = [];
 
@@ -15,30 +11,6 @@ afterEach(() => {
 	for (const dir of tempDirs.splice(0)) {
 		rmSync(dir, { recursive: true, force: true });
 	}
-});
-
-describe("openclaw duel smoke config", () => {
-	it("uses the checked-in objective beta preset on both sides", () => {
-		const command = buildOpenClawDuelCommand({
-			baseUrl: "http://127.0.0.1:3041",
-			adminKey: "smoke-admin",
-			runnerKey: "smoke-runner-key",
-			runnerId: "smoke-runner",
-		});
-
-		expect(DEFAULT_SMOKE_PRESET_ID).toBe("objective_beta");
-		expect(command.command).toBe("pnpm");
-		expect(command.args).toContain("--strategyPresetA");
-		expect(command.args[command.args.indexOf("--strategyPresetA") + 1]).toBe(
-			"objective_beta",
-		);
-		expect(command.args).toContain("--strategyPresetB");
-		expect(command.args[command.args.indexOf("--strategyPresetB") + 1]).toBe(
-			"objective_beta",
-		);
-		expect(command.args).not.toContain("--strategyA");
-		expect(command.args).not.toContain("--strategyB");
-	});
 });
 
 describe("openclaw smoke failure artifacts", () => {

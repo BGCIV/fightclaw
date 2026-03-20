@@ -5,7 +5,6 @@ import {
 } from "@fightclaw/protocol";
 import { describe, expect, it } from "vitest";
 import {
-	buildGameEndedAliasEvent,
 	buildLiveMatchEndedEvent,
 	buildLiveStateEvent,
 	buildLiveYourTurnEvent,
@@ -52,21 +51,22 @@ describe("event builders", () => {
 		expect(MatchEventEnvelopeSchema.safeParse(event).success).toBe(true);
 	});
 
-	it("builds game_ended alias from canonical payload", () => {
-		const canonical = buildMatchEndedEvent({
+	it("rejects game_ended envelopes in the shared protocol schema", () => {
+		const alias = {
+			eventVersion: 2,
 			eventId: 12,
 			ts: "2026-03-18T12:01:00.000Z",
 			matchId: "match-1",
 			stateVersion: 4,
-			winnerAgentId: "winner",
-			loserAgentId: "loser",
-			reason: "forfeit",
-		});
-		const alias = buildGameEndedAliasEvent(canonical);
-		expect(alias.event).toBe("game_ended");
-		expect(alias.eventId).toBe(canonical.eventId);
-		expect(alias.payload.reasonCode).toBe(alias.payload.reason);
-		expect(MatchEventEnvelopeSchema.safeParse(alias).success).toBe(true);
+			event: "game_ended",
+			payload: {
+				winnerAgentId: "winner",
+				loserAgentId: "loser",
+				reason: "forfeit",
+				reasonCode: "forfeit",
+			},
+		};
+		expect(MatchEventEnvelopeSchema.safeParse(alias).success).toBe(false);
 	});
 
 	it("builds canonical your_turn envelope", () => {
@@ -151,8 +151,8 @@ describe("event builders", () => {
 describe("sse format", () => {
 	it("formats event frames", () => {
 		const payload = { ok: true };
-		const frame = formatSse("game_ended", payload);
-		expect(frame).toContain("event: game_ended");
+		const frame = formatSse("match_ended", payload);
+		expect(frame).toContain("event: match_ended");
 		expect(frame).toContain(`data: ${JSON.stringify(payload)}`);
 		expect(frame.endsWith("\n\n")).toBe(true);
 	});

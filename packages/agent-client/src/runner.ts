@@ -5,8 +5,10 @@ import type { ArenaClient } from "./client";
 import { ArenaHttpError } from "./errors";
 import type {
 	MatchEventHandler,
+	MatchStateResponse,
 	MoveSubmitResponse,
 	QueueWaitEvent,
+	QueueWaitResponse,
 	RunMatchOptions,
 	RunMatchResult,
 	RunnerSession,
@@ -77,6 +79,17 @@ const resolveTerminalFromMove = (
 	};
 };
 
+const didMoveResponseAdvanceTurn = (
+	result: MoveSubmitResponse,
+	expectedVersion: number,
+) => {
+	return (
+		!result.ok &&
+		typeof result.stateVersion === "number" &&
+		result.stateVersion > expectedVersion
+	);
+};
+
 const parseQueueEvent = (events: QueueWaitEvent[]) => {
 	for (const event of events) {
 		if (event.event === "match_found" && typeof event.matchId === "string") {
@@ -90,7 +103,22 @@ const parseQueueEvent = (events: QueueWaitEvent[]) => {
 	return null;
 };
 
+const shouldRetryQueueWait = (error: unknown) => {
+	return (
+		error instanceof ArenaHttpError &&
+		error.status === 408 &&
+		error.envelope?.code === "queue_wait_disconnect"
+	);
+};
+
 const shouldFailStreamConnect = (error: unknown) => {
+	if (
+		error instanceof ArenaHttpError &&
+		error.status === 404 &&
+		error.envelope?.code === "match_stream_attach_gap"
+	) {
+		return false;
+	}
 	return (
 		error instanceof ArenaHttpError &&
 		error.status >= 400 &&
@@ -105,7 +133,7 @@ const asTerminalResult = (
 	agentId: string,
 	opponentId: string | null,
 ): RunMatchResult | null => {
-	if (event.event !== "match_ended" && event.event !== "game_ended") {
+	if (event.event !== "match_ended") {
 		return null;
 	}
 	const winner = event.payload.winnerAgentId ?? null;
@@ -116,6 +144,27 @@ const asTerminalResult = (
 		winnerAgentId: winner,
 		loserAgentId:
 			event.payload.loserAgentId ?? normalizeLoser(agentId, opponentId, winner),
+	};
+};
+
+const buildTerminalEnvelopeFromState = (
+	state: MatchStateResponse["state"],
+	matchId: string,
+): MatchEventEnvelope | null => {
+	if (!state || state.status !== "ended") return null;
+	return {
+		eventVersion: 2,
+		eventId: state.stateVersion,
+		ts: new Date().toISOString(),
+		matchId,
+		stateVersion: state.stateVersion,
+		event: "match_ended",
+		payload: {
+			winnerAgentId: state.winnerAgentId ?? null,
+			loserAgentId: state.loserAgentId ?? null,
+			reasonCode: state.endReason ?? "ended",
+			reason: state.endReason ?? "ended",
+		},
 	};
 };
 
@@ -139,6 +188,8 @@ export const createRunnerSession = (
 	let stopStream: (() => void) | null = null;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let closed = false;
+	let sameCursorReconnects = 0;
+	let terminalStateCheckInFlight = false;
 
 	const clearReconnectTimer = () => {
 		if (!reconnectTimer) return;
@@ -175,7 +226,15 @@ export const createRunnerSession = (
 					if (Date.now() - startedAt > queueTimeoutMs) {
 						throw new Error("Timed out waiting for queue match.");
 					}
-					const waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					let waited: QueueWaitResponse;
+					try {
+						waited = await client.waitForMatch(queueWaitTimeoutSeconds);
+					} catch (error) {
+						if (shouldRetryQueueWait(error)) {
+							continue;
+						}
+						throw error;
+					}
 					const queueEvent = parseQueueEvent(waited.events);
 					if (!queueEvent) continue;
 					matchId = queueEvent.matchId;
@@ -217,6 +276,7 @@ export const createRunnerSession = (
 
 		const connectStream = async () => {
 			if (closed) return;
+			const streamCursor = lastEventId;
 			try {
 				const nextStop = await client.subscribeMatchStream(
 					started.matchId,
@@ -228,6 +288,32 @@ export const createRunnerSession = (
 						afterId: lastEventId,
 						onClose: () => {
 							if (closed) return;
+							if (lastEventId === streamCursor) {
+								sameCursorReconnects += 1;
+							} else {
+								sameCursorReconnects = 0;
+							}
+							if (sameCursorReconnects >= 2) {
+								void (async () => {
+									if (terminalStateCheckInFlight) return;
+									terminalStateCheckInFlight = true;
+									try {
+										const state = await client.getMatchState(started.matchId);
+										const terminalEvent = buildTerminalEnvelopeFromState(
+											state.state,
+											started.matchId,
+										);
+										if (terminalEvent) {
+											await handler(terminalEvent);
+											return;
+										}
+									} finally {
+										terminalStateCheckInFlight = false;
+									}
+									scheduleReconnect();
+								})();
+								return;
+							}
 							scheduleReconnect();
 						},
 					},
@@ -371,6 +457,13 @@ export const runMatch = async (
 						});
 						if (response.ok) {
 							lastObservedVersion = response.state.stateVersion;
+							handledTurns.add(expectedVersion);
+						} else if (didMoveResponseAdvanceTurn(response, expectedVersion)) {
+							const advancedStateVersion = response.stateVersion;
+							lastObservedVersion = Math.max(
+								lastObservedVersion,
+								advancedStateVersion ?? lastObservedVersion,
+							);
 							handledTurns.add(expectedVersion);
 						}
 

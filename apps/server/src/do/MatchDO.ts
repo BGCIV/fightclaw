@@ -15,10 +15,10 @@ import type { AppBindings } from "../appTypes";
 import { ELO_START } from "../constants/rating";
 import { log } from "../obs/log";
 import { emitMetric } from "../obs/metrics";
+import { buildRunnerSessionObservability } from "../obs/runnerSession";
 import {
 	buildAgentThoughtEvent,
 	buildEngineEventsEvent,
-	buildGameEndedAliasEvent,
 	buildLiveMatchEndedEvent,
 	buildLiveStateEvent,
 	buildLiveYourTurnEvent,
@@ -26,7 +26,6 @@ import {
 	buildStoredMatchEventEnvelope,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
-import { getTestStreamMaxLifetimeMs } from "../utils/testStreamTimeout";
 import { isRecord } from "../utils/typeGuards";
 
 type MatchEnv = Pick<
@@ -37,7 +36,6 @@ type MatchEnv = Pick<
 	| "INTERNAL_RUNNER_KEY"
 	| "TURN_TIMEOUT_SECONDS"
 	| "TEST_MODE"
-	| "TEST_STREAM_MAX_LIFETIME_MS"
 	| "OBS"
 	| "SENTRY_ENVIRONMENT"
 >;
@@ -96,6 +94,28 @@ type IdempotencyEntry = {
 };
 
 type StreamWriter = WritableStreamDefaultWriter<Uint8Array>;
+type RunnerStreamKind = "agent" | "spectator";
+type RunnerStreamCloseReason =
+	| "client_abort"
+	| "write_timeout"
+	| "terminal_complete";
+type ReplaySummary = {
+	replayedCount: number;
+	replayedTerminal: boolean;
+	lastReplayedEventId: number | null;
+};
+type StreamAttachmentMeta = {
+	observability: ReturnType<typeof buildRunnerSessionObservability>;
+	kind: RunnerStreamKind;
+	requestId: string | null;
+	agentId: string | null;
+	matchId: string | null;
+	route: string | null;
+	afterId: number;
+	lastObservedEventId: number | null;
+	closeReason: RunnerStreamCloseReason | null;
+	closed: boolean;
+};
 
 const IDEMPOTENCY_PREFIX = "move:";
 const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
@@ -103,6 +123,7 @@ const IDEMPOTENCY_INDEX_KEY = "idempotency:index";
 const IDEMPOTENCY_MAX = 200;
 const MATCH_ID_KEY = "matchId";
 const SSE_WRITE_TIMEOUT_MS = 5000;
+const TEST_STREAM_MAX_LIFETIME_MS = 30000;
 const DEFAULT_TURN_TIMEOUT_SECONDS = 60;
 const ELO_K = 32;
 const MAX_PUBLIC_THOUGHT_LEN = 280;
@@ -208,6 +229,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	private readonly encoder = new TextEncoder();
 	private spectators = new Set<StreamWriter>();
 	private agentStreams = new Map<string, Set<StreamWriter>>();
+	private streamAttachments = new Map<StreamWriter, StreamAttachmentMeta>();
 	private matchId: string | null = null;
 
 	constructor(ctx: DurableObjectState, env: MatchEnv) {
@@ -557,6 +579,26 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					error: "Version mismatch.",
 					stateVersion: state.stateVersion,
 				} satisfies MoveResponse;
+				if (state.stateVersion > body.expectedVersion) {
+					const matchId =
+						request.headers.get("x-match-id") ??
+						this.matchId ??
+						this.ctx.id.name;
+					const observability = buildRunnerSessionObservability({
+						requestId: request.headers.get("x-request-id"),
+						agentId,
+						matchId,
+						route: matchId
+							? `/v1/matches/${matchId}/move`
+							: "/v1/matches/:id/move",
+						transport: "sse",
+					});
+					observability.logMoveConflict({
+						expectedVersion: body.expectedVersion,
+						actualVersion: state.stateVersion,
+					});
+					observability.emitMoveConflict(this.env);
+				}
 				await this.storeIdempotency(
 					body.moveId,
 					{ status: 409, body: response },
@@ -816,44 +858,89 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				state = await this.maybeEnforceTurnTimeout(state);
 			}
 
-			const { readable, writer, close } = this.createStream();
+			const { readable, writer } = this.createStream();
+			const matchId =
+				request.headers.get("x-match-id") ?? this.matchId ?? this.ctx.id.name;
+			const route = matchId
+				? `/v1/matches/${matchId}/stream`
+				: "/v1/matches/:id/stream";
+			const afterId = this.parseAfterId(request);
+			const observability = buildRunnerSessionObservability({
+				requestId: request.headers.get("x-request-id"),
+				agentId,
+				matchId,
+				route,
+				transport: "sse",
+			});
+			this.registerStreamAttachment(writer, {
+				observability,
+				kind: "agent",
+				requestId: request.headers.get("x-request-id"),
+				agentId,
+				matchId: matchId ?? null,
+				route,
+				afterId,
+				lastObservedEventId: null,
+				closeReason: null,
+				closed: false,
+			});
 			this.registerAgentStream(agentId, writer);
+			observability.logStreamAttached({ streamKind: "agent", afterId });
 			let cleanedUp = false;
 			let testTimeout: ReturnType<typeof setTimeout> | null = null;
-			const cleanup = () => {
+			const cleanup = (reason: RunnerStreamCloseReason = "client_abort") => {
 				if (cleanedUp) return;
 				cleanedUp = true;
 				if (testTimeout !== null) {
 					clearTimeout(testTimeout);
 					testTimeout = null;
 				}
-				this.unregisterAgentStream(agentId, writer);
-				void close();
+				this.markStreamCloseReason(writer, reason);
+				void this.finalizeStreamAttachment(writer);
 			};
 			if (this.env.TEST_MODE) {
-				testTimeout = setTimeout(cleanup, getTestStreamMaxLifetimeMs(this.env));
+				testTimeout = setTimeout(
+					() => cleanup("client_abort"),
+					TEST_STREAM_MAX_LIFETIME_MS,
+				);
 			}
-			this.handleAbort(request, cleanup);
+			this.handleAbort(request, () => cleanup("client_abort"));
 
 			if (state) {
-				const afterId = this.parseAfterId(request);
+				const resolvedMatchId = await this.resolveMatchId();
+				if (!resolvedMatchId) {
+					return new Response("Match id unavailable.", { status: 409 });
+				}
 				void (async () => {
-					const matchId = await this.resolveMatchId();
-					if (!matchId) {
-						cleanup();
-						return;
-					}
-					const replayedTerminal =
+					const replaySummary =
 						afterId > 0
-							? await this.replayRecordedEvents(writer, matchId, afterId)
-							: false;
+							? await this.replayRecordedEvents(
+									writer,
+									resolvedMatchId,
+									afterId,
+								)
+							: {
+									replayedCount: 0,
+									replayedTerminal: false,
+									lastReplayedEventId: null,
+								};
+					if (afterId > 0) {
+						observability.logStreamReplay({
+							streamKind: "agent",
+							afterId,
+							replayedCount: replaySummary.replayedCount,
+							replayedTerminal: replaySummary.replayedTerminal,
+							stateVersion: state.stateVersion,
+						});
+						observability.emitStreamResume(this.env);
+					}
 					try {
 						await this.sendEvent(
 							writer,
 							"state",
 							buildLiveStateEvent({
 								ts: state.updatedAt,
-								matchId,
+								matchId: resolvedMatchId,
 								stateVersion: state.stateVersion,
 								state: state.game,
 							}),
@@ -864,14 +951,14 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					}
 					this.sendYourTurnIfActive(state, agentId, writer);
 					if (state.status === "ended") {
-						if (!replayedTerminal) {
+						if (!replaySummary.replayedTerminal) {
 							try {
 								await this.sendEvent(
 									writer,
 									"match_ended",
 									buildLiveMatchEndedEvent({
 										ts: state.updatedAt,
-										matchId,
+										matchId: resolvedMatchId,
 										stateVersion: state.stateVersion,
 										winnerAgentId: state.winnerAgentId ?? null,
 										loserAgentId: state.loserAgentId ?? null,
@@ -883,11 +970,9 @@ export class MatchDO extends DurableObject<MatchEnv> {
 								return;
 							}
 						}
-						cleanup();
+						cleanup("terminal_complete");
 					}
-				})().catch(() => {
-					cleanup();
-				});
+				})();
 			}
 
 			return this.streamResponse(readable, cleanup);
@@ -906,13 +991,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		return {
 			readable: stream.readable,
 			writer,
-			close: async () => {
-				try {
-					await writer.close();
-				} catch {
-					// ignore
-				}
-			},
 		};
 	}
 
@@ -969,6 +1047,66 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		});
 	}
 
+	private registerStreamAttachment(
+		writer: StreamWriter,
+		meta: StreamAttachmentMeta,
+	) {
+		this.streamAttachments.set(writer, meta);
+	}
+
+	private markStreamCloseReason(
+		writer: StreamWriter,
+		reason: RunnerStreamCloseReason,
+	) {
+		const meta = this.streamAttachments.get(writer);
+		if (!meta || meta.closed) return;
+		if (!meta.closeReason) {
+			meta.closeReason = reason;
+		}
+	}
+
+	private recordStreamObservedEvent(writer: StreamWriter, data: unknown) {
+		const meta = this.streamAttachments.get(writer);
+		if (!meta || meta.closed) return;
+		if (!isRecord(data)) return;
+		if (typeof data.eventId !== "number" || !Number.isFinite(data.eventId)) {
+			return;
+		}
+		if (
+			meta.lastObservedEventId === null ||
+			data.eventId > meta.lastObservedEventId
+		) {
+			meta.lastObservedEventId = data.eventId;
+		}
+	}
+
+	private async finalizeStreamAttachment(writer: StreamWriter) {
+		const meta = this.streamAttachments.get(writer);
+		if (!meta || meta.closed) return;
+		meta.closed = true;
+		const reason = meta.closeReason ?? "client_abort";
+		meta.observability.logStreamClosed({
+			streamKind: meta.kind,
+			reason,
+			afterId: meta.afterId,
+			lastObservedEventId: meta.lastObservedEventId,
+		});
+		if (reason !== "terminal_complete") {
+			meta.observability.emitStreamDisconnect(this.env);
+		}
+		this.streamAttachments.delete(writer);
+		if (meta.kind === "agent" && meta.agentId) {
+			this.unregisterAgentStream(meta.agentId, writer);
+		} else {
+			this.spectators.delete(writer);
+		}
+		try {
+			await writer.close();
+		} catch {
+			// ignore
+		}
+	}
+
 	private registerAgentStream(agentId: string, writer: StreamWriter) {
 		const existing = this.agentStreams.get(agentId) ?? new Set<StreamWriter>();
 		existing.add(writer);
@@ -1005,8 +1143,14 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		writer: StreamWriter,
 		matchId: string,
 		afterId: number,
-	) {
-		if (afterId <= 0) return false;
+	): Promise<ReplaySummary> {
+		if (afterId <= 0) {
+			return {
+				replayedCount: 0,
+				replayedTerminal: false,
+				lastReplayedEventId: null,
+			};
+		}
 		const { results } = await this.env.DB.prepare(
 			[
 				"SELECT id, match_id, ts, event_type, payload_json",
@@ -1025,6 +1169,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				payload_json: string;
 			}>();
 		let replayedTerminal = false;
+		let replayedCount = 0;
+		let lastReplayedEventId: number | null = null;
 		for (const row of results ?? []) {
 			let payload: unknown = null;
 			try {
@@ -1044,8 +1190,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				replayedTerminal = true;
 			}
 			await this.sendEvent(writer, envelope.event, envelope);
+			replayedCount += 1;
+			lastReplayedEventId = row.id;
 		}
-		return replayedTerminal;
+		return { replayedCount, replayedTerminal, lastReplayedEventId };
 	}
 
 	private async broadcastState(state: MatchState) {
@@ -1078,7 +1226,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		});
 		for (const writer of writers) {
 			void this.sendEvent(writer, "your_turn", payload).catch(() => {
-				writers.delete(writer);
+				this.markStreamCloseReason(writer, "client_abort");
+				void this.finalizeStreamAttachment(writer);
 			});
 		}
 	}
@@ -1101,7 +1250,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				matchId,
 				stateVersion: state.stateVersion,
 			}),
-		);
+		).catch(() => {
+			this.markStreamCloseReason(writer, "client_abort");
+			void this.finalizeStreamAttachment(writer);
+		});
 	}
 
 	private async broadcastGameEnd(state: MatchState, reason: string) {
@@ -1122,11 +1274,6 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			"match_ended",
 			payload,
 		);
-		await this.broadcast(
-			[...this.spectators, ...this.allAgentWriters()],
-			"game_ended",
-			buildGameEndedAliasEvent(payload),
-		);
 	}
 
 	private allAgentWriters(): StreamWriter[] {
@@ -1146,12 +1293,8 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			try {
 				await this.sendEvent(writer, event, data);
 			} catch {
-				this.spectators.delete(writer);
-				for (const [agentId, set] of this.agentStreams.entries()) {
-					if (set.delete(writer) && set.size === 0) {
-						this.agentStreams.delete(agentId);
-					}
-				}
+				this.markStreamCloseReason(writer, "client_abort");
+				await this.finalizeStreamAttachment(writer);
 			}
 		}
 	}
@@ -1165,17 +1308,24 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		const payload = formatSse(event, data);
 		const write = writer.write(this.encoder.encode(payload));
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
+		let timedOut = false;
 		const timeout = new Promise((_, reject) => {
 			timeoutId = setTimeout(() => {
+				timedOut = true;
 				const error = new Error("SSE write timeout");
 				void writer.abort(error).catch(() => {
 					// ignore abort races on already-closing streams
 				});
+				this.markStreamCloseReason(writer, "write_timeout");
+				void this.finalizeStreamAttachment(writer);
 				reject(error);
 			}, timeoutMs);
 		});
 		try {
 			await Promise.race([write, timeout]);
+			if (!timedOut) {
+				this.recordStreamObservedEvent(writer, data);
+			}
 		} finally {
 			if (timeoutId !== null) clearTimeout(timeoutId);
 		}
@@ -1247,6 +1397,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 					.run();
 				return await this.getLatestRecordedEventId(matchId);
 			}
+
 			await this.env.DB.prepare(
 				"INSERT INTO match_events(match_id, turn, event_type, payload_json) VALUES (?, ?, ?, ?)",
 			)
@@ -1433,37 +1584,81 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		if (state) {
 			state = await this.maybeEnforceTurnTimeout(state);
 		}
-		const { readable, writer, close } = this.createStream();
+
+		const { readable, writer } = this.createStream();
+		const initialMatchId =
+			request.headers.get("x-match-id") ?? this.matchId ?? this.ctx.id.name;
+		const route = initialMatchId
+			? `/v1/matches/${initialMatchId}/spectate`
+			: "/v1/matches/:id/spectate";
+		const afterId = this.parseAfterId(request);
+		const observability = buildRunnerSessionObservability({
+			requestId: request.headers.get("x-request-id"),
+			matchId: initialMatchId,
+			route,
+			transport: "sse",
+		});
+
+		this.registerStreamAttachment(writer, {
+			observability,
+			kind: "spectator",
+			requestId: request.headers.get("x-request-id"),
+			agentId: null,
+			matchId: initialMatchId ?? null,
+			route,
+			afterId,
+			lastObservedEventId: null,
+			closeReason: null,
+			closed: false,
+		});
 		this.spectators.add(writer);
+		observability.logStreamAttached({ streamKind: "spectator", afterId });
+
 		let cleanedUp = false;
 		let testTimeout: ReturnType<typeof setTimeout> | null = null;
-		const cleanup = () => {
+		const cleanup = (reason: RunnerStreamCloseReason = "client_abort") => {
 			if (cleanedUp) return;
 			cleanedUp = true;
 			if (testTimeout !== null) {
 				clearTimeout(testTimeout);
 				testTimeout = null;
 			}
-			this.spectators.delete(writer);
-			void close();
+			this.markStreamCloseReason(writer, reason);
+			void this.finalizeStreamAttachment(writer);
 		};
 		if (this.env.TEST_MODE) {
-			testTimeout = setTimeout(cleanup, getTestStreamMaxLifetimeMs(this.env));
+			testTimeout = setTimeout(
+				() => cleanup("client_abort"),
+				TEST_STREAM_MAX_LIFETIME_MS,
+			);
 		}
-		this.handleAbort(request, cleanup);
+		this.handleAbort(request, () => cleanup("client_abort"));
 
 		if (state) {
-			const afterId = this.parseAfterId(request);
 			void (async () => {
 				const matchId = await this.resolveMatchId();
 				if (!matchId) {
 					cleanup();
 					return;
 				}
-				const replayedTerminal =
+				const replaySummary =
 					afterId > 0
 						? await this.replayRecordedEvents(writer, matchId, afterId)
-						: false;
+						: {
+								replayedCount: 0,
+								replayedTerminal: false,
+								lastReplayedEventId: null,
+							};
+				if (afterId > 0) {
+					observability.logStreamReplay({
+						streamKind: "spectator",
+						afterId,
+						replayedCount: replaySummary.replayedCount,
+						replayedTerminal: replaySummary.replayedTerminal,
+						stateVersion: state.stateVersion,
+					});
+					observability.emitStreamResume(this.env);
+				}
 				await this.sendEvent(
 					writer,
 					"state",
@@ -1474,21 +1669,22 @@ export class MatchDO extends DurableObject<MatchEnv> {
 						state: state.game,
 					}),
 				);
-				if (state.status !== "ended" || replayedTerminal) return;
-				const endedPayload = buildLiveMatchEndedEvent({
-					ts: state.updatedAt,
-					matchId,
-					stateVersion: state.stateVersion,
-					winnerAgentId: state.winnerAgentId ?? null,
-					loserAgentId: state.loserAgentId ?? null,
-					reason: state.endReason ?? "ended",
-				});
-				await this.sendEvent(writer, "match_ended", endedPayload);
-				await this.sendEvent(
-					writer,
-					"game_ended",
-					buildGameEndedAliasEvent(endedPayload),
-				);
+				if (state.status !== "ended") return;
+				if (!replaySummary.replayedTerminal) {
+					await this.sendEvent(
+						writer,
+						"match_ended",
+						buildLiveMatchEndedEvent({
+							ts: state.updatedAt,
+							matchId,
+							stateVersion: state.stateVersion,
+							winnerAgentId: state.winnerAgentId ?? null,
+							loserAgentId: state.loserAgentId ?? null,
+							reason: state.endReason ?? "ended",
+						}),
+					);
+				}
+				cleanup("terminal_complete");
 			})().catch(() => {
 				cleanup();
 			});
