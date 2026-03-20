@@ -42,6 +42,9 @@
 		},
 		"test:durable": {
 			"cache": false
+		},
+		"test:durable:smoke": {
+			"cache": false
 		}
 	}
 }

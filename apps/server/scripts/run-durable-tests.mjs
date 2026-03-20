@@ -1,6 +1,9 @@
-import { spawnSync } from "node:child_process";
 import net from "node:net";
 import { buildVitestRuns } from "./run-durable-tests-lib.mjs";
+import {
+	formatDurableRunSummary,
+	runVitestRuns,
+} from "./run-durable-tests-runner.mjs";
 
 const canListen = async () => {
 	return await new Promise((resolve) => {
@@ -20,7 +23,7 @@ const probe = await canListen();
 if (!probe.ok) {
 	const message = [
 		"Durable test lane cannot start because this environment forbids opening listening sockets.",
-		`Root error: ${(probe.err && probe.err.message) || "unknown"}`,
+		`Root error: ${probe.err?.message || "unknown"}`,
 		"",
 		"Set REQUIRE_DURABLE_NET=1 to fail hard instead of skipping.",
 	].join("\n");
@@ -34,18 +37,10 @@ if (!probe.ok) {
 	process.exit(0);
 }
 
-for (const run of buildVitestRuns(process.argv.slice(2))) {
-	const res = spawnSync(process.execPath, run.args, {
-		stdio: "inherit",
-		env: {
-			...process.env,
-			...run.env,
-		},
-	});
+const summary = await runVitestRuns(buildVitestRuns(process.argv.slice(2)), {
+	timeoutMs: process.env.DURABLE_TEST_TIMEOUT_MS,
+	write: console.log,
+});
 
-	if ((res.status ?? 1) !== 0) {
-		process.exit(res.status ?? 1);
-	}
-}
-
-process.exit(0);
+console.log(formatDurableRunSummary(summary));
+process.exit(summary.exitCode);
