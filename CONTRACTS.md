@@ -13,8 +13,8 @@ Canonical rules spec for v2:
 
 ## Locks (Must Not Drift) - v2 (War of Attrition)
 
-These are the hard contracts across instances for v2:
-- Coordinate system: 17x9 offset hex grid using `HexId` strings (`"A1".."I17"`), with odd-r neighbor rules defined by row parity.
+These are the hard public wire contracts for the current live runtime path in v2:
+- Live runtime coordinate system: 17x9 offset hex grid using `HexId` strings (`"A1".."I17"`), with odd-r neighbor rules defined by row parity.
 - Move format: `{ action, unitId?, to?, target?, at?, unitType?, reasoning? }` using `HexId` coordinates.
 - Turn progression: `turn` is a **full round** (A then B). `turn` increments only after Player B ends their player-turn.
 - Deterministic: no randomness in combat, capture, reserves, income, or victory.
