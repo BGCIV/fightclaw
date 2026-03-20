@@ -122,7 +122,7 @@ const createCorrelationId = (requestId?: string | null) => {
 	const cryptoApi = globalThis as typeof globalThis & {
 		crypto?: { randomUUID: () => string };
 	};
-	return cryptoApi.crypto?.randomUUID() ?? "runner-session";
+	return cryptoApi.crypto?.randomUUID?.() ?? "runner-session";
 };
 
 const baseEvent = (

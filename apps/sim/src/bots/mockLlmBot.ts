@@ -589,6 +589,40 @@ function shouldContinueTurnPlan(args: {
 	return args.nextBestNonTerminalScore >= CONTINUATION_SCORE_THRESHOLD;
 }
 
+function shouldAppendSyntheticEndTurn(args: {
+	originalState: MatchState;
+	plannedMoves: Move[];
+}): boolean {
+	if (args.plannedMoves.length === 0) return false;
+	const originalPlayer = Engine.currentPlayer(args.originalState);
+	let simulatedState = args.originalState;
+	for (const move of args.plannedMoves) {
+		if (move.action === "end_turn" || move.action === "pass") {
+			return false;
+		}
+		const {
+			metadata: _metadata,
+			reasoning: _reasoning,
+			...plainMove
+		} = move as Move & {
+			metadata?: unknown;
+			reasoning?: string;
+		};
+		const applied = Engine.applyMove(simulatedState, plainMove);
+		if (!applied.ok) {
+			return true;
+		}
+		simulatedState = applied.state;
+		if (Engine.isTerminal(simulatedState).ended) {
+			return false;
+		}
+		if (Engine.currentPlayer(simulatedState) !== originalPlayer) {
+			return false;
+		}
+	}
+	return true;
+}
+
 function scoreMoveWithUtility(ctx: ScoringContext): MoveMetadata {
 	const baseActionBias = ctx.archetype.actionBias[ctx.move.action] ?? 0;
 	const phaseActionBias =
@@ -762,12 +796,21 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 		},
 		chooseTurn: async ({ legalMoves, rng, state, turn }) => {
 			if (strategy === "random" || !effectiveArchetype) {
+				const selectedMove = {
+					...pickOne(legalMoves, rng),
+					reasoning:
+						"phase=midgame(default) archetype=random total=0; random_pick",
+				};
+				if (
+					!shouldAppendSyntheticEndTurn({
+						originalState: state,
+						plannedMoves: [selectedMove],
+					})
+				) {
+					return [selectedMove];
+				}
 				return [
-					{
-						...pickOne(legalMoves, rng),
-						reasoning:
-							"phase=midgame(default) archetype=random total=0; random_pick",
-					},
+					selectedMove,
 					{ action: "end_turn", reasoning: "bounded_random_turn" },
 				];
 			}
@@ -863,6 +906,17 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 				) {
 					break;
 				}
+			}
+
+			if (
+				!shouldAppendSyntheticEndTurn({
+					originalState: state,
+					plannedMoves,
+				})
+			) {
+				return plannedMoves.length > 0
+					? plannedMoves
+					: [{ action: "end_turn", reasoning: "bounded_multi_action_turn" }];
 			}
 
 			return [

@@ -39,6 +39,18 @@ const readInfoLogs = (spy: ReturnType<typeof vi.spyOn>) => {
 		.filter((entry): entry is Record<string, unknown> => entry !== null);
 };
 
+const waitForInfoLog = async (
+	spy: ReturnType<typeof vi.spyOn>,
+	predicate: (entry: Record<string, unknown>) => boolean,
+) => {
+	return await pollUntil(
+		async () => readInfoLogs(spy),
+		(entries) => entries.some(predicate),
+		2_000,
+		20,
+	);
+};
+
 // Note: Additional SSE tests (your_turn isolation, terminal alias coverage) were removed
 // due to workerd teardown instability. See TEST_SUITE_REVISION.md Priority 4.
 // This smoke test verifies basic SSE functionality.
@@ -456,7 +468,13 @@ it(
 				const replayed = logs.find(
 					(entry) => entry.message === "runner_stream_replayed",
 				);
-				const closed = logs.find(
+				await waitForInfoLog(
+					infoSpy,
+					(entry) =>
+						entry.message === "runner_stream_closed" &&
+						entry.route === `/v1/matches/${matchId}/stream`,
+				);
+				const closed = readInfoLogs(infoSpy).find(
 					(entry) =>
 						entry.message === "runner_stream_closed" &&
 						entry.route === `/v1/matches/${matchId}/stream`,
@@ -526,8 +544,13 @@ it(
 				expect(result.text).toContain("event: match_ended");
 				expect(result.text).not.toContain("event: game_ended");
 
-				const logs = readInfoLogs(infoSpy);
-				const closed = logs.filter(
+				await waitForInfoLog(
+					infoSpy,
+					(entry) =>
+						entry.message === "runner_stream_closed" &&
+						entry.route === `/v1/matches/${matchId}/spectate`,
+				);
+				const closed = readInfoLogs(infoSpy).filter(
 					(entry) => entry.message === "runner_stream_closed",
 				);
 				expect(closed).toHaveLength(1);

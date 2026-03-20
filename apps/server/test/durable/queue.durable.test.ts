@@ -1,7 +1,13 @@
 import { env, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { resolveMatchmakerShardName } from "../../src/utils/matchmakerShards";
-import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
+import {
+	authHeader,
+	createAgent,
+	ensureResetDb,
+	pollUntil,
+	resetDb,
+} from "../helpers";
 
 const readInfoLogs = (spy: ReturnType<typeof vi.spyOn>) => {
 	return spy.mock.calls
@@ -14,6 +20,18 @@ const readInfoLogs = (spy: ReturnType<typeof vi.spyOn>) => {
 			}
 		})
 		.filter((entry): entry is Record<string, unknown> => entry !== null);
+};
+
+const waitForInfoLog = async (
+	spy: ReturnType<typeof vi.spyOn>,
+	predicate: (entry: Record<string, unknown>) => boolean,
+) => {
+	return await pollUntil(
+		async () => readInfoLogs(spy),
+		(entries) => entries.some(predicate),
+		2_000,
+		20,
+	);
 };
 
 beforeEach(async () => {
@@ -430,8 +448,10 @@ it("blocks until a match is found when no buffered event exists", async () => {
 				headers: authHeader(agentA.key),
 			},
 		);
-
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		await waitForInfoLog(
+			infoSpy,
+			(entry) => entry.message === "runner_queue_wait_started",
+		);
 
 		const joinRes = await SELF.fetch("https://example.com/v1/matches/queue", {
 			method: "POST",

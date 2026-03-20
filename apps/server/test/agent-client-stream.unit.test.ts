@@ -979,4 +979,141 @@ describe("agent-client runMatch canonical SSE flow", () => {
 			vi.useRealTimers();
 		}
 	});
+
+	it("keeps reconnecting when the repeated same-cursor state probe fails", async () => {
+		vi.useFakeTimers();
+		try {
+			const stopFirst = vi.fn();
+			const stopSecond = vi.fn();
+			const stopThird = vi.fn();
+			const stopFourth = vi.fn();
+			const subscribeMatchStream = vi
+				.fn()
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId ?? 0).toBe(0);
+						queueMicrotask(() => {
+							void handler({
+								eventVersion: 2,
+								eventId: 111,
+								ts: "2026-03-18T12:00:00.000Z",
+								matchId,
+								stateVersion: 55,
+								event: "state",
+								payload: { state: { game: "snapshot" } },
+							});
+							queueMicrotask(() => {
+								options?.onClose?.();
+							});
+						});
+						return stopFirst;
+					},
+				)
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						_handler: (event: Parameters<typeof _handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId).toBe(111);
+						queueMicrotask(() => {
+							options?.onClose?.();
+						});
+						return stopSecond;
+					},
+				)
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						_handler: (event: Parameters<typeof _handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId).toBe(111);
+						queueMicrotask(() => {
+							options?.onClose?.();
+						});
+						return stopThird;
+					},
+				)
+				.mockImplementationOnce(
+					async (
+						matchId: string,
+						handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+						options?: MatchStreamSubscriptionOptions,
+					) => {
+						expect(matchId).toBe("match-1");
+						expect(options?.afterId).toBe(111);
+						queueMicrotask(() => {
+							void handler({
+								eventVersion: 2,
+								eventId: 112,
+								ts: "2026-03-18T12:00:01.000Z",
+								matchId,
+								stateVersion: 56,
+								event: "match_ended",
+								payload: {
+									winnerAgentId: "agent-b",
+									loserAgentId: "agent-a",
+									reasonCode: "forfeit",
+									reason: "forfeit",
+								},
+							});
+						});
+						return stopFourth;
+					},
+				);
+
+			const getMatchState = vi
+				.fn()
+				.mockRejectedValueOnce(new Error("state lookup failed"));
+
+			const client = {
+				me: vi.fn(async () => ({ agentId: "agent-a" })),
+				queueJoin: vi.fn(async () => ({
+					status: "ready" as const,
+					matchId: "match-1",
+					opponentId: "agent-b",
+				})),
+				waitForMatch: vi.fn(),
+				submitMove: vi.fn(),
+				subscribeMatchStream,
+				getMatchState,
+			};
+
+			const resultPromise = runMatch(client as never, {
+				moveProvider: {
+					nextMove: vi.fn(async () => ({ action: "pass" })),
+				},
+				streamReconnectDelayMs: 10,
+			});
+
+			const outcome = await Promise.race([
+				resultPromise.then((result) => ({ kind: "result" as const, result })),
+				vi.advanceTimersByTimeAsync(1000).then(() => ({
+					kind: "timeout" as const,
+				})),
+			]);
+
+			expect(outcome.kind).toBe("result");
+			if (outcome.kind !== "result") return;
+			expect(outcome.result).toMatchObject({
+				matchId: "match-1",
+				reason: "forfeit",
+				winnerAgentId: "agent-b",
+				loserAgentId: "agent-a",
+			});
+			expect(getMatchState).toHaveBeenCalledWith("match-1");
+			expect(subscribeMatchStream).toHaveBeenCalledTimes(4);
+			expect(stopFourth).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

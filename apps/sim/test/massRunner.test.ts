@@ -20,4 +20,24 @@ describe("mass runner bot serialization", () => {
 		expect(serialized.llmConfig?.strategy).toBe("greedy_macro");
 		expect(serialized.llmConfig?.inline).toContain("Pressure objectives");
 	});
+
+	test("preserves canonical id and name over serialized config overrides", () => {
+		const bot = {
+			id: "canonical-id",
+			name: "Canonical Name",
+			serializedConfig: {
+				id: "wrong-id",
+				name: "Wrong Name",
+				type: "random" as const,
+			},
+		};
+
+		const serialized = serializeBotConfig(
+			bot as Parameters<typeof serializeBotConfig>[0],
+		);
+
+		expect(serialized.id).toBe("canonical-id");
+		expect(serialized.name).toBe("Canonical Name");
+		expect(serialized.type).toBe("random");
+	});
 });

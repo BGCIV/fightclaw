@@ -9,7 +9,7 @@ type CompletionResult = {
 	signal: string | null;
 };
 
-const createRun = (file) => ({
+const createRun = (file: string) => ({
 	args: [
 		"./node_modules/vitest/vitest.mjs",
 		"-c",
