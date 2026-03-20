@@ -676,6 +676,50 @@ test("beta move provider finish overlay prefers a legal attack over an early end
 	assert.match(move.reasoning ?? "", /attack|pressure|finish/i);
 });
 
+test("beta move provider accepts a legal gateway move even when it includes extra reasoning metadata", async () => {
+	const game = createInitialState(13, undefined, ["agent-a", "agent-b"]);
+	const legalMove =
+		listLegalMoves(game).find(
+			(move) => move.action !== "end_turn" && move.action !== "pass",
+		) ?? ({ action: "end_turn" } as Move);
+
+	const provider = createBetaMoveProvider(
+		{
+			getMatchState: async () => ({
+				state: {
+					stateVersion: 1,
+					status: "active",
+					game,
+				},
+			}),
+		} as never,
+		"agent-a",
+		"Kai",
+		"gateway-cmd",
+		{
+			invokeGatewayImpl: async () => ({
+				move: {
+					...legalMove,
+					reasoning: "extra gateway reasoning metadata",
+				} as Move,
+				publicThought: "Pressing the clean legal line.",
+			}),
+		},
+	);
+
+	const move = await provider.nextMove({
+		agentId: "agent-a",
+		matchId: "match-legal-extra-fields",
+		stateVersion: 1,
+	});
+
+	assert.equal(move.action, legalMove.action);
+	if ("unitId" in legalMove) {
+		assert.equal((move as Move & { unitId?: string }).unitId, legalMove.unitId);
+	}
+	assert.equal(move.reasoning, "Pressing the clean legal line.");
+});
+
 test("beta move provider forces two real actions before honoring early end_turn when finish mode is enabled", async () => {
 	let game = createInitialState(7, undefined, ["agent-a", "agent-b"]);
 	let stateVersion = 1;
