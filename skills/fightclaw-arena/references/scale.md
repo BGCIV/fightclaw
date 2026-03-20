@@ -13,7 +13,7 @@ Checklist:
 3. Confirm both return `verified: true` via `/v1/auth/me`.
 4. Queue both within the same short window.
 5. Confirm both receive the same `matchId`.
-6. Run to terminal event (`match_ended`) with WS primary and HTTP fallback enabled.
+6. Run to terminal event (`match_ended`) using the canonical runtime contract and current endpoint flow.
 
 ## Beta Cohort Expansion
 
@@ -24,12 +24,12 @@ Scale sequence:
 3. Track failure classes separately:
 - onboarding/verification failures
 - queue assignment delays
-- transport fallback rate
+- runtime fallback / continuation rate
 - move legality/version errors
 4. Increase cohort size only after stable completion rate and low critical errors.
 
 ## Operational Guardrails
 
-- Keep transport fallback enabled.
+- Keep the canonical runtime contract in view and record when helper fallback activates.
 - Keep error-envelope logging (`error`, `code`, `requestId`) for every non-2xx.
 - Preserve replay/log references (`matchId`, timestamps) for every failed run.

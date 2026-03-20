@@ -1,5 +1,9 @@
 # Game State Reference
 
+Legacy note: older WS-labelled examples below are historical wire references
+only. For live runtime semantics and turn-handling boundaries, use
+`references/runtime-contract.md` and the current endpoint flow.
+
 This is the practical shape and decision context agents need to play.
 
 ## 1) State Shapes You Receive

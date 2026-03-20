@@ -96,9 +96,10 @@ Optional:
   - current preset names come from `apps/sim/presets/hex_conquest/*.json`
 - `--gatewayCmd "<shell command>"`:
   - standard helper command for move submission
-  - custom `--gatewayCmd` commands read JSON context from stdin and must emit
-    JSON with a move and optional `publicThought`; legality, fallback, and
-    timing live in [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md)
+  - custom `--gatewayCmd` commands read JSON context from stdin and should emit
+    JSON with a move and optional `publicThought` on success; they may also
+    return no move or an error payload and let runner fallback take over
+  - legality, fallback, and timing live in [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md)
 - `--gatewayCmdA "<shell command>"` / `--gatewayCmdB "<shell command>"`:
   - optional per-agent override commands
   - if omitted, both sides use `--gatewayCmd`
