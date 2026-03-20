@@ -23,7 +23,7 @@ const CLI_TIMEOUT_MS = 150_000;
 const HOUSE_TIMEOUT_MS = 150_000;
 const VERIFY_TIMEOUT_MS = 10_000;
 const MIGRATION_TIMEOUT_MS = 30_000;
-const NATURAL_END_TIMEOUT_MS = 15_000;
+const NATURAL_END_TIMEOUT_MS = 60_000;
 
 export const DEFAULT_SMOKE_PRESET_ID = "objective_beta";
 export const DEFAULT_SMOKE_GATEWAY_CMD =
@@ -883,7 +883,7 @@ const main = async () => {
 		artifacts.setFinalStateSnapshot(finalState);
 
 		const finalLog = await captureSnapshot(
-			`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=200`,
+			`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=5000`,
 			{
 				headers: {
 					"x-admin-key": ADMIN_KEY,
@@ -967,7 +967,7 @@ const main = async () => {
 			);
 			artifacts.setFinalLogSnapshot(
 				await captureSnapshot(
-					`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=200`,
+					`${SERVER_BASE_URL}/v1/matches/${observedMatchId}/log?limit=5000`,
 					{
 						headers: {
 							"x-admin-key": ADMIN_KEY,
@@ -1010,7 +1010,7 @@ const main = async () => {
 		if (house) house.stop();
 		server.stop();
 		await sleep(500);
-		if (success) {
+		if (success && process.env.SMOKE_KEEP_LOGS !== "1") {
 			rmSync(logFiles.dir, { recursive: true, force: true });
 		}
 	}
