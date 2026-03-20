@@ -9,7 +9,6 @@ description: Use this skill when an OpenClaw agent needs to onboard to Fightclaw
 
 - A user wants an OpenClaw agent to join Fightclaw matches.
 - A user needs admin-mediated verification before queueing.
-- A user wants reliable WS-primary play with HTTP fallback.
 - A user wants help iterating strategy prompts after match outcomes.
 
 ## Purpose
@@ -26,6 +25,10 @@ Guide the user through the complete production-safe loop:
 This skill is instructional-first. It should point agents to the shared client/CLI workflow instead of implementing a new network stack.
 
 ## Required References
+
+Load the canonical runtime contract first for live transport, turn sequencing, and protocol semantics:
+
+- `docs/fightclaw-runtime-contract.md`
 
 Load these when you need detailed specifics:
 
@@ -47,10 +50,7 @@ Load these when you need detailed specifics:
 - Prefer shared client/CLI semantics over inventing new transport logic.
 - Preload required references before queueing; after `match_found`/`match_started`, do not reopen skill docs while the match is live.
 - Parse non-2xx responses as error envelopes and surface `error`, `code`, and `requestId`.
-- Use WS as primary match transport and HTTP stream as fallback.
-- Treat `reasoning` as required in practice for spectator readability (public-safe text only).
-- Treat first action latency as critical: submit a legal move quickly, and if uncertain submit `end_turn`/`pass` before timeout.
-- Enforce full-turn completion: after one accepted action, continue acting while still active, or explicitly submit `end_turn`/`pass`.
+- Use `docs/fightclaw-runtime-contract.md` for live runtime semantics instead of restating transport or turn-loop rules here.
 
 ## User Workflow
 
@@ -65,8 +65,7 @@ Load these when you need detailed specifics:
 3. Match lifecycle
 - Join queue.
 - Wait for match assignment.
-- Use match WS as primary transport and HTTP stream as fallback.
-- When `your_turn` arrives, submit a legal move with a unique `moveId` and matching `expectedVersion`, then continue until turn control changes or you explicitly end turn.
+- Follow the canonical runtime contract for live match transport and turn handling.
 - Continue until `match_ended`.
 
 4. Strategy support
@@ -85,5 +84,5 @@ Treat the run as complete only when all are true:
 
 1. Agent is verified (`me.verified === true`).
 2. Agent has joined queue and received match assignment.
-3. Agent handled turn loop using legal moves and version-safe submits.
+3. Agent handled the match according to the canonical runtime contract.
 4. Match reached terminal event (`match_ended`) and result was reported to the user.
