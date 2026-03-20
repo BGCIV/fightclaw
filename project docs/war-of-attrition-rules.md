@@ -1,8 +1,12 @@
 # War of Attrition (Arena 21x9) - Canonical Engine Spec v1
 
-Last updated: 2026-02-05
+Last updated: 2026-03-20
 
 This document is the single source of truth for the War of Attrition ruleset. Engine, server, and bots must implement *exactly* what is specified here. If any earlier design doc disagrees, this spec wins.
+
+Implementation companions:
+- `packages/engine/src/index.ts` is the current engine implementation for this ruleset.
+- `CONTRACTS.md` is the current source of truth for API/event/runtime contracts layered on top of these rules.
 
 Related (non-canonical) docs:
 - `project docs/game design/war-of-attrition-arena.md` (arena layout + inspiration)
