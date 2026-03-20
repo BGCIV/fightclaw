@@ -10,6 +10,7 @@ import {
 	createBetaMoveProvider,
 	formatBetaProgressEvent,
 	resolveBetaStrategySelection,
+	resolveHouseOpponentCommandOptions,
 	runTesterBetaJourney,
 	runTesterBetaOnboarding,
 	shouldUseLocalOperatorVerify,
@@ -64,6 +65,21 @@ test("defaults the tester beta flow to the objective_beta preset", () => {
 		selection.privateStrategy,
 		/Contest crowns and income nodes early/,
 	);
+});
+
+test("defaults the house opponent flow to the safe_fallback_beta preset", () => {
+	const resolved = resolveHouseOpponentCommandOptions({
+		baseUrl: "https://example.com",
+		adminKey: "admin-key",
+		runnerKey: "runner-key",
+		runnerId: "runner-1",
+	});
+
+	assert.equal(resolved.selection.source.kind, "preset");
+	if (resolved.selection.source.kind !== "preset") {
+		throw new Error("Expected preset strategy selection.");
+	}
+	assert.equal(resolved.selection.source.presetId, "safe_fallback_beta");
 });
 
 test("allows explicit inline or preset overrides for the beta flow", () => {

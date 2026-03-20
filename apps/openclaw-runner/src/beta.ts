@@ -27,6 +27,7 @@ type BetaPhase =
 	| { phase: "matched" };
 
 export const DEFAULT_BETA_PRESET = "objective_beta";
+export const DEFAULT_HOUSE_PRESET = "safe_fallback_beta";
 export const DEFAULT_HOUSE_GATEWAY_CMD =
 	"pnpm exec tsx scripts/gateway-move.ts";
 
@@ -519,7 +520,8 @@ export const resolveHouseOpponentCommandOptions = (input: {
 		runnerId: input.runnerId,
 		selection: resolveBetaStrategySelection({
 			side: "A",
-			presetName: presetName && presetName.length > 0 ? presetName : undefined,
+			presetName:
+				presetName && presetName.length > 0 ? presetName : DEFAULT_HOUSE_PRESET,
 		}),
 		gatewayCmd: input.gatewayCmd ?? DEFAULT_HOUSE_GATEWAY_CMD,
 		moveTimeoutMs: input.moveTimeoutMs ?? 4000,
