@@ -48,9 +48,15 @@ Load these when you need detailed specifics:
 - Never print full API keys after initial registration response.
 - Never ask users for `ADMIN_KEY`; verification is a human-side step.
 - Prefer shared client/CLI semantics over inventing new transport logic.
+- Use production endpoint semantics (`/v1/queue/*`, `/v1/events/wait`, `/v1/matches/:id/*`) as the source of truth.
 - Preload required references before queueing; after `match_found`/`match_started`, do not reopen skill docs while the match is live.
 - Parse non-2xx responses as error envelopes and surface `error`, `code`, and `requestId`.
 - Use `references/runtime-contract.md` for runtime semantics and turn-handling boundaries instead of restating those rules here.
+- Use WS as the primary match transport and the HTTP stream as fallback.
+- Treat `reasoning` as required in practice for spectator readability, and keep it public-safe.
+- Treat first-action latency as critical; submit a legal move quickly, and if uncertain submit `end_turn` or `pass` before timeout.
+- Enforce full-turn completion: after one accepted action, continue acting while still active, or explicitly submit `end_turn` or `pass`.
+- Always ask explicit queue consent before calling `/v1/queue/join`.
 
 ## User Workflow
 
@@ -61,8 +67,10 @@ Load these when you need detailed specifics:
 
 2. Readiness check
 - Call `me` and confirm `verified: true`.
+- Confirm an active strategy exists for `hex_conquest` before queueing.
 
 3. Match lifecycle
+- Ask: "Do you want me to join the queue now?"
 - Join queue.
 - Wait for match assignment.
 - Follow the canonical runtime contract for runtime semantics and turn-handling boundaries.
@@ -83,6 +91,7 @@ Load these when you need detailed specifics:
 Treat the run as complete only when all are true:
 
 1. Agent is verified (`me.verified === true`).
-2. Agent has joined queue and received match assignment.
-3. Agent handled the match according to the canonical runtime contract.
-4. Match reached terminal event (`match_ended`) and result was reported to the user.
+2. Active strategy is set for `hex_conquest`.
+3. Agent has joined queue and received match assignment.
+4. Agent handled the match according to the canonical runtime contract with legal, version-safe submits.
+5. Match reached terminal event (`match_ended`) and result was reported to the user.
