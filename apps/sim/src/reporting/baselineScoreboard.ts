@@ -25,6 +25,13 @@ type MatchResultRow = {
 		firstKillTurn?: number | null;
 		terminalReason?: MatchReason;
 	};
+	turnPacingDiagnostics?: {
+		meanActionsPerTurn?: number | null;
+		oneActionTurnRate?: number | null;
+		attackRate?: number | null;
+		objectiveTakeRate?: number | null;
+		meaningfulTickerDensity?: number | null;
+	};
 };
 
 export type BaselineBehaviorInput = {
@@ -66,6 +73,16 @@ type ScoreAccumulator = {
 	firstDamageTurnCount: number;
 	firstKillTurnTotal: number;
 	firstKillTurnCount: number;
+	actionsPerTurnTotal: number;
+	actionsPerTurnCount: number;
+	oneActionTurnRateTotal: number;
+	oneActionTurnRateCount: number;
+	attackRateTotal: number;
+	attackRateCount: number;
+	objectiveTakeRateTotal: number;
+	objectiveTakeRateCount: number;
+	meaningfulTickerDensityTotal: number;
+	meaningfulTickerDensityCount: number;
 };
 
 export type BaselineProfileScore = {
@@ -82,13 +99,18 @@ export type BaselineProfileScore = {
 	avgFirstKillTurn: number | null;
 	maxTurnsRate: number;
 	illegalEndingRate: number;
+	avgActionsPerTurn: number | null;
+	oneActionTurnRate: number | null;
+	attackRate: number | null;
+	objectiveTakeRate: number | null;
+	meaningfulTickerDensity: number | null;
 	spectatorUsefulness: number;
 	avgTurnLatencyMs: number | null;
 	compositeScore: number;
 };
 
 export type BaselineScoreboard = {
-	version: "baseline_scoreboard_v2";
+	version: "baseline_scoreboard_v3";
 	profiles: BaselineProfileScore[];
 	winner: {
 		profileId: string;
@@ -178,6 +200,16 @@ function getOrCreateAccumulator(
 		firstDamageTurnCount: 0,
 		firstKillTurnTotal: 0,
 		firstKillTurnCount: 0,
+		actionsPerTurnTotal: 0,
+		actionsPerTurnCount: 0,
+		oneActionTurnRateTotal: 0,
+		oneActionTurnRateCount: 0,
+		attackRateTotal: 0,
+		attackRateCount: 0,
+		objectiveTakeRateTotal: 0,
+		objectiveTakeRateCount: 0,
+		meaningfulTickerDensityTotal: 0,
+		meaningfulTickerDensityCount: 0,
 	};
 	map.set(profileId, created);
 	return created;
@@ -205,6 +237,24 @@ function buildProfileScore(acc: ScoreAccumulator): BaselineProfileScore {
 	const maxTurnsRate = acc.games > 0 ? acc.maxTurnsCount / acc.games : 0;
 	const illegalEndingRate =
 		acc.games > 0 ? acc.illegalEndingCount / acc.games : 0;
+	const avgActionsPerTurn =
+		acc.actionsPerTurnCount > 0
+			? acc.actionsPerTurnTotal / acc.actionsPerTurnCount
+			: null;
+	const oneActionTurnRate =
+		acc.oneActionTurnRateCount > 0
+			? acc.oneActionTurnRateTotal / acc.oneActionTurnRateCount
+			: null;
+	const attackRate =
+		acc.attackRateCount > 0 ? acc.attackRateTotal / acc.attackRateCount : null;
+	const objectiveTakeRate =
+		acc.objectiveTakeRateCount > 0
+			? acc.objectiveTakeRateTotal / acc.objectiveTakeRateCount
+			: null;
+	const meaningfulTickerDensity =
+		acc.meaningfulTickerDensityCount > 0
+			? acc.meaningfulTickerDensityTotal / acc.meaningfulTickerDensityCount
+			: null;
 	const spectatorUsefulness =
 		acc.spectatorGames > 0 ? acc.spectatorWeightedSum / acc.spectatorGames : 0;
 	const avgTurnLatencyMs =
@@ -234,6 +284,17 @@ function buildProfileScore(acc: ScoreAccumulator): BaselineProfileScore {
 			avgFirstKillTurn == null ? null : round(avgFirstKillTurn, 2),
 		maxTurnsRate: round(maxTurnsRate),
 		illegalEndingRate: round(illegalEndingRate),
+		avgActionsPerTurn:
+			avgActionsPerTurn == null ? null : round(avgActionsPerTurn, 2),
+		oneActionTurnRate:
+			oneActionTurnRate == null ? null : round(oneActionTurnRate),
+		attackRate: attackRate == null ? null : round(attackRate),
+		objectiveTakeRate:
+			objectiveTakeRate == null ? null : round(objectiveTakeRate),
+		meaningfulTickerDensity:
+			meaningfulTickerDensity == null
+				? null
+				: round(meaningfulTickerDensity, 2),
 		spectatorUsefulness: round(spectatorUsefulness),
 		avgTurnLatencyMs:
 			avgTurnLatencyMs == null ? null : round(avgTurnLatencyMs, 2),
@@ -319,6 +380,61 @@ function attributeStructuralDiagnostics(args: {
 	update("firstKillTurn");
 }
 
+function attributeTurnPacingDiagnostics(args: {
+	accA: ScoreAccumulator;
+	accB: ScoreAccumulator;
+	result: MatchResultRow;
+}): void {
+	const diagnostics = args.result.turnPacingDiagnostics;
+	if (!diagnostics) return;
+
+	const update = (
+		key:
+			| "meanActionsPerTurn"
+			| "oneActionTurnRate"
+			| "attackRate"
+			| "objectiveTakeRate"
+			| "meaningfulTickerDensity",
+		totalKey:
+			| "actionsPerTurnTotal"
+			| "oneActionTurnRateTotal"
+			| "attackRateTotal"
+			| "objectiveTakeRateTotal"
+			| "meaningfulTickerDensityTotal",
+		countKey:
+			| "actionsPerTurnCount"
+			| "oneActionTurnRateCount"
+			| "attackRateCount"
+			| "objectiveTakeRateCount"
+			| "meaningfulTickerDensityCount",
+	) => {
+		const value = diagnostics[key];
+		if (typeof value !== "number" || !Number.isFinite(value)) return;
+		args.accA[totalKey] += value;
+		args.accB[totalKey] += value;
+		args.accA[countKey] += 1;
+		args.accB[countKey] += 1;
+	};
+
+	update("meanActionsPerTurn", "actionsPerTurnTotal", "actionsPerTurnCount");
+	update(
+		"oneActionTurnRate",
+		"oneActionTurnRateTotal",
+		"oneActionTurnRateCount",
+	);
+	update("attackRate", "attackRateTotal", "attackRateCount");
+	update(
+		"objectiveTakeRate",
+		"objectiveTakeRateTotal",
+		"objectiveTakeRateCount",
+	);
+	update(
+		"meaningfulTickerDensity",
+		"meaningfulTickerDensityTotal",
+		"meaningfulTickerDensityCount",
+	);
+}
+
 export function buildBaselineScoreboard(input: {
 	fastLaneDir: string;
 	behaviorByMatchup?: Record<string, BaselineBehaviorInput>;
@@ -391,6 +507,7 @@ export function buildBaselineScoreboard(input: {
 					attributeIllegalEnding({ accA, accB, result });
 					attributeIllegalMoves({ accA, accB, result });
 					attributeStructuralDiagnostics({ accA, accB, result });
+					attributeTurnPacingDiagnostics({ accA, accB, result });
 				}
 			} else if (totalIllegalMoves > 0) {
 				const illegalMoveShare = totalIllegalMoves / 2;
@@ -453,7 +570,7 @@ export function buildBaselineScoreboard(input: {
 		: null;
 
 	return {
-		version: "baseline_scoreboard_v2",
+		version: "baseline_scoreboard_v3",
 		profiles,
 		winner,
 		totals: {
@@ -485,12 +602,12 @@ export function renderBaselineScoreboardMarkdown(
 	}
 
 	lines.push(
-		"| Profile | Score | Win Rate | Legal Move Rate | Max-Turn Rate | Illegal Ending Rate | Avg Turns | First Contact | First Damage | First Kill | Spectator | Avg Turn Latency (ms) |",
-		"| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+		"| Profile | Score | Win Rate | Legal Move Rate | Max-Turn Rate | Illegal Ending Rate | Avg Turns | First Contact | First Damage | First Kill | Avg Actions/Turn | One-Action Turn Rate | Attack Rate | Objective-Take Rate | Ticker Density | Spectator | Avg Turn Latency (ms) |",
+		"| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
 	);
 	for (const profile of scoreboard.profiles) {
 		lines.push(
-			`| ${profile.profileId} | ${profile.compositeScore.toFixed(4)} | ${profile.winRate.toFixed(4)} | ${profile.legalMoveRate.toFixed(4)} | ${profile.maxTurnsRate.toFixed(4)} | ${profile.illegalEndingRate.toFixed(4)} | ${profile.avgMatchTurns.toFixed(2)} | ${profile.avgFirstContactTurn == null ? "n/a" : profile.avgFirstContactTurn.toFixed(2)} | ${profile.avgFirstDamageTurn == null ? "n/a" : profile.avgFirstDamageTurn.toFixed(2)} | ${profile.avgFirstKillTurn == null ? "n/a" : profile.avgFirstKillTurn.toFixed(2)} | ${profile.spectatorUsefulness.toFixed(4)} | ${profile.avgTurnLatencyMs == null ? "n/a" : profile.avgTurnLatencyMs.toFixed(2)} |`,
+			`| ${profile.profileId} | ${profile.compositeScore.toFixed(4)} | ${profile.winRate.toFixed(4)} | ${profile.legalMoveRate.toFixed(4)} | ${profile.maxTurnsRate.toFixed(4)} | ${profile.illegalEndingRate.toFixed(4)} | ${profile.avgMatchTurns.toFixed(2)} | ${profile.avgFirstContactTurn == null ? "n/a" : profile.avgFirstContactTurn.toFixed(2)} | ${profile.avgFirstDamageTurn == null ? "n/a" : profile.avgFirstDamageTurn.toFixed(2)} | ${profile.avgFirstKillTurn == null ? "n/a" : profile.avgFirstKillTurn.toFixed(2)} | ${profile.avgActionsPerTurn == null ? "n/a" : profile.avgActionsPerTurn.toFixed(2)} | ${profile.oneActionTurnRate == null ? "n/a" : profile.oneActionTurnRate.toFixed(4)} | ${profile.attackRate == null ? "n/a" : profile.attackRate.toFixed(4)} | ${profile.objectiveTakeRate == null ? "n/a" : profile.objectiveTakeRate.toFixed(4)} | ${profile.meaningfulTickerDensity == null ? "n/a" : profile.meaningfulTickerDensity.toFixed(2)} | ${profile.spectatorUsefulness.toFixed(4)} | ${profile.avgTurnLatencyMs == null ? "n/a" : profile.avgTurnLatencyMs.toFixed(2)} |`,
 		);
 	}
 

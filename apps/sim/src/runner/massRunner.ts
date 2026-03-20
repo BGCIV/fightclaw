@@ -245,7 +245,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const forkWorkerPath = path.join(__dirname, "forkWorker.ts");
 
-function botToConfig(bot: Bot): BotConfig {
+export function serializeBotConfig(bot: Bot): BotConfig {
+	if (bot.serializedConfig) {
+		return {
+			id: String(bot.id),
+			name: bot.name,
+			...bot.serializedConfig,
+		};
+	}
+
 	// Infer type from bot name
 	const name = bot.name.toLowerCase();
 	let type: BotConfig["type"] = "random";
@@ -327,7 +335,7 @@ export async function runMassSimulation(
 	const totalGames = options.games;
 	const playerIds = players.map((p) => String(p.id));
 	const parallelism = Math.max(1, options.parallelism);
-	const botConfigs = players.map(botToConfig);
+	const botConfigs = players.map(serializeBotConfig);
 
 	const resultsPath = path.join(options.outputDir, "results.jsonl");
 	let allResults: MatchResult[] = [];

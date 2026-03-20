@@ -164,7 +164,7 @@ describe("benchmark-v2 api graduation contract", () => {
 		tempDirs.push(outputDir);
 
 		const paths = writeScoreboardArtifacts(outputDir, {
-			version: "baseline_scoreboard_v2",
+			version: "baseline_scoreboard_v3",
 			profiles: [
 				{
 					profileId: "balanced_beta",
@@ -180,6 +180,11 @@ describe("benchmark-v2 api graduation contract", () => {
 					avgFirstKillTurn: 12.5,
 					maxTurnsRate: 0.125,
 					illegalEndingRate: 0,
+					avgActionsPerTurn: 2.3,
+					oneActionTurnRate: 0.35,
+					attackRate: 0.42,
+					objectiveTakeRate: 0.12,
+					meaningfulTickerDensity: 1.4,
 					spectatorUsefulness: 0.71,
 					avgTurnLatencyMs: 12.5,
 					compositeScore: 0.8125,

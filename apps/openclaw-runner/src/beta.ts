@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import {
 	ArenaClient,
 	createRunnerSession,
@@ -54,6 +55,33 @@ type GatewayMoveResult = {
 	move: Move;
 	publicThought?: string;
 };
+
+type GatewayInvocationInput = {
+	agentId: string;
+	agentName: string;
+	matchId: string;
+	stateVersion: number;
+	state: unknown;
+	turnActionIndex?: number;
+	remainingActionBudget?: number;
+	previousActionsThisTurn?: Move[];
+};
+
+type BetaMoveProviderOptions = {
+	maxActionsPerTurn?: number;
+	invokeGatewayImpl?: (
+		command: string,
+		input: GatewayInvocationInput,
+	) => Promise<GatewayMoveResult | null>;
+};
+
+const DEFAULT_BETA_ACTION_BUDGET = 3;
+const BETA_ACTION_BUDGET_REASONING =
+	"Public-safe summary: closing the turn after the bounded action budget.";
+const BETA_PROVIDER_FAILURE_REASONING =
+	"Public-safe summary: closing turn after provider failure.";
+const BETA_LEGAL_FALLBACK_REASONING =
+	"Public-safe fallback: selected a clearly legal move.";
 
 export class InternalRunnerClient extends ArenaClient {
 	private readonly internalBaseUrl: string;
@@ -150,13 +178,7 @@ export const bindRunnerAgent = async (
 
 export const invokeGateway = async (
 	command: string,
-	input: {
-		agentId: string;
-		agentName: string;
-		matchId: string;
-		stateVersion: number;
-		state: unknown;
-	},
+	input: GatewayInvocationInput,
 ): Promise<GatewayMoveResult | null> => {
 	return await new Promise((resolve, reject) => {
 		const child = spawn(command, {
@@ -222,6 +244,155 @@ const selectLegalFallbackMove = (
 		game as Parameters<typeof listLegalMoves>[0],
 	);
 	return legalMoves[0] ?? null;
+};
+
+const extractGatewayGameState = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+) => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	const record = game as Record<string, unknown>;
+	if (!Array.isArray(record.board)) return null;
+	if (!record.players || typeof record.players !== "object") return null;
+	return game as Parameters<typeof listLegalMoves>[0] & {
+		turn?: number;
+		activePlayer?: string;
+	};
+};
+
+const buildBetaTurnKey = (
+	matchId: string,
+	game: { turn?: number; activePlayer?: string } | null,
+) => {
+	if (!game) return `${matchId}:unknown`;
+	return `${matchId}:${String(game.turn ?? "unknown")}:${String(game.activePlayer ?? "unknown")}`;
+};
+
+const buildEndTurnMove = (reasoning: string): Move => ({
+	action: "end_turn",
+	reasoning,
+});
+
+export const createBetaMoveProvider = (
+	client: ArenaClient,
+	agentId: string,
+	agentName: string,
+	gatewayCmd?: string,
+	options: BetaMoveProviderOptions = {},
+): MoveProvider => {
+	const maxActionsPerTurn = Math.max(
+		1,
+		options.maxActionsPerTurn ?? DEFAULT_BETA_ACTION_BUDGET,
+	);
+	const invokeGatewayImpl = options.invokeGatewayImpl ?? invokeGateway;
+
+	let turnKey: string | null = null;
+	let actionsTakenThisTurn = 0;
+	let previousActionsThisTurn: Move[] = [];
+
+	const resetTurnState = (nextTurnKey: string) => {
+		turnKey = nextTurnKey;
+		actionsTakenThisTurn = 0;
+		previousActionsThisTurn = [];
+	};
+
+	return {
+		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
+			const state = await client.getMatchState(matchId);
+			const game = extractGatewayGameState(state);
+			const nextTurnKey = buildBetaTurnKey(matchId, game);
+			if (turnKey !== nextTurnKey) {
+				resetTurnState(nextTurnKey);
+			}
+
+			const legalMoves = game ? listLegalMoves(game) : [];
+			const legalEndTurn =
+				legalMoves.find((move) => move.action === "end_turn") ??
+				buildEndTurnMove(BETA_ACTION_BUDGET_REASONING);
+
+			if (actionsTakenThisTurn >= maxActionsPerTurn) {
+				return {
+					...legalEndTurn,
+					reasoning: BETA_ACTION_BUDGET_REASONING,
+				};
+			}
+
+			if (gatewayCmd) {
+				try {
+					const gateway = await invokeGatewayImpl(gatewayCmd, {
+						agentId,
+						agentName,
+						matchId,
+						stateVersion,
+						state,
+						turnActionIndex: actionsTakenThisTurn + 1,
+						remainingActionBudget: maxActionsPerTurn - actionsTakenThisTurn,
+						previousActionsThisTurn,
+					});
+
+					if (gateway?.move) {
+						const chosenMove = gateway.move;
+						const isLegal = legalMoves.some((candidate) =>
+							isDeepStrictEqual(candidate, chosenMove),
+						);
+
+						if (isLegal) {
+							const thought =
+								typeof gateway.publicThought === "string" &&
+								gateway.publicThought.trim().length > 0
+									? gateway.publicThought
+									: "Public-safe summary unavailable.";
+							const annotatedMove: Move = {
+								...chosenMove,
+								reasoning: thought,
+							};
+
+							if (
+								chosenMove.action !== "end_turn" &&
+								chosenMove.action !== "pass"
+							) {
+								actionsTakenThisTurn += 1;
+								previousActionsThisTurn.push(annotatedMove);
+							}
+
+							return annotatedMove;
+						}
+					}
+				} catch {
+					if (actionsTakenThisTurn > 0) {
+						return {
+							...legalEndTurn,
+							reasoning: BETA_PROVIDER_FAILURE_REASONING,
+						};
+					}
+				}
+			}
+
+			if (actionsTakenThisTurn > 0) {
+				return {
+					...legalEndTurn,
+					reasoning: BETA_PROVIDER_FAILURE_REASONING,
+				};
+			}
+
+			const legalFallback = selectLegalFallbackMove(state);
+			if (legalFallback) {
+				if (
+					legalFallback.action !== "end_turn" &&
+					legalFallback.action !== "pass"
+				) {
+					actionsTakenThisTurn += 1;
+					previousActionsThisTurn.push(legalFallback);
+				}
+				return {
+					...legalFallback,
+					reasoning: BETA_LEGAL_FALLBACK_REASONING,
+				};
+			}
+
+			return buildEndTurnMove(BETA_PROVIDER_FAILURE_REASONING);
+		},
+	};
 };
 
 export const createMoveProvider = (
@@ -536,7 +707,7 @@ export const runTesterBetaJourney = async (input: {
 
 	const runMatchImpl = input.runMatchImpl ?? runMatch;
 	const result = await runMatchImpl(runnerClient, {
-		moveProvider: createMoveProvider(
+		moveProvider: createBetaMoveProvider(
 			runnerClient,
 			onboarding.agentId,
 			onboarding.name,
@@ -630,7 +801,7 @@ export const runHouseOpponent = async (input: {
 	const started = await session.start();
 	const runMatchImpl = input.runMatchImpl ?? runMatch;
 	const result = await runMatchImpl(runnerClient, {
-		moveProvider: createMoveProvider(
+		moveProvider: createBetaMoveProvider(
 			runnerClient,
 			registered.agentId,
 			resolved.name,

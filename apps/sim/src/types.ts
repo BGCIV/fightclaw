@@ -25,6 +25,7 @@ export type MatchResult = {
 	illegalMoves: number;
 	reason: "terminal" | "maxTurns" | "illegal";
 	structuralDiagnostics?: StructuralDiagnostics;
+	turnPacingDiagnostics?: TurnPacingDiagnostics;
 	log?: MatchLog;
 };
 
@@ -35,6 +36,14 @@ export type StructuralDiagnostics = {
 	terminalReason: MatchResult["reason"];
 };
 
+export type TurnPacingDiagnostics = {
+	meanActionsPerTurn: number;
+	oneActionTurnRate: number;
+	attackRate: number;
+	objectiveTakeRate: number;
+	meaningfulTickerDensity: number;
+};
+
 export type MatchLog = {
 	seed: number;
 	players: [AgentId, AgentId];
@@ -43,9 +52,20 @@ export type MatchLog = {
 	finalState?: MatchState;
 };
 
+export type SerializedBotConfig = {
+	type: "random" | "greedy" | "aggressive" | "mockllm";
+	llmConfig?: {
+		strategy?: string;
+		inline?: string;
+		file?: string;
+		archetype?: string;
+	};
+};
+
 export type Bot = {
 	id: AgentId;
 	name: string;
+	serializedConfig?: SerializedBotConfig;
 	chooseMove: (ctx: {
 		state: MatchState;
 		legalMoves: Move[];

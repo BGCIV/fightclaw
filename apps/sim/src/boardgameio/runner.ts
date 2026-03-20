@@ -8,6 +8,7 @@ import {
 import { Engine } from "../engineAdapter";
 import { mulberry32 } from "../rng";
 import { deriveStructuralDiagnostics } from "../structuralDiagnostics";
+import { deriveTurnPacingDiagnostics } from "../turnPacingDiagnostics";
 import type { Bot, EngineEvent, MatchLog, MatchResult, Move } from "../types";
 import {
 	applyEngineMoveChecked,
@@ -965,6 +966,10 @@ function finalizeResult(input: {
 		structuralDiagnostics: deriveStructuralDiagnostics(
 			input.engineEvents,
 			input.reason,
+		),
+		turnPacingDiagnostics: deriveTurnPacingDiagnostics(
+			input.engineEvents,
+			input.state as Parameters<typeof deriveTurnPacingDiagnostics>[1],
 		),
 		log,
 	};

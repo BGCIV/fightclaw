@@ -34,6 +34,13 @@ function writeMatchup(args: {
 			firstKillTurn?: number | null;
 			terminalReason?: "terminal" | "maxTurns" | "illegal";
 		};
+		turnPacingDiagnostics?: {
+			meanActionsPerTurn?: number | null;
+			oneActionTurnRate?: number | null;
+			attackRate?: number | null;
+			objectiveTakeRate?: number | null;
+			meaningfulTickerDensity?: number | null;
+		};
 	}>;
 	reasons?: Array<"terminal" | "maxTurns" | "illegal">;
 }) {
@@ -75,6 +82,7 @@ function writeMatchup(args: {
 					illegalMoves: result.illegalMoves ?? 0,
 					reason: result.reason ?? "terminal",
 					structuralDiagnostics: result.structuralDiagnostics,
+					turnPacingDiagnostics: result.turnPacingDiagnostics,
 				}),
 			)
 			.join("\n")}\n`,
@@ -127,7 +135,7 @@ describe("baseline scoreboard", () => {
 			},
 		});
 
-		expect(scoreboard.version).toBe("baseline_scoreboard_v2");
+		expect(scoreboard.version).toBe("baseline_scoreboard_v3");
 		expect(scoreboard.winner?.profileId).toBe("balanced_beta");
 		expect(scoreboard.profiles.map((profile) => profile.profileId)).toEqual([
 			"balanced_beta",
@@ -328,5 +336,68 @@ describe("baseline scoreboard", () => {
 		expect(markdown).toContain("5.00");
 		expect(markdown).toContain("7.00");
 		expect(markdown).toContain("10.00");
+	});
+
+	test("surfaces bounded turn-depth metrics in rows and markdown", () => {
+		const root = mkdtempSync(path.join(tmpdir(), "fightclaw-scoreboard-"));
+		tempDirs.push(root);
+		const fastLaneDir = path.join(root, "fast_lane");
+		mkdirSync(fastLaneDir, { recursive: true });
+
+		writeMatchup({
+			root: fastLaneDir,
+			matchup: "midfield__balanced_beta_vs_aggressive_beta",
+			totalGames: 2,
+			draws: 0,
+			totalIllegalMoves: 0,
+			meanTurns: 24,
+			wins: { P1: 1, P2: 1 },
+			results: [
+				{
+					turns: 22,
+					winner: "P1",
+					illegalMoves: 0,
+					reason: "terminal",
+					turnPacingDiagnostics: {
+						meanActionsPerTurn: 2.5,
+						oneActionTurnRate: 0.25,
+						attackRate: 0.4,
+						objectiveTakeRate: 0.15,
+						meaningfulTickerDensity: 1.2,
+					},
+				},
+				{
+					turns: 26,
+					winner: "P2",
+					illegalMoves: 0,
+					reason: "terminal",
+					turnPacingDiagnostics: {
+						meanActionsPerTurn: 2.1,
+						oneActionTurnRate: 0.35,
+						attackRate: 0.5,
+						objectiveTakeRate: 0.1,
+						meaningfulTickerDensity: 1.4,
+					},
+				},
+			],
+		});
+
+		const scoreboard = buildBaselineScoreboard({ fastLaneDir });
+		const balanced = scoreboard.profiles.find(
+			(profile) => profile.profileId === "balanced_beta",
+		);
+
+		expect(balanced?.avgActionsPerTurn).toBe(2.3);
+		expect(balanced?.oneActionTurnRate).toBe(0.3);
+		expect(balanced?.attackRate).toBe(0.45);
+		expect(balanced?.objectiveTakeRate).toBe(0.125);
+		expect(balanced?.meaningfulTickerDensity).toBe(1.3);
+
+		const markdown = renderBaselineScoreboardMarkdown(scoreboard);
+		expect(markdown).toContain("Avg Actions/Turn");
+		expect(markdown).toContain("One-Action Turn Rate");
+		expect(markdown).toContain("Objective-Take Rate");
+		expect(markdown).toContain("2.30");
+		expect(markdown).toContain("0.4500");
 	});
 });

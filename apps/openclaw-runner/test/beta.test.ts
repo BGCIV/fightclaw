@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	applyMove,
+	createInitialState,
+	listLegalMoves,
+	type Move,
+} from "@fightclaw/engine";
+import {
+	createBetaMoveProvider,
 	formatBetaProgressEvent,
 	resolveBetaStrategySelection,
 	runTesterBetaJourney,
@@ -433,4 +440,129 @@ test("tester beta journey prints the final match summary with URLs", async () =>
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
+});
+
+test("beta move provider caps a player-turn at three actions before forcing end_turn", async () => {
+	let game = createInitialState(7, undefined, ["agent-a", "agent-b"]);
+	let stateVersion = 1;
+
+	const provider = createBetaMoveProvider(
+		{
+			getMatchState: async () => ({
+				state: {
+					stateVersion,
+					status: "active",
+					game,
+				},
+			}),
+		} as never,
+		"agent-a",
+		"Kai",
+		"gateway-cmd",
+		{
+			maxActionsPerTurn: 3,
+			invokeGatewayImpl: async () => {
+				const nextMove =
+					listLegalMoves(game).find(
+						(move) => move.action !== "end_turn" && move.action !== "pass",
+					) ?? ({ action: "end_turn" } as Move);
+				return {
+					move: nextMove,
+					publicThought: `step ${stateVersion}`,
+				};
+			},
+		},
+	);
+
+	const observed: Move[] = [];
+	for (let index = 0; index < 4; index++) {
+		const move = await provider.nextMove({
+			agentId: "agent-a",
+			matchId: "match-1",
+			stateVersion,
+		});
+		observed.push(move);
+
+		if (move.action === "end_turn" || move.action === "pass") {
+			continue;
+		}
+
+		const applied = applyMove(game, move);
+		assert.equal(applied.ok, true);
+		if (!applied.ok) {
+			throw new Error("Expected beta provider move to stay legal.");
+		}
+		game = applied.state;
+		stateVersion += 1;
+	}
+
+	assert.equal(observed.length, 4);
+	assert.notEqual(observed[0]?.action, "end_turn");
+	assert.notEqual(observed[1]?.action, "end_turn");
+	assert.notEqual(observed[2]?.action, "end_turn");
+	assert.equal(observed[3]?.action, "end_turn");
+	assert.match(observed[3]?.reasoning ?? "", /bounded action budget/i);
+});
+
+test("beta move provider ends the turn safely after a mid-turn gateway failure", async () => {
+	let game = createInitialState(11, undefined, ["agent-a", "agent-b"]);
+	let stateVersion = 1;
+	let gatewayCalls = 0;
+
+	const provider = createBetaMoveProvider(
+		{
+			getMatchState: async () => ({
+				state: {
+					stateVersion,
+					status: "active",
+					game,
+				},
+			}),
+		} as never,
+		"agent-a",
+		"Kai",
+		"gateway-cmd",
+		{
+			maxActionsPerTurn: 3,
+			invokeGatewayImpl: async () => {
+				gatewayCalls += 1;
+				if (gatewayCalls === 2) {
+					throw new Error("gateway failed");
+				}
+				const nextMove =
+					listLegalMoves(game).find(
+						(move) => move.action !== "end_turn" && move.action !== "pass",
+					) ?? ({ action: "end_turn" } as Move);
+				return {
+					move: nextMove,
+					publicThought: "Continuing pressure.",
+				};
+			},
+		},
+	);
+
+	const firstMove = await provider.nextMove({
+		agentId: "agent-a",
+		matchId: "match-2",
+		stateVersion,
+	});
+	assert.notEqual(firstMove.action, "end_turn");
+	const applied = applyMove(game, firstMove);
+	assert.equal(applied.ok, true);
+	if (!applied.ok) {
+		throw new Error("Expected first beta move to stay legal.");
+	}
+	game = applied.state;
+	stateVersion += 1;
+
+	const secondMove = await provider.nextMove({
+		agentId: "agent-a",
+		matchId: "match-2",
+		stateVersion,
+	});
+	assert.equal(secondMove.action, "end_turn");
+	assert.match(
+		secondMove.reasoning ?? "",
+		/closing turn after provider failure/i,
+	);
 });
