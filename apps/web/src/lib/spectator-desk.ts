@@ -14,6 +14,11 @@ import type {
 	MatchEventEnvelope,
 } from "@fightclaw/protocol";
 
+import {
+	type PublicAgentIdentityMap,
+	resolveBroadcastIdentity,
+} from "./public-agent-identity";
+
 export type BroadcastTone = "neutral" | "positive" | "warning" | "danger";
 
 export type BroadcastTickerItem = {
@@ -28,6 +33,7 @@ export type BroadcastTickerItem = {
 export type BroadcastAgentCard = {
 	side: PlayerSide;
 	name: string;
+	publicPersona: string | null;
 	styleTag: string;
 	gold: number;
 	wood: number;
@@ -76,6 +82,7 @@ export type BroadcastDeskInput = {
 	thoughtsB: string[];
 	tickerItems: BroadcastTickerItem[];
 	terminalEvent: MatchEndedEvent | GameEndedEvent | null;
+	publicIdentityById: PublicAgentIdentityMap;
 };
 
 const MAX_COMMENTARY_LENGTH = 140;
@@ -90,8 +97,18 @@ export function buildSpectatorDeskProjection(
 		!!input.terminalEvent,
 	);
 	const agentCards = {
-		A: buildAgentCard("A", input.state, input.thoughtsA),
-		B: buildAgentCard("B", input.state, input.thoughtsB),
+		A: buildAgentCard(
+			"A",
+			input.state,
+			input.thoughtsA,
+			input.publicIdentityById,
+		),
+		B: buildAgentCard(
+			"B",
+			input.state,
+			input.thoughtsB,
+			input.publicIdentityById,
+		),
 	};
 	const tickerItems = input.tickerItems.slice(-MAX_TICKER_ITEMS);
 	const resultSummary = buildResultSummary(input.state, input.terminalEvent);
@@ -193,16 +210,25 @@ function buildAgentCard(
 	side: PlayerSide,
 	state: MatchState | null,
 	thoughts: string[],
+	publicIdentityById: PublicAgentIdentityMap,
 ): BroadcastAgentCard {
 	const player = state?.players[side];
 	const opponent = state?.players[side === "A" ? "B" : "A"];
 	const unitCount = player?.units.length ?? 0;
 	const publicCommentary = projectPublicCommentary(thoughts);
+	const fallbackStyleTag = buildStyleTag(side, player, opponent, state);
+	const identity = resolveBroadcastIdentity({
+		agentId: player?.id,
+		fallbackName: player?.id ?? `Player ${side}`,
+		fallbackStyleTag,
+		publicIdentityById,
+	});
 
 	return {
 		side,
-		name: player?.id ?? `Player ${side}`,
-		styleTag: buildStyleTag(side, player, opponent, state),
+		name: identity.name,
+		publicPersona: identity.publicPersona,
+		styleTag: identity.styleTag,
 		gold: player?.gold ?? 0,
 		wood: player?.wood ?? 0,
 		vp: player?.vp ?? 0,

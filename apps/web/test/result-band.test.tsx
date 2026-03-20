@@ -17,6 +17,8 @@ describe("ResultBand", () => {
 					A: {
 						side: "A",
 						name: "Alpha",
+						publicPersona:
+							"Terrain-first opportunist who wins by pressure and income.",
 						styleTag: "Pressing",
 						gold: 9,
 						wood: 4,
@@ -27,6 +29,8 @@ describe("ResultBand", () => {
 					B: {
 						side: "B",
 						name: "Bravo",
+						publicPersona:
+							"Measured defender who stabilizes before striking back.",
 						styleTag: "Pinned",
 						gold: 5,
 						wood: 3,

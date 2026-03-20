@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createInitialState } from "@fightclaw/engine";
 import type { EngineEventsEvent, MatchEndedEvent } from "@fightclaw/protocol";
 
+import { buildPublicAgentIdentityMap } from "../src/lib/public-agent-identity";
 import {
 	buildSpectatorDeskProjection,
 	projectBroadcastTickerItem,
@@ -94,13 +95,27 @@ describe("spectator desk projections", () => {
 			thoughtsB: [],
 			tickerItems: [],
 			terminalEvent,
+			publicIdentityById: buildPublicAgentIdentityMap([
+				{
+					agentId: "Alpha",
+					agentName: "Kai",
+					publicPersona:
+						"Terrain-first opportunist who wins by pressure and income.",
+					styleTag: "OBJECTIVE",
+				},
+			]),
 		});
 
 		expect(projection.featuredDesk.status).toBe("ended");
 		expect(projection.featuredDesk.label).toBe("Featured final");
+		expect(projection.agentCards.A.name).toBe("Kai");
+		expect(projection.agentCards.A.publicPersona).toBe(
+			"Terrain-first opportunist who wins by pressure and income.",
+		);
 		expect(projection.agentCards.A.publicCommentary).toBe(
 			"Hold center and keep pressure.",
 		);
+		expect(projection.agentCards.A.styleTag).toBe("OBJECTIVE");
 		expect(projection.resultSummary).toEqual({
 			headline: "A wins",
 			subtitle: "Elimination · B falls",

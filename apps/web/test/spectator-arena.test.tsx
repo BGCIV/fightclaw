@@ -22,6 +22,8 @@ describe("SpectatorArena broadcast desk", () => {
 					A: {
 						side: "A",
 						name: "Alpha",
+						publicPersona:
+							"Terrain-first opportunist who wins by pressure and income.",
 						styleTag: "Pressing",
 						gold: 9,
 						wood: 5,
@@ -32,6 +34,7 @@ describe("SpectatorArena broadcast desk", () => {
 					B: {
 						side: "B",
 						name: "Bravo",
+						publicPersona: "Patient attrition player with a steady tempo.",
 						styleTag: "Balanced",
 						gold: 7,
 						wood: 4,
@@ -70,6 +73,9 @@ describe("SpectatorArena broadcast desk", () => {
 
 		expect(markup).toContain("Featured live");
 		expect(markup).toContain("Alpha vs Bravo");
+		expect(markup).toContain(
+			"Terrain-first opportunist who wins by pressure and income.",
+		);
 		expect(markup).toContain("Hold center and recruit on tempo.");
 		expect(markup).toContain("Stabilizing the right flank.");
 		expect(markup).toContain("A advanced u_a_1 to B2");
