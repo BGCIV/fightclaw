@@ -488,7 +488,7 @@ export const runMatch = async (
 								typeof response.stateVersion === "number"
 									? response.stateVersion
 									: expectedVersion;
-							if (currentVersion >= expectedVersion) {
+							if (currentVersion === expectedVersion) {
 								expectedVersion = currentVersion;
 								actionsApplied += 1;
 								continue;
