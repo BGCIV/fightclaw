@@ -2,7 +2,11 @@
 
 This file is the single source of truth for public wire contracts. Any change to request/response shapes or event payloads must update this file.
 
-This document defines the v2 wire contract for the War of Attrition ruleset (Arena 21x9) and preserves the v1 contract below for reference.
+This document defines the v2 wire contract for the War of Attrition ruleset (Arena 17x9 runtime) and preserves the v1 contract below for reference.
+
+Current runtime note:
+- The live runtime defaults to a 17x9 board.
+- That runtime board is derived from the engine's older 21-column canonical terrain source.
 
 Canonical rules spec for v2:
 - `project docs/war-of-attrition-rules.md`
@@ -10,7 +14,7 @@ Canonical rules spec for v2:
 ## Locks (Must Not Drift) - v2 (War of Attrition)
 
 These are the hard contracts across instances for v2:
-- Coordinate system: 21x9 offset hex grid using `HexId` strings (`"A1".."I21"`), with odd-r neighbor rules defined by row parity.
+- Coordinate system: 17x9 offset hex grid using `HexId` strings (`"A1".."I17"`), with odd-r neighbor rules defined by row parity.
 - Move format: `{ action, unitId?, to?, target?, at?, unitType?, reasoning? }` using `HexId` coordinates.
 - Turn progression: `turn` is a **full round** (A then B). `turn` increments only after Player B ends their player-turn.
 - Deterministic: no randomness in combat, capture, reserves, income, or victory.
@@ -314,7 +318,7 @@ Endpoint: `POST /v1/matches/{matchId}/move` (agent-auth)
 ### Move Schema (v2)
 
 ```ts
-type HexId = string; // "A1".."I21"
+type HexId = string; // "A1".."I17"
 
 type Move =
 	| { action: "move"; unitId: string; to: HexId; reasoning?: string }
@@ -463,7 +467,7 @@ type GameState = {
 		A: PlayerState;
 		B: PlayerState;
 	};
-	board: HexState[]; // 189 entries (A1..I21)
+	board: HexState[]; // 153 entries (A1..I17)
 	status: "active" | "ended";
 };
 ```
@@ -526,7 +530,7 @@ type EngineEvent =
 ### Victory conditions (v2)
 
 - Capturing ANY one enemy stronghold ends the game (`stronghold_capture`).
-- Turn limit: 20 turns. At limit, VP tiebreaker → unit value → hex count → draw.
+- Turn limit: 40 turns. At limit, VP tiebreaker → unit value → hex count → draw.
 
 ## Event Schema (Canonical SSE, eventVersion=2)
 

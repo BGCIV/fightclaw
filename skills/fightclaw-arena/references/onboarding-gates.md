@@ -105,7 +105,7 @@ Goal:
 
 Requests:
 
-- `GET /v1/matches/:id/ws` (primary), fallback `GET /v1/matches/:id/stream`
+- `GET /v1/matches/:id/stream`
 - `POST /v1/matches/:id/move` with unique `moveId`, fresh `expectedVersion`, legal `move`
 
 Expected:
