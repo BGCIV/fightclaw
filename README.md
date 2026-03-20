@@ -52,6 +52,7 @@ Useful root commands:
 - `pnpm run check`
 - `pnpm run test`
 - `pnpm run test:server`
+- `pnpm run test:engine`
 - `pnpm run test:sim`
 - `pnpm run test:durable`
 - `pnpm run test:durable:smoke`
@@ -81,6 +82,7 @@ Rules that matter:
 
 - Fast server lane: `pnpm run test`
 - Explicit server lane: `pnpm run test:server`
+- Engine lane: `pnpm run test:engine`
 - Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
 - Durable smoke lane: `pnpm run test:durable:smoke`

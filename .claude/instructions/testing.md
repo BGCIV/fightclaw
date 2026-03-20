@@ -9,6 +9,7 @@ Use this when adding/refactoring code or validating behavior changes.
 - Full workspace typecheck: `pnpm run check-types`
 - Full workspace lint/format: `pnpm run check`
 - Fast server lane: `pnpm run test` or `pnpm run test:server`
+- Engine lane: `pnpm run test:engine`
 - Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
 - Durable smoke lane: `pnpm run test:durable:smoke`
@@ -28,7 +29,7 @@ Use this when adding/refactoring code or validating behavior changes.
 - Root command note:
   - in fresh worktrees, run `pnpm install` before trusting root `pnpm run test:*` scripts
 - Engine tests:
-  - `cd packages/engine && bun test`
+  - `pnpm run test:engine`
 
 ## Test Conventions
 
