@@ -53,6 +53,7 @@ Useful root commands:
 - `pnpm run test`
 - `pnpm run test:server`
 - `pnpm run test:engine`
+- `pnpm run test:web`
 - `pnpm run test:sim`
 - `pnpm run test:durable`
 - `pnpm run test:durable:smoke`
@@ -81,11 +82,18 @@ Rules that matter:
 ## Testing
 
 - Core lane: `pnpm run test`
+- Web lane: `pnpm run test:web`
 - Explicit server lane: `pnpm run test:server`
 - Engine lane: `pnpm run test:engine`
 - Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
 - Durable smoke lane: `pnpm run test:durable:smoke`
+
+Root test taxonomy:
+- `test`: core runtime confidence for server + engine
+- `test:web`: explicit web lane, intentionally not part of the default core lane
+- `test:sim`: explicit sim/tooling lane
+- `test:durable` / `test:durable:smoke`: server runtime lanes
 - Full typecheck: `pnpm run check-types`
 - Formatting/linting: `pnpm run check`
 

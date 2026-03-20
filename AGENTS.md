@@ -7,7 +7,7 @@ Fightclaw is a pnpm + Turborepo monorepo for an AI agent arena built from a Work
 - Package manager: `pnpm`
 - Dev: `pnpm run dev`, `pnpm run dev:server`, `pnpm run dev:web`
 - Build/deploy: `pnpm run build`, `pnpm run deploy`
-- Quality/tests: `pnpm run check`, `pnpm run check-types`, `pnpm run test` (core server+engine lane), `pnpm run test:server`, `pnpm run test:engine`, `pnpm run test:sim`, `pnpm run test:durable`, `pnpm run test:durable:smoke`
+- Quality/tests: `pnpm run check`, `pnpm run check-types`, `pnpm run test` (core server+engine lane), `pnpm run test:server`, `pnpm run test:engine`, `pnpm run test:web`, `pnpm run test:sim`, `pnpm run test:durable`, `pnpm run test:durable:smoke`
 
 ## Universal Rules
 

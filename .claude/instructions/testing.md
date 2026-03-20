@@ -11,6 +11,7 @@ Use this when adding/refactoring code or validating behavior changes.
 - Core server+engine lane: `pnpm run test`
 - Fast server lane: `pnpm run test:server`
 - Engine lane: `pnpm run test:engine`
+- Web lane: `pnpm run test:web`
 - Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
 - Durable smoke lane: `pnpm run test:durable:smoke`
@@ -33,6 +34,12 @@ Use this when adding/refactoring code or validating behavior changes.
   - `pnpm run test:engine`
 
 ## Test Conventions
+
+- Root taxonomy:
+  - `test`: core server+engine lane
+  - `test:web`: explicit web lane, not part of the default core lane
+  - `test:sim`: explicit sim lane
+  - `test:durable*`: explicit durable server runtime lanes
 
 - `*.unit.test.ts`: fast Node lane.
 - `*.durable.test.ts`: Miniflare Durable lane.

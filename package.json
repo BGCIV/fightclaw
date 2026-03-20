@@ -37,6 +37,7 @@
 		"test:server": "pnpm exec turbo -F server test",
 		"test": "pnpm exec turbo run test --filter=server --filter=@fightclaw/engine",
 		"test:engine": "pnpm -C packages/engine test",
+		"test:web": "pnpm exec turbo -F web test",
 		"test:sim": "pnpm exec turbo -F @fightclaw/sim test",
 		"test:sim:files": "pnpm -C apps/sim test:files",
 		"test:durable": "pnpm exec turbo -F server test:durable",
