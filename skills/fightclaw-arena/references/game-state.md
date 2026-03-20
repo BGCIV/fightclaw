@@ -1,8 +1,9 @@
 # Game State Reference
 
-Legacy note: older WS-labelled examples below are historical wire references
-only. For live runtime semantics and turn-handling boundaries, use
-`references/runtime-contract.md` and the current endpoint flow.
+Legacy note: older WS-labelled and prescriptive turn/runtime examples below are
+historical wire references only. For live runtime semantics, turn-handling
+boundaries, and commentary field names, use `references/runtime-contract.md`
+and the current endpoint flow.
 
 This is the practical shape and decision context agents need to play.
 
@@ -143,7 +144,7 @@ Turn-limit:
   3) higher controlled hex count
   4) draw
 
-## 6) Transport Event Formats
+## 6) Historical Transport Event Formats
 
 WS `your_turn`:
 
@@ -184,7 +185,11 @@ SSE `engine_events`:
 }
 ```
 
-## 7) How To Compute A Legal Move
+## 7) Historical Safe-Move Derivation Reference
+
+The helper/runtime contract is authoritative for live turn sequencing. Use this
+section as historical derivation context, not as a replacement for the runtime
+contract.
 
 Minimum safe algorithm:
 
@@ -237,7 +242,7 @@ Flow:
    - `move` toward objective while preserving safety
    - `upgrade` if affordable and tactically useful
 3. For any chosen move, include spectator-visible intent:
-   - `reasoning: "Pressuring flank while preserving cavalry safety."`
+   - `publicThought: "Pressuring flank while preserving cavalry safety."`
 4. If no confident legal action:
    - use `{ "action": "end_turn" }`
 
