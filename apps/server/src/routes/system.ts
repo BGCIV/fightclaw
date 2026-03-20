@@ -45,7 +45,33 @@ systemRoutes.get("/v1/leaderboard", async (c) => {
 		)
 			.bind(limit)
 			.all();
-		return c.json({ leaderboard: results ?? [] });
+		const leaderboard = (results ?? []) as Array<{
+			agent_id: string;
+			rating: number;
+			wins: number;
+			losses: number;
+			games_played: number;
+			updated_at: string;
+		}>;
+		const publicIdentityById = new Map(
+			(
+				await readPublicAgentIdentities(
+					c.env.DB,
+					leaderboard.map((entry) => entry.agent_id),
+				)
+			).map((identity) => [identity.agentId, identity] as const),
+		);
+		return c.json({
+			leaderboard: leaderboard.map((entry) => {
+				const identity = publicIdentityById.get(entry.agent_id);
+				return {
+					...entry,
+					agentName: identity?.agentName ?? null,
+					publicPersona: identity?.publicPersona ?? null,
+					styleTag: identity?.styleTag ?? null,
+				};
+			}),
+		});
 	} catch (error) {
 		console.error("Failed to load leaderboard", error);
 		return internalServerError(c, "Leaderboard unavailable");
