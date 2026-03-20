@@ -31,6 +31,7 @@ export type BroadcastTickerItem = {
 
 export type BroadcastAgentCard = {
 	side: PlayerSide;
+	agentId: string | null;
 	name: string;
 	publicPersona: string | null;
 	styleTag: string;
@@ -225,6 +226,7 @@ function buildAgentCard(
 
 	return {
 		side,
+		agentId: player?.id ?? null,
 		name: identity.name,
 		publicPersona: identity.publicPersona,
 		styleTag: identity.styleTag,

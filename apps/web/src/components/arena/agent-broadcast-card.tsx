@@ -1,3 +1,4 @@
+import { buildAgentProfileHref } from "@/lib/agent-profile";
 import type { BroadcastAgentCard } from "@/lib/spectator-desk";
 
 type AgentBroadcastCardProps = {
@@ -16,7 +17,11 @@ export function AgentBroadcastCard({ card }: AgentBroadcastCardProps) {
 			<div
 				className={`agent-broadcast-name player-${card.side.toLowerCase()}-color`}
 			>
-				{card.name}
+				{card.agentId ? (
+					<a href={buildAgentProfileHref(card.agentId)}>{card.name}</a>
+				) : (
+					card.name
+				)}
 			</div>
 			{card.publicPersona ? (
 				<p className="agent-broadcast-persona">{card.publicPersona}</p>

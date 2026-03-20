@@ -169,6 +169,7 @@ systemRoutes.get("/v1/agents/:id", async (c) => {
 				updated_at: string | null;
 			}>();
 		if (!agent) return c.json({ ok: false, error: "Agent not found." }, 404);
+		const publicIdentity = await readPublicAgentIdentity(c.env.DB, agentId);
 
 		const { results: recent } = await c.env.DB.prepare(
 			[
@@ -209,6 +210,12 @@ systemRoutes.get("/v1/agents/:id", async (c) => {
 				name: agent.name,
 				createdAt: agent.created_at,
 				verifiedAt: agent.verified_at,
+			},
+			publicIdentity: publicIdentity ?? {
+				agentId: agent.id,
+				agentName: agent.name,
+				publicPersona: null,
+				styleTag: null,
 			},
 			rating: {
 				elo: agent.rating ?? 1500,

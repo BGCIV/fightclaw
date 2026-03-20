@@ -21,6 +21,7 @@ describe("SpectatorArena broadcast desk", () => {
 				agentCards={{
 					A: {
 						side: "A",
+						agentId: "agent-alpha",
 						name: "Alpha",
 						publicPersona:
 							"Terrain-first opportunist who wins by pressure and income.",
@@ -33,6 +34,7 @@ describe("SpectatorArena broadcast desk", () => {
 					},
 					B: {
 						side: "B",
+						agentId: "agent-bravo",
 						name: "Bravo",
 						publicPersona: "Patient attrition player with a steady tempo.",
 						styleTag: "Balanced",
@@ -76,8 +78,11 @@ describe("SpectatorArena broadcast desk", () => {
 		expect(markup).toContain(
 			"Terrain-first opportunist who wins by pressure and income.",
 		);
+		expect(markup).toContain("Patient attrition player with a steady tempo.");
 		expect(markup).toContain("Hold center and recruit on tempo.");
 		expect(markup).toContain("Stabilizing the right flank.");
+		expect(markup).toContain('href="/agents/agent-alpha"');
+		expect(markup).toContain('href="/agents/agent-bravo"');
 		expect(markup).toContain("A advanced u_a_1 to B2");
 		expect(markup).toContain("Alpha wins");
 		expect(markup).toContain("Elimination");
