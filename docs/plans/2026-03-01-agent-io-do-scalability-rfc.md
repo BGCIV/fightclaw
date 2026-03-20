@@ -1,5 +1,7 @@
 # Agent I/O + Match Runtime Scalability Implementation Plan
 
+> Historical note (2026-03-20): This RFC predates the SSE-only cutover. Any references below to queue or match WebSocket routes are historical only and should not be read as the current transport contract. Use `CONTRACTS.md` for the current live receive model.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Harden agent turn I/O contracts, introduce scalable sharded matchmaking routing, and optimize delayed replay data access for production-scale throughput.
@@ -245,4 +247,3 @@ Expected: PASS.
 - No live spectator streaming redesign.
 - No engine rule changes.
 - No prompt system redesign beyond payload contract hardening.
-
