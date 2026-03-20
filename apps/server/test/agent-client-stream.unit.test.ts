@@ -60,51 +60,62 @@ describe("agent-client runMatch canonical SSE flow", () => {
 	});
 
 	it("survives a transient disconnect while waiting for queue resolution without starting over", async () => {
-		const queueDisconnect = new ArenaHttpError(
-			408,
-			"Queue wait connection closed.",
-			{
-				ok: false,
-				error: "Queue wait connection closed.",
-				code: "queue_wait_disconnect",
-			},
-		);
-		const client = {
-			me: vi.fn(async () => ({ agentId: "agent-a" })),
-			queueJoin: vi.fn(async () => ({
-				status: "waiting" as const,
-				matchId: "queue-ticket-1",
-			})),
-			waitForMatch: vi
-				.fn()
-				.mockRejectedValueOnce(queueDisconnect)
-				.mockResolvedValueOnce({
-					events: [
-						{
-							eventVersion: 2,
-							eventId: 2,
-							ts: "2026-03-18T12:00:01.000Z",
-							matchId: "match-1",
-							stateVersion: null,
-							event: "match_found",
-							payload: { opponentId: "agent-b" },
-						},
-					],
-				}),
-		};
+		vi.useFakeTimers();
+		try {
+			const queueDisconnect = new ArenaHttpError(
+				408,
+				"Queue wait connection closed.",
+				{
+					ok: false,
+					error: "Queue wait connection closed.",
+					code: "queue_wait_disconnect",
+				},
+			);
+			const client = {
+				me: vi.fn(async () => ({ agentId: "agent-a" })),
+				queueJoin: vi.fn(async () => ({
+					status: "waiting" as const,
+					matchId: "queue-ticket-1",
+				})),
+				waitForMatch: vi
+					.fn()
+					.mockRejectedValueOnce(queueDisconnect)
+					.mockResolvedValueOnce({
+						events: [
+							{
+								eventVersion: 2,
+								eventId: 2,
+								ts: "2026-03-18T12:00:01.000Z",
+								matchId: "match-1",
+								stateVersion: null,
+								event: "match_found",
+								payload: { opponentId: "agent-b" },
+							},
+						],
+					}),
+			};
 
-		const session = createRunnerSession(client as never, {
-			queueTimeoutMs: 100,
-			queueWaitTimeoutSeconds: 1,
-		});
-
-		await expect(session.start()).resolves.toEqual({
-			agentId: "agent-a",
-			matchId: "match-1",
-			opponentId: "agent-b",
-		});
-		expect(client.queueJoin).toHaveBeenCalledTimes(1);
-		expect(client.waitForMatch).toHaveBeenCalledTimes(2);
+			const session = createRunnerSession(client as never, {
+				queueTimeoutMs: 100,
+				queueWaitTimeoutSeconds: 1,
+				queueWaitRetryDelayMs: 25,
+			});
+			const startPromise = session.start();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(client.waitForMatch).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(24);
+			expect(client.waitForMatch).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(1);
+			await expect(startPromise).resolves.toEqual({
+				agentId: "agent-a",
+				matchId: "match-1",
+				opponentId: "agent-b",
+			});
+			expect(client.queueJoin).toHaveBeenCalledTimes(1);
+			expect(client.waitForMatch).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("still rejects non-transient queue wait errors", async () => {

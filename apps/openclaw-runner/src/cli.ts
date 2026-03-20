@@ -318,28 +318,32 @@ const createMoveProvider = (
 			} catch {
 				turnContext = undefined;
 			}
-			const gateway = await invokeGateway(
-				gatewayCmd,
-				{
-					agentId,
-					agentName,
-					matchId,
-					stateVersion,
-					state,
-					strategyPrompt,
-					...(turnContext === undefined ? {} : { turnContext }),
-				},
-				options?.gatewayTimeoutMs ?? 4000,
-			);
-			if (gateway?.move) {
-				const thought =
-					typeof gateway.publicThought === "string"
-						? gateway.publicThought
-						: "Public-safe summary unavailable.";
-				return {
-					...gateway.move,
-					reasoning: thought,
-				};
+			try {
+				const gateway = await invokeGateway(
+					gatewayCmd,
+					{
+						agentId,
+						agentName,
+						matchId,
+						stateVersion,
+						state,
+						strategyPrompt,
+						...(turnContext === undefined ? {} : { turnContext }),
+					},
+					options?.gatewayTimeoutMs ?? 4000,
+				);
+				if (gateway?.move) {
+					const thought =
+						typeof gateway.publicThought === "string"
+							? gateway.publicThought
+							: "Public-safe summary unavailable.";
+					return {
+						...gateway.move,
+						reasoning: thought,
+					};
+				}
+			} catch {
+				return fallbackMove;
 			}
 		}
 		return fallbackMove;
@@ -457,7 +461,10 @@ const runDuel = async (args: ArgMap) => {
 		selectionA.privateStrategy,
 		matchContextStore,
 		gatewayCmdA,
-		{ singleActionTurns, gatewayTimeoutMs: moveTimeoutMs },
+		{
+			singleActionTurns,
+			gatewayTimeoutMs: Math.max(1, moveTimeoutMs - 250),
+		},
 	);
 	const moveProviderB = createMoveProvider(
 		runnerClientB,
@@ -466,7 +473,10 @@ const runDuel = async (args: ArgMap) => {
 		selectionB.privateStrategy,
 		matchContextStore,
 		gatewayCmdB,
-		{ singleActionTurns, gatewayTimeoutMs: moveTimeoutMs },
+		{
+			singleActionTurns,
+			gatewayTimeoutMs: Math.max(1, moveTimeoutMs - 250),
+		},
 	);
 
 	const [resultA, resultB]: [RunMatchResult, RunMatchResult] =

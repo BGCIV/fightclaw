@@ -157,4 +157,22 @@ describe("mockLlmBot", () => {
 		expect((moves ?? []).length).toBe(1);
 		expect((moves ?? [])[0]?.action).not.toBe("end_turn");
 	});
+
+	test("planned bounded turn returns a legal terminal fallback instead of hardcoded end_turn", async () => {
+		const state = createCombatScenario(9, ["P1", "P2"], "midfield");
+		const bot = makeMockLlmBot("P1", {
+			strategy: "aggressive",
+		});
+
+		const moves = await bot.chooseTurn?.({
+			state,
+			legalMoves: [{ action: "pass" }],
+			turn: 1,
+			rng: () => 0,
+		});
+
+		expect(moves).toEqual([
+			{ action: "pass", reasoning: "bounded_multi_action_turn" },
+		]);
+	});
 });

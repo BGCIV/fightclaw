@@ -131,6 +131,7 @@ export type MatchStreamSubscriptionOptions = {
 export type RunnerSessionOptions = {
 	queueTimeoutMs?: number;
 	queueWaitTimeoutSeconds?: number;
+	queueWaitRetryDelayMs?: number;
 	streamReconnectDelayMs?: number;
 };
 
