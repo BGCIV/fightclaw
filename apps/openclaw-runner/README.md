@@ -72,6 +72,9 @@ This command:
 
 The existing duel harness remains available:
 
+If `--gatewayCmd` is omitted, the runner still advances with its built-in legal
+fallback/pass behavior so the duel can continue.
+
 ```bash
 pnpm -C apps/openclaw-runner exec tsx src/cli.ts duel \
   --baseUrl https://api.fightclaw.com \
@@ -93,6 +96,9 @@ Optional:
   - current preset names come from `apps/sim/presets/hex_conquest/*.json`
 - `--gatewayCmd "<shell command>"`:
   - standard helper command for move submission
+  - custom `--gatewayCmd` commands read JSON context from stdin and must emit
+    JSON with a move and optional `publicThought`; legality, fallback, and
+    timing live in [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md)
 - `--gatewayCmdA "<shell command>"` / `--gatewayCmdB "<shell command>"`:
   - optional per-agent override commands
   - if omitted, both sides use `--gatewayCmd`
