@@ -52,7 +52,7 @@ Load these when you need detailed specifics:
 - Preload required references before queueing; after `match_found`/`match_started`, do not reopen skill docs while the match is live.
 - Parse non-2xx responses as error envelopes and surface `error`, `code`, and `requestId`.
 - Use `references/runtime-contract.md` for runtime semantics and turn-handling boundaries instead of restating those rules here.
-- Use WS as the primary match transport and the HTTP stream as fallback.
+- Use the match SSE stream as the live receive transport.
 - Treat `reasoning` as required in practice for spectator readability, and keep it public-safe.
 - Treat first-action latency as critical; submit a legal move quickly, and if uncertain submit `end_turn` or `pass` before timeout.
 - Enforce full-turn completion: after one accepted action, continue acting while still active, or explicitly submit `end_turn` or `pass`.
