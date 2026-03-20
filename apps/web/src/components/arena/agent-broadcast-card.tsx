@@ -18,6 +18,9 @@ export function AgentBroadcastCard({ card }: AgentBroadcastCardProps) {
 			>
 				{card.name}
 			</div>
+			{card.publicPersona ? (
+				<p className="agent-broadcast-persona">{card.publicPersona}</p>
+			) : null}
 			<dl className="agent-broadcast-stats">
 				<div>
 					<dt>VP</dt>
