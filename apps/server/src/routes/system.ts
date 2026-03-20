@@ -5,14 +5,26 @@ import {
 	type SystemVersionResponse,
 } from "@fightclaw/protocol";
 import { Hono } from "hono";
+import { z } from "zod";
 
 import type { AppBindings, AppVariables } from "../appTypes";
-import { internalServerError } from "../utils/httpErrors";
+import {
+	readPublicAgentIdentities,
+	readPublicAgentIdentity,
+} from "../publicAgentIdentity";
+import { badRequest, internalServerError, notFound } from "../utils/httpErrors";
+import { parseUuidParam } from "../utils/params";
 
 export const systemRoutes = new Hono<{
 	Bindings: AppBindings;
 	Variables: AppVariables;
 }>();
+
+const publicAgentBatchSchema = z
+	.object({
+		agentIds: z.array(z.string().uuid()).max(100),
+	})
+	.strict();
 
 systemRoutes.get("/", (c) => {
 	return c.text("OK");
@@ -33,10 +45,71 @@ systemRoutes.get("/v1/leaderboard", async (c) => {
 		)
 			.bind(limit)
 			.all();
-		return c.json({ leaderboard: results ?? [] });
+		const leaderboard = (results ?? []) as Array<{
+			agent_id: string;
+			rating: number;
+			wins: number;
+			losses: number;
+			games_played: number;
+			updated_at: string;
+		}>;
+		const publicIdentityById = new Map(
+			(
+				await readPublicAgentIdentities(
+					c.env.DB,
+					leaderboard.map((entry) => entry.agent_id),
+				)
+			).map((identity) => [identity.agentId, identity] as const),
+		);
+		return c.json({
+			leaderboard: leaderboard.map((entry) => {
+				const identity = publicIdentityById.get(entry.agent_id);
+				return {
+					...entry,
+					agentName: identity?.agentName ?? null,
+					publicPersona: identity?.publicPersona ?? null,
+					styleTag: identity?.styleTag ?? null,
+				};
+			}),
+		});
 	} catch (error) {
 		console.error("Failed to load leaderboard", error);
 		return internalServerError(c, "Leaderboard unavailable");
+	}
+});
+
+systemRoutes.get("/v1/agents/:id/public", async (c) => {
+	const agentResult = parseUuidParam(c, "id", "Agent id");
+	if (!agentResult.ok) return agentResult.response;
+
+	try {
+		const agent = await readPublicAgentIdentity(c.env.DB, agentResult.value);
+		if (!agent) {
+			return notFound(c, "Agent not found.");
+		}
+		return c.json({ agent });
+	} catch (error) {
+		console.error("Failed to load public agent identity", error);
+		return internalServerError(c, "Public agent identity unavailable");
+	}
+});
+
+systemRoutes.post("/v1/agents/public/batch", async (c) => {
+	const json = await c.req.json().catch(() => null);
+	const parsed = publicAgentBatchSchema.safeParse(json);
+	if (!parsed.success) {
+		return badRequest(c, "Invalid public agent batch payload.");
+	}
+
+	try {
+		const agents = await readPublicAgentIdentities(
+			c.env.DB,
+			parsed.data.agentIds,
+		);
+		return c.json({ agents });
+	} catch (error) {
+		console.error("Failed to load public agent identities", error);
+		return internalServerError(c, "Public agent identities unavailable");
 	}
 });
 

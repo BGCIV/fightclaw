@@ -35,6 +35,11 @@ import {
 	useArenaAnimator,
 } from "@/lib/arena-animator";
 import {
+	buildParticipantIdentityRequest,
+	fetchPublicAgentIdentityMap,
+	type PublicAgentIdentityMap,
+} from "@/lib/public-agent-identity";
+import {
 	appendBroadcastTickerItem,
 	type BroadcastTickerItem,
 	buildSpectatorDeskProjection,
@@ -135,6 +140,8 @@ function SpectatorLanding() {
 	const [terminalEvent, setTerminalEvent] = useState<
 		MatchEndedEvent | GameEndedEvent | null
 	>(null);
+	const [publicIdentityById, setPublicIdentityById] =
+		useState<PublicAgentIdentityMap>({});
 	const thoughtEventIdsRef = useRef(new Set<string>());
 
 	const featured = featuredState.featured;
@@ -159,8 +166,21 @@ function SpectatorLanding() {
 		setThoughtsB([]);
 		setTickerItems([]);
 		setTerminalEvent(null);
+		setPublicIdentityById({});
 		thoughtEventIdsRef.current.clear();
 	});
+
+	const participantIdentity = useMemo(
+		() =>
+			buildParticipantIdentityRequest({
+				agentAId: latestState?.players.A.id ?? null,
+				agentBId: latestState?.players.B.id ?? null,
+			}),
+		[latestState?.players.A.id, latestState?.players.B.id],
+	);
+
+	const participantAgentIds = participantIdentity.agentIds;
+	const participantIdentityKey = participantIdentity.identityKey;
 
 	const applyThoughtEvent = useEffectEvent((event: AgentThoughtEvent) => {
 		const player = event.payload.player;
@@ -501,6 +521,36 @@ function SpectatorLanding() {
 		});
 	}, [isAnimating, replayMatchId, replayShouldFollowLive]);
 
+	useEffect(() => {
+		let active = true;
+		if (!participantIdentityKey || participantAgentIds.length !== 2) {
+			setPublicIdentityById({});
+			return () => {
+				active = false;
+			};
+		}
+
+		const loadPublicIdentity = async () => {
+			try {
+				const identities = await fetchPublicAgentIdentityMap({
+					agentIds: participantAgentIds,
+					baseUrl: env.VITE_SERVER_URL,
+				});
+				if (!active) return;
+				setPublicIdentityById(identities);
+			} catch {
+				if (!active) return;
+				setPublicIdentityById({});
+			}
+		};
+
+		void loadPublicIdentity();
+
+		return () => {
+			active = false;
+		};
+	}, [participantIdentityKey, participantAgentIds]);
+
 	const statusBadge = useMemo(() => {
 		switch (connectionStatus) {
 			case "live":
@@ -526,6 +576,7 @@ function SpectatorLanding() {
 				thoughtsB,
 				tickerItems,
 				terminalEvent,
+				publicIdentityById,
 			}),
 		[
 			connectionStatus,
@@ -535,6 +586,7 @@ function SpectatorLanding() {
 			thoughtsB,
 			tickerItems,
 			terminalEvent,
+			publicIdentityById,
 		],
 	);
 
