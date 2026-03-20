@@ -17,6 +17,20 @@ test("loads the checked-in objective beta preset artifact", () => {
 	assert.match(preset.privateStrategy, /Contest crowns and income nodes early/);
 });
 
+test("loads the checked-in safe fallback beta preset artifact", () => {
+	const preset = loadHexConquestPreset("safe_fallback_beta");
+	assert.equal(preset.id, "safe_fallback_beta");
+	assert.equal(preset.gameType, "hex_conquest");
+	assert.equal(
+		preset.publicPersona,
+		"Safety-first operator who values clean, legal progress.",
+	);
+	assert.match(
+		preset.privateStrategy,
+		/Prefer clearly legal progress, avoid speculative loops/,
+	);
+});
+
 test("throws for unknown preset names", () => {
 	assert.throws(
 		() => loadHexConquestPreset("missing_beta"),

@@ -7,7 +7,9 @@ import {
 } from "../diagnostics/collector";
 import { Engine } from "../engineAdapter";
 import { mulberry32 } from "../rng";
-import type { Bot, MatchLog, MatchResult, Move } from "../types";
+import { deriveStructuralDiagnostics } from "../structuralDiagnostics";
+import { deriveTurnPacingDiagnostics } from "../turnPacingDiagnostics";
+import type { Bot, EngineEvent, MatchLog, MatchResult, Move } from "../types";
 import {
 	applyEngineMoveChecked,
 	bindHarnessMatchState,
@@ -95,7 +97,7 @@ export async function playMatchBoardgameIO(
 
 	const artifact = new ArtifactBuilder(harnessConfig);
 	const acceptedMoves: Move[] = [];
-	const engineEvents = [] as unknown[];
+	const engineEvents: EngineEvent[] = [];
 	let illegalMoves = 0;
 	let completedTurns = 0;
 	let forfeitWinner: string | null = null;
@@ -941,7 +943,7 @@ function finalizeResult(input: {
 	reason: "terminal" | "maxTurns" | "illegal";
 	state: unknown;
 	acceptedMoves: Move[];
-	engineEvents: unknown[];
+	engineEvents: EngineEvent[];
 	playerPair: [string, string];
 	record?: boolean;
 }): MatchResult {
@@ -950,7 +952,7 @@ function finalizeResult(input: {
 				seed: input.seed,
 				players: input.playerPair,
 				moves: [...input.acceptedMoves],
-				engineEvents: input.engineEvents as never,
+				engineEvents: input.engineEvents,
 				finalState: input.state as never,
 			}
 		: undefined;
@@ -961,6 +963,14 @@ function finalizeResult(input: {
 		winner: input.winner,
 		illegalMoves: input.illegalMoves,
 		reason: input.reason,
+		structuralDiagnostics: deriveStructuralDiagnostics(
+			input.engineEvents,
+			input.reason,
+		),
+		turnPacingDiagnostics: deriveTurnPacingDiagnostics(
+			input.engineEvents,
+			input.state as Parameters<typeof deriveTurnPacingDiagnostics>[1],
+		),
 		log,
 	};
 }

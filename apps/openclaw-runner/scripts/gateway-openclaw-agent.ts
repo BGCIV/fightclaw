@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
 	listLegalMoves,
@@ -13,6 +15,11 @@ type GatewayInput = {
 	matchId?: string;
 	stateVersion?: number;
 	state?: unknown;
+	turnActionIndex?: number;
+	remainingActionBudget?: number;
+	previousActionsThisTurn?: unknown;
+	finishOverlay?: boolean;
+	strategyDirective?: unknown;
 };
 
 type GatewaySuccessOutput = {
@@ -23,6 +30,11 @@ type GatewaySuccessOutput = {
 type GatewayFailureOutput = {
 	error: string;
 	publicThought?: string;
+};
+
+export const resolveOpenClawBin = (env: NodeJS.ProcessEnv = process.env) => {
+	const raw = env.OPENCLAW_BIN?.trim();
+	return raw && raw.length > 0 ? raw : "openclaw";
 };
 
 const readStdin = async () => {
@@ -114,25 +126,59 @@ const summarizeState = (state: MatchState) => {
 	};
 };
 
-const buildPrompt = (input: {
+export const buildPrompt = (input: {
 	agentId: string;
 	agentName: string;
 	matchId: string;
 	stateVersion: number;
 	state: MatchState;
 	legalMoves: Move[];
+	turnActionIndex?: number;
+	remainingActionBudget?: number;
+	previousActionsThisTurn?: unknown;
+	finishOverlay?: boolean;
+	strategyDirective?: string;
 }) => {
 	const summary = summarizeState(input.state);
-	return [
+	const strategyDirective =
+		typeof input.strategyDirective === "string"
+			? input.strategyDirective.trim()
+			: "";
+	const wantsFinishOverlay =
+		input.finishOverlay || strategyDirective.length > 0;
+	const promptLines = [
 		`You are Fightclaw agent "${input.agentName}" (${input.agentId}).`,
-		"Choose exactly one legal move from the provided legalMoves array.",
+		"Choose the best next legal move from the provided legalMoves array.",
+		"You may be called multiple times during the same player-turn.",
+		"Do not end the turn after one merely safe action if a legal high-value follow-up improves combat position, objective pressure, economy, or stronghold threat.",
+		"End the turn when no legal follow-up materially improves the position.",
 		"Respond with JSON only (no markdown, no prose), one line:",
 		'{"move": <one legal move object>, "publicThought": "<short public-safe sentence>"}',
 		"Do not invent fields. Do not output invalid JSON.",
 		`matchId=${input.matchId}, stateVersion=${input.stateVersion}`,
+		`turnActionIndex=${String(input.turnActionIndex ?? 1)}`,
+		`remainingActionBudget=${String(input.remainingActionBudget ?? 1)}`,
+		`previousActionsThisTurn=${JSON.stringify(input.previousActionsThisTurn ?? [])}`,
 		`stateSummary=${JSON.stringify(summary)}`,
 		`legalMoves=${JSON.stringify(input.legalMoves)}`,
-	].join("\n");
+	];
+	if (wantsFinishOverlay) {
+		promptLines.splice(
+			4,
+			0,
+			"Prefer a legal terminal or high-pressure line when it is available.",
+			"Take the terminal line when it is legal.",
+			"If a legal attack or decisive follow-up exists, do not choose end_turn yet.",
+		);
+	}
+	if (strategyDirective.length > 0) {
+		promptLines.splice(
+			8,
+			0,
+			`strategyDirective=${JSON.stringify(strategyDirective)}`,
+		);
+	}
+	return promptLines.join("\n");
 };
 
 const extractJsonObject = (text: string): Record<string, unknown> | null => {
@@ -201,7 +247,7 @@ const callOpenClawAgent = async (args: {
 }): Promise<string> => {
 	return await new Promise((resolve, reject) => {
 		const child = spawn(
-			"openclaw",
+			resolveOpenClawBin(),
 			[
 				"agent",
 				"--agent",
@@ -319,6 +365,20 @@ const main = async () => {
 		stateVersion: payload.stateVersion ?? state.stateVersion,
 		state,
 		legalMoves,
+		turnActionIndex:
+			typeof payload.turnActionIndex === "number"
+				? payload.turnActionIndex
+				: undefined,
+		remainingActionBudget:
+			typeof payload.remainingActionBudget === "number"
+				? payload.remainingActionBudget
+				: undefined,
+		previousActionsThisTurn: payload.previousActionsThisTurn,
+		finishOverlay: payload.finishOverlay === true,
+		strategyDirective:
+			typeof payload.strategyDirective === "string"
+				? payload.strategyDirective
+				: undefined,
 	});
 
 	try {
@@ -382,4 +442,10 @@ const main = async () => {
 	}
 };
 
-void main();
+const isMainModule =
+	typeof process.argv[1] === "string" &&
+	import.meta.url === pathToFileURL(resolvePath(process.argv[1])).href;
+
+if (isMainModule) {
+	void main();
+}

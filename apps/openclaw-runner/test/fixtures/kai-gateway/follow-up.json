@@ -1,0 +1,29 @@
+{
+	"name": "follow-up",
+	"agentId": "Kai",
+	"agentName": "Kai",
+	"matchId": "synthetic-follow-up",
+	"seed": 0,
+	"players": ["Kai", "House"],
+	"history": [
+		{
+			"action": "move",
+			"unitId": "A-4",
+			"to": "B7"
+		}
+	],
+	"stateVersion": 2,
+	"turnActionIndex": 2,
+	"remainingActionBudget": 2,
+	"previousActionsThisTurn": [
+		{
+			"action": "move",
+			"unitId": "A-4",
+			"to": "B7"
+		}
+	],
+	"strategyDirective": "Pressure objectives, keep income flowing, and convert resource edge into stronghold pressure.",
+	"expectations": {
+		"attackAvailable": false
+	}
+}

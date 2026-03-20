@@ -93,4 +93,26 @@ describe("mockLlmBot", () => {
 		).metadata;
 		expect(meta?.breakdown?.phase).toBe("closing");
 	});
+
+	test("bounded turn planner emits multiple tactical actions before end_turn", async () => {
+		const state = createCombatScenario(6, ["P1", "P2"], "melee");
+		const legalMoves = Engine.listLegalMoves(state);
+		const bot = makeMockLlmBot("P1", {
+			strategy: "aggressive",
+			inline: "Press attacks and keep momentum if a strong follow-up exists.",
+		});
+
+		const moves = await bot.chooseTurn?.({
+			state,
+			legalMoves,
+			turn: 1,
+			rng: () => 0,
+		});
+
+		expect(moves).toBeDefined();
+		expect((moves ?? []).length).toBeGreaterThan(1);
+		expect((moves ?? []).length).toBeLessThanOrEqual(4);
+		expect((moves ?? []).at(-1)?.action).toBe("end_turn");
+		expect((moves ?? []).some((move) => move.action === "attack")).toBe(true);
+	});
 });

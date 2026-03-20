@@ -21,6 +21,9 @@ export function makeGreedyBot(id: string): Bot {
 	return {
 		id,
 		name: "GreedyBot",
+		serializedConfig: {
+			type: "greedy",
+		},
 		chooseMove: async ({ legalMoves, rng }) => {
 			let bestScore = Number.NEGATIVE_INFINITY;
 			let best: Move[] = [];
