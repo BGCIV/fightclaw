@@ -80,7 +80,7 @@ Rules that matter:
 
 ## Testing
 
-- Fast server lane: `pnpm run test`
+- Core lane: `pnpm run test`
 - Explicit server lane: `pnpm run test:server`
 - Engine lane: `pnpm run test:engine`
 - Sim lane: `pnpm run test:sim`

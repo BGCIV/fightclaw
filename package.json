@@ -35,7 +35,7 @@
 		"smoke:openclaw-beta": "node ./apps/server/scripts/openclaw-beta-loop-smoke.mjs",
 		"check": "biome check --write .",
 		"test:server": "pnpm exec turbo -F server test",
-		"test": "pnpm exec turbo -F server test",
+		"test": "pnpm exec turbo run test --filter=server --filter=@fightclaw/engine",
 		"test:engine": "pnpm -C packages/engine test",
 		"test:sim": "pnpm exec turbo -F @fightclaw/sim test",
 		"test:sim:files": "pnpm -C apps/sim test:files",

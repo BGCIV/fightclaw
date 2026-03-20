@@ -8,7 +8,8 @@ Use this when adding/refactoring code or validating behavior changes.
 
 - Full workspace typecheck: `pnpm run check-types`
 - Full workspace lint/format: `pnpm run check`
-- Fast server lane: `pnpm run test` or `pnpm run test:server`
+- Core server+engine lane: `pnpm run test`
+- Fast server lane: `pnpm run test:server`
 - Engine lane: `pnpm run test:engine`
 - Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
