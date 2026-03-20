@@ -34,9 +34,12 @@
 		"smoke:openclaw-duel": "node ./apps/server/scripts/openclaw-duel-smoke.mjs",
 		"smoke:openclaw-beta": "node ./apps/server/scripts/openclaw-beta-loop-smoke.mjs",
 		"check": "biome check --write .",
-		"test": "turbo -F server test",
-		"test:durable": "turbo -F server test:durable",
-		"test:durable:smoke": "turbo -F server test:durable:smoke"
+		"test:server": "pnpm exec turbo -F server test",
+		"test": "pnpm exec turbo -F server test",
+		"test:sim": "pnpm exec turbo -F @fightclaw/sim test",
+		"test:sim:files": "pnpm -C apps/sim test:files",
+		"test:durable": "pnpm exec turbo -F server test:durable",
+		"test:durable:smoke": "pnpm exec turbo -F server test:durable:smoke"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.0",

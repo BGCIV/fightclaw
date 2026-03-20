@@ -23,7 +23,8 @@
 		"scratch:test-game": "tsx scripts/scratch/test-game.ts",
 		"scratch:test-llm": "tsx scripts/scratch/test-llm.ts",
 		"scratch:test-parse": "tsx scripts/scratch/test-parse.ts",
-		"test": "bun test"
+		"test": "bun test",
+		"test:files": "bun test"
 	},
 	"dependencies": {
 		"@fightclaw/engine": "workspace:*",

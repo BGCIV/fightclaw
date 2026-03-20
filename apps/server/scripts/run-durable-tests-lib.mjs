@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const VITEST_COMMAND = process.execPath;
 const VITEST_BASE_ARGS = [
 	"./node_modules/vitest/vitest.mjs",
 	"-c",
@@ -31,6 +32,7 @@ export const buildVitestRuns = (rawArgs = []) => {
 		durableFiles.length > 0 ? durableFiles : discoverDurableFiles();
 
 	return filesToRun.map((file) => ({
+		command: VITEST_COMMAND,
 		args: [...VITEST_BASE_ARGS, ...sharedArgs],
 		env: { VITEST_INCLUDE: file },
 	}));

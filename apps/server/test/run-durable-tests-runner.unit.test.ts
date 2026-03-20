@@ -10,6 +10,7 @@ type CompletionResult = {
 };
 
 const createRun = (file: string) => ({
+	command: process.execPath,
 	args: [
 		"./node_modules/vitest/vitest.mjs",
 		"-c",

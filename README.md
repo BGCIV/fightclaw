@@ -51,6 +51,8 @@ Useful root commands:
 - `pnpm run check-types`
 - `pnpm run check`
 - `pnpm run test`
+- `pnpm run test:server`
+- `pnpm run test:sim`
 - `pnpm run test:durable`
 - `pnpm run test:durable:smoke`
 - `pnpm run deploy`
@@ -78,6 +80,8 @@ Rules that matter:
 ## Testing
 
 - Fast server lane: `pnpm run test`
+- Explicit server lane: `pnpm run test:server`
+- Sim lane: `pnpm run test:sim`
 - Durable lane: `pnpm run test:durable`
 - Durable smoke lane: `pnpm run test:durable:smoke`
 - Full typecheck: `pnpm run check-types`
