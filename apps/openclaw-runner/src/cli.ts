@@ -188,6 +188,7 @@ const invokeGateway = async (
 		strategyPrompt: string;
 		turnContext?: unknown;
 	},
+	timeoutMs: number,
 ): Promise<GatewayMoveResult | null> => {
 	return await new Promise((resolve, reject) => {
 		const child = spawn(command, {
@@ -196,18 +197,29 @@ const invokeGateway = async (
 		});
 		let stdout = "";
 		let stderr = "";
-		child.stdout.on("data", (chunk: Buffer) => {
+		let settled = false;
+		const settle = (fn: () => void) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			fn();
+		};
+		const onStdout = (chunk: Buffer) => {
 			stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
+		};
+		const onStderr = (chunk: Buffer) => {
 			stderr += chunk.toString("utf8");
-		});
-		child.on("error", reject);
-		child.on("exit", (code) => {
+		};
+		const onError = (error: Error) => {
+			settle(() => reject(error));
+		};
+		const onClose = (code: number | null) => {
 			if (code !== 0) {
-				reject(
-					new Error(
-						`Gateway command failed (${code}). ${stderr.trim() || "No stderr."}`,
+				settle(() =>
+					reject(
+						new Error(
+							`Gateway command failed (${code}). ${stderr.trim() || "No stderr."}`,
+						),
 					),
 				);
 				return;
@@ -215,25 +227,52 @@ const invokeGateway = async (
 			try {
 				const parsed = JSON.parse(stdout.trim()) as unknown;
 				if (!parsed || typeof parsed !== "object") {
-					resolve(null);
+					settle(() => resolve(null));
 					return;
 				}
 				const record = parsed as Record<string, unknown>;
 				if (!record.move || typeof record.move !== "object") {
-					resolve(null);
+					settle(() => resolve(null));
 					return;
 				}
-				resolve({
-					move: record.move as Move,
-					publicThought:
-						typeof record.publicThought === "string"
-							? record.publicThought
-							: undefined,
-				});
+				settle(() =>
+					resolve({
+						move: record.move as Move,
+						publicThought:
+							typeof record.publicThought === "string"
+								? record.publicThought
+								: undefined,
+					}),
+				);
 			} catch (error) {
-				reject(error);
+				settle(() => reject(error));
 			}
-		});
+		};
+		const timeout = setTimeout(
+			() => {
+				try {
+					child.kill();
+				} catch {
+					// best-effort cleanup
+				}
+				settle(() =>
+					reject(new Error(`Gateway command timed out after ${timeoutMs}ms.`)),
+				);
+			},
+			Math.max(1, timeoutMs),
+		);
+		const cleanup = () => {
+			clearTimeout(timeout);
+			child.stdout.removeListener("data", onStdout);
+			child.stderr.removeListener("data", onStderr);
+			child.removeListener("error", onError);
+			child.removeListener("close", onClose);
+			child.stdin.removeAllListeners();
+		};
+		child.stdout.on("data", onStdout);
+		child.stderr.on("data", onStderr);
+		child.on("error", onError);
+		child.on("close", onClose);
 		child.stdin.write(JSON.stringify(input));
 		child.stdin.end();
 	});
@@ -251,7 +290,7 @@ const createMoveProvider = (
 	strategyPrompt: string,
 	matchContextStore: MatchContextStore,
 	gatewayCmd?: string,
-	options?: { singleActionTurns?: boolean },
+	options?: { singleActionTurns?: boolean; gatewayTimeoutMs?: number },
 ): MoveProvider => ({
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
 		const state = await client.getMatchState(matchId);
@@ -279,15 +318,19 @@ const createMoveProvider = (
 			} catch {
 				turnContext = undefined;
 			}
-			const gateway = await invokeGateway(gatewayCmd, {
-				agentId,
-				agentName,
-				matchId,
-				stateVersion,
-				state,
-				strategyPrompt,
-				...(turnContext === undefined ? {} : { turnContext }),
-			});
+			const gateway = await invokeGateway(
+				gatewayCmd,
+				{
+					agentId,
+					agentName,
+					matchId,
+					stateVersion,
+					state,
+					strategyPrompt,
+					...(turnContext === undefined ? {} : { turnContext }),
+				},
+				options?.gatewayTimeoutMs ?? 4000,
+			);
 			if (gateway?.move) {
 				const thought =
 					typeof gateway.publicThought === "string"
@@ -414,7 +457,7 @@ const runDuel = async (args: ArgMap) => {
 		selectionA.privateStrategy,
 		matchContextStore,
 		gatewayCmdA,
-		{ singleActionTurns },
+		{ singleActionTurns, gatewayTimeoutMs: moveTimeoutMs },
 	);
 	const moveProviderB = createMoveProvider(
 		runnerClientB,
@@ -423,7 +466,7 @@ const runDuel = async (args: ArgMap) => {
 		selectionB.privateStrategy,
 		matchContextStore,
 		gatewayCmdB,
-		{ singleActionTurns },
+		{ singleActionTurns, gatewayTimeoutMs: moveTimeoutMs },
 	);
 
 	const [resultA, resultB]: [RunMatchResult, RunMatchResult] =

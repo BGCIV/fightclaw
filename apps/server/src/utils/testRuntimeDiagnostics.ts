@@ -100,6 +100,7 @@ export const createTestRuntimeDiagnostics = (
 			record("alarm_deleted", reason ? { reason } : undefined);
 		},
 		noteResetStart() {
+			if (!enabled) return;
 			record("reset_start");
 		},
 		noteResetEnd() {

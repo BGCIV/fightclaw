@@ -4,6 +4,7 @@ describe("runner session observability helper", () => {
 	beforeEach(() => {
 		vi.resetModules();
 		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
 	});
 
 	it("builds a fallback correlation id and runner move conflict payloads", async () => {

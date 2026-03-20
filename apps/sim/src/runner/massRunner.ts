@@ -248,9 +248,9 @@ const forkWorkerPath = path.join(__dirname, "forkWorker.ts");
 export function serializeBotConfig(bot: Bot): BotConfig {
 	if (bot.serializedConfig) {
 		return {
+			...bot.serializedConfig,
 			id: String(bot.id),
 			name: bot.name,
-			...bot.serializedConfig,
 		};
 	}
 

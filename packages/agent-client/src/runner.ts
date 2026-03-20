@@ -297,6 +297,7 @@ export const createRunnerSession = (
 								void (async () => {
 									if (terminalStateCheckInFlight) return;
 									terminalStateCheckInFlight = true;
+									let handledTerminal = false;
 									try {
 										const state = await client.getMatchState(started.matchId);
 										const terminalEvent = buildTerminalEnvelopeFromState(
@@ -304,12 +305,16 @@ export const createRunnerSession = (
 											started.matchId,
 										);
 										if (terminalEvent) {
+											handledTerminal = true;
 											await handler(terminalEvent);
 											return;
 										}
+									} catch {
+										// fall through to reconnect after transient state lookup failure
 									} finally {
 										terminalStateCheckInFlight = false;
 									}
+									if (handledTerminal) return;
 									scheduleReconnect();
 								})();
 								return;

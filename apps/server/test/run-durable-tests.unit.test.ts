@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 import { buildVitestRuns } from "../scripts/run-durable-tests-lib.mjs";
 
 const DURABLE_DIR = path.resolve(import.meta.dirname, "durable");
+const DURABLE_FILE_PATTERN = /\.durable\.test\.[cm]?[jt]sx?$/;
 const EXPECTED_DURABLE_FILES = readdirSync(DURABLE_DIR)
-	.filter((entry) => entry.endsWith(".durable.test.ts"))
+	.filter((entry) => DURABLE_FILE_PATTERN.test(entry))
 	.sort()
 	.map((entry) => `test/durable/${entry}`);
 
