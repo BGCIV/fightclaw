@@ -1,9 +1,17 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
-import { authHeader, createAgent, resetDb } from "../helpers";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
+});
+
+afterEach(async () => {
+	try {
+		await resetDb();
+	} finally {
+		await ensureResetDb();
+	}
 });
 
 it("does not expose /ws after the SSE cutover", async () => {
