@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { makeAggressiveBot } from "../src/bots/aggressiveBot";
 import { makeGreedyBot } from "../src/bots/greedyBot";
+import { Engine } from "../src/engineAdapter";
 import { playMatch } from "../src/match";
 import type { Bot, Move } from "../src/types";
 
@@ -17,7 +18,7 @@ describe("integration", () => {
 		expect(["terminal", "maxTurns"]).toContain(result.reason);
 	});
 
-	test("default-board aggressive mirror still stalls into maxTurns", async () => {
+	test("default-board aggressive mirror now reaches a terminal result before maxTurns", async () => {
 		const result = await playMatch({
 			seed: 42,
 			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
@@ -27,16 +28,20 @@ describe("integration", () => {
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});
 
-		expect(result.reason).toBe("maxTurns");
-		expect(result.turns).toBe(200);
+		expect(result.reason).toBe("terminal");
+		expect(result.turns).toBeLessThan(200);
+		expect(result.winner).not.toBeNull();
 
 		const finalState = result.log?.finalState;
 		expect(finalState).toBeDefined();
 		if (!finalState) return;
 
-		expect(finalState.turn).toBeLessThan(40);
-		expect(finalState.players.A.units.length).toBeGreaterThan(0);
-		expect(finalState.players.B.units.length).toBeGreaterThan(0);
+		expect(finalState.turn).toBeGreaterThan(40);
+		expect(Engine.isTerminal(finalState)).toEqual({
+			ended: true,
+			winner: result.winner,
+			reason: "turn_limit",
+		});
 	});
 
 	test("midfield scenario leads to combat quickly", async () => {
