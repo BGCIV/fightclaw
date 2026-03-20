@@ -503,6 +503,13 @@
 	text-transform: uppercase;
 }
 
+.agent-broadcast-persona {
+	margin: -4px 0 0;
+	color: rgba(255, 255, 255, 0.76);
+	font-size: 0.78rem;
+	line-height: 1.45;
+}
+
 .agent-broadcast-stats {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -921,6 +928,40 @@
 
 .leaderboard-table .agent-cell {
 	color: var(--spectator-text);
+}
+
+.leaderboard-agent-name {
+	font-size: 0.96rem;
+	font-weight: 600;
+	letter-spacing: 0.03em;
+}
+
+.leaderboard-agent-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 6px;
+}
+
+.leaderboard-style-tag,
+.leaderboard-agent-id {
+	display: inline-flex;
+	align-items: center;
+	padding: 3px 8px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 999px;
+	font-size: 0.7rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.leaderboard-style-tag {
+	color: #ffd166;
+	background: rgba(255, 209, 102, 0.1);
+}
+
+.leaderboard-agent-id {
+	color: rgba(255, 255, 255, 0.48);
 }
 
 .leaderboard-table .games-cell {
