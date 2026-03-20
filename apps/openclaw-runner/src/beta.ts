@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { isDeepStrictEqual } from "node:util";
 import {
 	ArenaClient,
 	createRunnerSession,
@@ -304,6 +303,23 @@ const selectFinishFollowUpMove = (legalMoves: Move[]): Move | null => {
 	);
 };
 
+const movesMatchByIdentity = (candidate: Move, chosenMove: Move): boolean => {
+	if (candidate.action !== chosenMove.action) return false;
+	const fields: Array<"unitId" | "unitType" | "to" | "target" | "at"> = [
+		"unitId",
+		"unitType",
+		"to",
+		"target",
+		"at",
+	];
+	for (const field of fields) {
+		const candidateValue = (candidate as Record<string, unknown>)[field];
+		const chosenValue = (chosenMove as Record<string, unknown>)[field];
+		if (candidateValue !== chosenValue) return false;
+	}
+	return true;
+};
+
 export const createBetaMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
@@ -372,7 +388,7 @@ export const createBetaMoveProvider = (
 					if (gateway?.move) {
 						const chosenMove = gateway.move;
 						const isLegal = legalMoves.some((candidate) =>
-							isDeepStrictEqual(candidate, chosenMove),
+							movesMatchByIdentity(candidate, chosenMove),
 						);
 
 						if (isLegal) {
