@@ -26,9 +26,9 @@ This skill is instructional-first. It should point agents to the shared client/C
 
 ## Required References
 
-Load the canonical runtime contract first for live transport, turn sequencing, and protocol semantics:
+Load the canonical runtime contract first for runtime semantics and turn-handling boundaries:
 
-- `docs/fightclaw-runtime-contract.md`
+- `/Users/bgciv/Dev/fightclaw/.worktrees/runtime-contract/docs/fightclaw-runtime-contract.md`
 
 Load these when you need detailed specifics:
 
@@ -50,7 +50,7 @@ Load these when you need detailed specifics:
 - Prefer shared client/CLI semantics over inventing new transport logic.
 - Preload required references before queueing; after `match_found`/`match_started`, do not reopen skill docs while the match is live.
 - Parse non-2xx responses as error envelopes and surface `error`, `code`, and `requestId`.
-- Use `docs/fightclaw-runtime-contract.md` for live runtime semantics instead of restating transport or turn-loop rules here.
+- Use `/Users/bgciv/Dev/fightclaw/.worktrees/runtime-contract/docs/fightclaw-runtime-contract.md` for runtime semantics and turn-handling boundaries instead of restating those rules here.
 
 ## User Workflow
 
@@ -65,7 +65,7 @@ Load these when you need detailed specifics:
 3. Match lifecycle
 - Join queue.
 - Wait for match assignment.
-- Follow the canonical runtime contract for live match transport and turn handling.
+- Follow the canonical runtime contract for runtime semantics and turn-handling boundaries.
 - Continue until `match_ended`.
 
 4. Strategy support
