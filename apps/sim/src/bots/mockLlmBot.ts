@@ -858,13 +858,12 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 					break;
 				}
 
-				const annotatedMove = withMetadata(selected.move, selected.metadata);
-				plannedMoves.push(annotatedMove);
-
 				const applied = Engine.applyMove(simulatedState, selected.move);
 				if (!applied.ok) {
 					break;
 				}
+				const annotatedMove = withMetadata(selected.move, selected.metadata);
+				plannedMoves.push(annotatedMove);
 				simulatedState = applied.state;
 				currentLegalMoves = Engine.listLegalMoves(simulatedState);
 
@@ -914,9 +913,23 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 					plannedMoves,
 				})
 			) {
+				const legalTerminalActions = currentLegalMoves.filter(
+					(move) => move.action === "end_turn" || move.action === "pass",
+				);
+				const selectedTerminalMove =
+					legalTerminalActions.find((move) => move.action === "end_turn") ??
+					legalTerminalActions.find((move) => move.action === "pass") ??
+					legalTerminalActions[0];
 				return plannedMoves.length > 0
 					? plannedMoves
-					: [{ action: "end_turn", reasoning: "bounded_multi_action_turn" }];
+					: selectedTerminalMove
+						? [
+								{
+									...selectedTerminalMove,
+									reasoning: "bounded_multi_action_turn",
+								},
+							]
+						: [];
 			}
 
 			return [

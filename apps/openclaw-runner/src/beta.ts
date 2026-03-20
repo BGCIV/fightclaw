@@ -462,22 +462,26 @@ export const createMoveProvider = (
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
 		const state = await client.getMatchState(matchId);
 		if (gatewayCmd) {
-			const gateway = await invokeGateway(gatewayCmd, {
-				agentId,
-				agentName,
-				matchId,
-				stateVersion,
-				state,
-			});
-			if (gateway?.move) {
-				const thought =
-					typeof gateway.publicThought === "string"
-						? gateway.publicThought
-						: "Public-safe summary unavailable.";
-				return {
-					...gateway.move,
-					reasoning: thought,
-				};
+			try {
+				const gateway = await invokeGateway(gatewayCmd, {
+					agentId,
+					agentName,
+					matchId,
+					stateVersion,
+					state,
+				});
+				if (gateway?.move) {
+					const thought =
+						typeof gateway.publicThought === "string"
+							? gateway.publicThought
+							: "Public-safe summary unavailable.";
+					return {
+						...gateway.move,
+						reasoning: thought,
+					};
+				}
+			} catch {
+				// fall through to legal fallback
 			}
 		}
 		const legalFallback = selectLegalFallbackMove(state);

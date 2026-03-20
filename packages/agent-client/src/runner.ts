@@ -111,6 +111,11 @@ const shouldRetryQueueWait = (error: unknown) => {
 	);
 };
 
+const sleep = async (ms: number) => {
+	if (ms <= 0) return;
+	await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
 const shouldFailStreamConnect = (error: unknown) => {
 	if (
 		error instanceof ArenaHttpError &&
@@ -174,6 +179,10 @@ export const createRunnerSession = (
 ): RunnerSession => {
 	const queueWaitTimeoutSeconds = options.queueWaitTimeoutSeconds ?? 30;
 	const queueTimeoutMs = options.queueTimeoutMs ?? 10 * 60 * 1000;
+	const queueWaitRetryDelayMs = Math.min(
+		options.queueWaitRetryDelayMs ?? 250,
+		Math.max(1, queueTimeoutMs),
+	);
 	const streamReconnectDelayMs = options.streamReconnectDelayMs ?? 250;
 
 	let agentId: string | null = null;
@@ -231,6 +240,7 @@ export const createRunnerSession = (
 						waited = await client.waitForMatch(queueWaitTimeoutSeconds);
 					} catch (error) {
 						if (shouldRetryQueueWait(error)) {
+							await sleep(queueWaitRetryDelayMs);
 							continue;
 						}
 						throw error;
