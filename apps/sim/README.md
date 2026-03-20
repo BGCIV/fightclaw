@@ -48,7 +48,7 @@ pnpm -C apps/sim run scratch:test-llm
 pnpm -C apps/sim run scratch:test-parse
 ```
 
-## Harness Flags
+## Simulation Flags
 
 Use these with `single`, `tourney`, or `mass`:
 

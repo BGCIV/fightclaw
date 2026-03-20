@@ -30,7 +30,6 @@ describe("boardgameio turn boundary", () => {
 			seed: 5,
 			players: [makeCounterBot("P1"), makeCounterBot("P2")],
 			maxTurns: 12,
-			harness: "boardgameio",
 			strict: true,
 		});
 
@@ -43,7 +42,6 @@ describe("boardgameio turn boundary", () => {
 			seed: 1,
 			players: [makeEndTurnBot("P1"), makeEndTurnBot("P2")],
 			maxTurns: 2,
-			harness: "boardgameio",
 			strict: true,
 			engineConfig: { turnLimit: 1 },
 			record: true,
@@ -63,7 +61,6 @@ describe("boardgameio turn boundary", () => {
 			seed: 1,
 			players: [makeEndTurnBot("P1"), makeEndTurnBot("P2")],
 			maxTurns: 1,
-			harness: "boardgameio",
 			strict: true,
 			engineConfig: { turnLimit: 40 },
 			record: true,
@@ -90,7 +87,6 @@ describe("boardgameio turn boundary", () => {
 			seed: 1,
 			players: [invalidBot, makeEndTurnBot("P2")],
 			maxTurns: 2,
-			harness: "boardgameio",
 			strict: true,
 			invalidPolicy: "forfeit",
 		});

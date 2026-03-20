@@ -1,5 +1,4 @@
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -15,7 +14,6 @@ export async function runTournament(opts: {
 	autofixIllegal?: boolean;
 	engineConfig?: EngineConfigInput;
 	scenario?: ScenarioName;
-	harness?: HarnessMode;
 	invalidPolicy?: InvalidPolicy;
 	moveValidationMode?: MoveValidationMode;
 	strict?: boolean;
@@ -34,7 +32,6 @@ export async function runTournament(opts: {
 			autofixIllegal: opts.autofixIllegal,
 			engineConfig: opts.engineConfig,
 			scenario: opts.scenario,
-			harness: opts.harness,
 			invalidPolicy: opts.invalidPolicy,
 			moveValidationMode: opts.moveValidationMode,
 			strict: opts.strict,

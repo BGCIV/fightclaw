@@ -1,6 +1,5 @@
 import { playMatchBoardgameIO } from "./boardgameio/runner";
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -18,7 +17,6 @@ export async function playMatch(opts: {
 	enableDiagnostics?: boolean;
 	engineConfig?: import("./types").EngineConfigInput;
 	scenario?: ScenarioName;
-	harness?: HarnessMode;
 	invalidPolicy?: InvalidPolicy;
 	strict?: boolean;
 	moveValidationMode?: MoveValidationMode;

@@ -3,7 +3,6 @@ import * as path from "node:path";
 import minimist from "minimist";
 import { replayBoardgameArtifact } from "./boardgameio/replay";
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -520,7 +519,6 @@ type CliContext = {
 	bot1Type: BotType;
 	bot2Type: BotType;
 	enableDiagnostics: boolean;
-	harness: HarnessMode;
 	invalidPolicy: InvalidPolicy;
 	moveValidationMode: MoveValidationMode;
 	strict: boolean;
@@ -676,7 +674,6 @@ function createCliContext(argv: Args): CliContext {
 	if (harnessArg !== undefined && harnessArg !== "boardgameio") {
 		throw new Error(`Invalid harness "${harnessArg}". Expected boardgameio.`);
 	}
-	const harness: HarnessMode = "boardgameio";
 	const invalidPolicy =
 		(stringArg(argv, "invalidPolicy") as InvalidPolicy | undefined) ?? "skip";
 	const moveValidationMode =
@@ -709,7 +706,6 @@ function createCliContext(argv: Args): CliContext {
 		bot1Type,
 		bot2Type,
 		enableDiagnostics,
-		harness,
 		invalidPolicy,
 		moveValidationMode,
 		strict,
@@ -743,7 +739,6 @@ async function handleSingleCommand(context: CliContext): Promise<void> {
 		enableDiagnostics: context.enableDiagnostics,
 		engineConfig: context.engineConfig,
 		scenario: context.scenario,
-		harness: context.harness,
 		invalidPolicy: context.invalidPolicy,
 		moveValidationMode: context.moveValidationMode,
 		strict: context.strict,
@@ -789,7 +784,6 @@ async function handleTourneyCommand(
 		players: [context.p1, context.p2],
 		autofixIllegal: context.autofix,
 		engineConfig: context.engineConfig,
-		harness: context.harness,
 		invalidPolicy: context.invalidPolicy,
 		moveValidationMode: context.moveValidationMode,
 		strict: context.strict,
@@ -841,7 +835,6 @@ async function handleMassCommand(
 		[context.p1, context.p2],
 		context.engineConfig,
 		{
-			harness: context.harness,
 			scenario: context.scenario,
 			invalidPolicy: context.invalidPolicy,
 			moveValidationMode: context.moveValidationMode,
