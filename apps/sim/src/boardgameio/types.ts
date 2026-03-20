@@ -15,7 +15,7 @@ export type ScenarioName =
 	| "forest_chokepoints"
 	| "resource_race";
 
-export type HarnessMode = "legacy" | "boardgameio";
+export type HarnessMode = "boardgameio";
 
 export type InvalidPolicy = "skip" | "stop_turn" | "forfeit";
 

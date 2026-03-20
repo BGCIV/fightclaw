@@ -13,6 +13,7 @@ import { makeGreedyBot } from "./bots/greedyBot";
 import { makeLlmBot } from "./bots/llmBot";
 import { makeMockLlmBot } from "./bots/mockLlmBot";
 import { makeRandomLegalBot } from "./bots/randomBot";
+import { getUsageText as getCliUsageText } from "./cliUsage";
 import { playMatch, replayMatch } from "./match";
 import { resolveHexConquestBaselineCliBotConfig } from "./presets/hexConquestBaselines";
 import { analyzeBehaviorFromArtifacts } from "./reporting/behaviorMetrics";
@@ -671,8 +672,11 @@ function createCliContext(argv: Args): CliContext {
 	});
 
 	const enableDiagnostics = !!argv.diagnostics;
-	const harness =
-		(stringArg(argv, "harness") as HarnessMode | undefined) ?? "legacy";
+	const harnessArg = stringArg(argv, "harness");
+	if (harnessArg !== undefined && harnessArg !== "boardgameio") {
+		throw new Error(`Invalid harness "${harnessArg}". Expected boardgameio.`);
+	}
+	const harness: HarnessMode = "boardgameio";
 	const invalidPolicy =
 		(stringArg(argv, "invalidPolicy") as InvalidPolicy | undefined) ?? "skip";
 	const moveValidationMode =
@@ -946,127 +950,7 @@ function handleBehaviorCommand(argv: Args, context: CliContext): void {
 }
 
 function printUsageAndExit(): never {
-	console.error("Usage:");
-	console.error(
-		"  tsx src/cli.ts single  --seed 1 --maxTurns 200 --verbose --log --logFile ./match.json",
-	);
-	console.error("  tsx src/cli.ts single  --autofix");
-	console.error("  tsx src/cli.ts replay  --logFile ./match.json");
-	console.error(
-		"  tsx src/cli.ts tourney --games 200 --seed 1 --maxTurns 200 --autofix",
-	);
-	console.error(
-		"  tsx src/cli.ts mass    --games 10000 --parallel 4 --output ./results",
-	);
-	console.error("  tsx src/cli.ts analyze --input ./results [--json]");
-	console.error(
-		"  tsx src/cli.ts dashboard --input ./results --output ./dashboard.html",
-	);
-	console.error(
-		"  tsx src/cli.ts behavior --input ./results-or-artifacts --output ./behavior-metrics.json",
-	);
-	console.error("");
-	console.error("Engine options:");
-	console.error("  --turnLimit N       Engine turn limit (default: 40)");
-	console.error("  --actionsPerTurn N  Actions per turn (default: 7)");
-	console.error("  --boardColumns N    Board width: 17 or 21 (default: 17)");
-	console.error(
-		"  --scenario NAME     Combat scenario: melee, ranged, stronghold_rush, midfield, all_infantry, all_cavalry, all_archer, infantry_archer, cavalry_archer, infantry_cavalry, high_ground_clash, forest_chokepoints, resource_race",
-	);
-	console.error(
-		"  --harness MODE      Runner harness: legacy, boardgameio (default: legacy)",
-	);
-	console.error(
-		"  --invalidPolicy P   Invalid command policy: skip, stop_turn, forfeit",
-	);
-	console.error(
-		"  --moveValidationMode M  Move validation mode: strict, relaxed (default: strict)",
-	);
-	console.error("  --strict            Fail on harness divergence checks");
-	console.error(
-		"  --artifactDir PATH  Boardgame harness artifact output directory",
-	);
-	console.error(
-		"  --storeFullPrompt B Store full prompts in artifacts (true|false)",
-	);
-	console.error(
-		"  --storeFullOutput B Store full model output in artifacts (true|false)",
-	);
-	console.error("");
-	console.error("Bot options (for single, tourney, mass):");
-	console.error(
-		"  --bot1 TYPE    P1 bot type: random, greedy, aggressive, mockllm, llm (default: greedy)",
-	);
-	console.error(
-		"  --preset1 ID   Named hex_conquest preset for P1 (e.g., balanced_beta)",
-	);
-	console.error(
-		"  --bot2 TYPE    P2 bot type: random, greedy, aggressive, mockllm, llm (default: random)",
-	);
-	console.error(
-		"  --preset2 ID   Named hex_conquest preset for P2 (e.g., objective_beta)",
-	);
-	console.error(
-		'  --prompt1 TXT  Inline prompt for P1 mockllm/llm bot (e.g., "Always attack first")',
-	);
-	console.error(
-		'  --prompt2 TXT  Inline prompt for P2 mockllm/llm bot (e.g., "Defend and recruit")',
-	);
-	console.error(
-		"  --strategy1 S  MockLLM strategy: aggressive, defensive, random, strategic",
-	);
-	console.error(
-		"  --strategy2 S  MockLLM strategy: aggressive, defensive, random, strategic",
-	);
-	console.error("");
-	console.error("LLM options:");
-	console.error(
-		"  --model MODEL   Model id (alias: applies to both players if --model1/--model2 omitted)",
-	);
-	console.error("  --model1 MODEL  Model id for P1 (required when --bot1 llm)");
-	console.error("  --model2 MODEL  Model id for P2 (required when --bot2 llm)");
-	console.error(
-		"  --apiKey KEY    API key for provider (or set LLM_API_KEY env var)",
-	);
-	console.error(
-		"  --apiKey1 KEY   API key for P1 llm bot (overrides --apiKey)",
-	);
-	console.error(
-		"  --apiKey2 KEY   API key for P2 llm bot (overrides --apiKey)",
-	);
-	console.error(
-		"  --baseUrl URL   OpenAI-compatible base URL (default: OpenRouter)",
-	);
-	console.error(
-		"  --baseUrl1 URL  Base URL for P1 llm bot (overrides --baseUrl)",
-	);
-	console.error(
-		"  --baseUrl2 URL  Base URL for P2 llm bot (overrides --baseUrl)",
-	);
-	console.error(
-		"  --openrouterReferrer URL  Sets OpenRouter HTTP-Referer header (or OPENROUTER_REFERRER env var)",
-	);
-	console.error(
-		"  --openrouterTitle TXT     Sets OpenRouter X-Title header (or OPENROUTER_TITLE env var)",
-	);
-	console.error(
-		"  --llmDelay MS   Delay between LLM calls per bot (default: 0)",
-	);
-	console.error(
-		"  --llmParallelCalls N  Parallel API requests per LLM turn (default: 1)",
-	);
-	console.error(
-		"  --llmTimeoutMs MS     Per-call API timeout in ms (default: 35000)",
-	);
-	console.error(
-		"  --llmMaxRetries N     Max retry attempts per call (default: 3)",
-	);
-	console.error(
-		"  --llmRetryBaseMs MS   Retry backoff base delay in ms (default: 1000)",
-	);
-	console.error(
-		"  --llmMaxTokens N      Max output tokens per model call (default: 320)",
-	);
+	console.error(getCliUsageText());
 	process.exit(1);
 }
 
@@ -1110,7 +994,9 @@ function num(v: unknown, def: number) {
 	return Number.isFinite(n) ? n : def;
 }
 
-main().catch((e) => {
-	console.error(e);
-	process.exit(1);
-});
+if (import.meta.main) {
+	main().catch((e) => {
+		console.error(e);
+		process.exit(1);
+	});
+}
