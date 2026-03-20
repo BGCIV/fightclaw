@@ -1339,3 +1339,70 @@
 .dev-panel-stat-accent {
 	color: var(--spectator-accent);
 }
+
+.dev-lab-stage-frame {
+	position: relative;
+	width: 100%;
+	border-radius: 28px;
+	border: 1px solid rgba(77, 227, 194, 0.12);
+	background:
+		linear-gradient(180deg, rgba(4, 10, 14, 0.98), rgba(7, 13, 18, 0.94)),
+		radial-gradient(circle at 50% 0%, rgba(77, 227, 194, 0.08), transparent 45%);
+	overflow: hidden;
+}
+
+.dev-lab-stage-frame .spectator-landing {
+	height: 100%;
+}
+
+.dev-lab-stage-frame-clear {
+	box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+}
+
+.dev-lab-stage-frame-watch {
+	box-shadow:
+		0 0 0 1px rgba(255, 194, 92, 0.34),
+		0 18px 42px rgba(0, 0, 0, 0.28);
+}
+
+.dev-lab-stage-frame-risk {
+	box-shadow:
+		0 0 0 1px rgba(255, 107, 107, 0.4),
+		0 18px 42px rgba(0, 0, 0, 0.32);
+}
+
+.dev-lab-stage-overlay {
+	position: absolute;
+	top: 14px;
+	left: 14px;
+	z-index: 4;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	pointer-events: none;
+}
+
+.dev-lab-stage-pill,
+.dev-lab-stage-metric {
+	display: inline-flex;
+	align-items: center;
+	min-height: 28px;
+	padding: 0 10px;
+	border-radius: 999px;
+	border: 1px solid rgba(77, 227, 194, 0.18);
+	background: rgba(4, 10, 14, 0.82);
+	backdrop-filter: blur(10px);
+	font-family: var(--mono);
+	font-size: 0.62rem;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+}
+
+.dev-lab-stage-pill {
+	color: var(--spectator-accent);
+	font-weight: 700;
+}
+
+.dev-lab-stage-metric {
+	color: var(--spectator-text);
+}

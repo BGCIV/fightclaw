@@ -2,12 +2,16 @@ import type { BroadcastTickerItem } from "@/lib/spectator-desk";
 
 type ActionTickerProps = {
 	items: BroadcastTickerItem[];
+	visibleItemLimit?: number;
 };
 
 const MAX_VISIBLE_ITEMS = 8;
 
-export function ActionTicker({ items }: ActionTickerProps) {
-	const visibleItems = [...items.slice(-MAX_VISIBLE_ITEMS)].reverse();
+export function ActionTicker({
+	items,
+	visibleItemLimit = MAX_VISIBLE_ITEMS,
+}: ActionTickerProps) {
+	const visibleItems = [...items.slice(-visibleItemLimit)].reverse();
 
 	return (
 		<section className="action-ticker" aria-label="Recent actions">

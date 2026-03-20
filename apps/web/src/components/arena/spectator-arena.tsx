@@ -25,6 +25,7 @@ type SpectatorArenaProps = {
 		B: BroadcastAgentCard;
 	};
 	tickerItems: BroadcastTickerItem[];
+	tickerVisibleLimit?: number;
 	resultSummary: BroadcastResultSummary | null;
 } & Pick<
 	HexBoardProps,
@@ -101,6 +102,7 @@ export function SpectatorArena({
 	featuredDesk,
 	agentCards,
 	tickerItems,
+	tickerVisibleLimit,
 	resultSummary,
 	effects,
 	unitAnimStates,
@@ -164,7 +166,10 @@ export function SpectatorArena({
 								</div>
 							)}
 						</div>
-						<ActionTicker items={tickerItems} />
+						<ActionTicker
+							items={tickerItems}
+							visibleItemLimit={tickerVisibleLimit}
+						/>
 					</div>
 					<AgentBroadcastCard card={agentCards.B} />
 				</div>
