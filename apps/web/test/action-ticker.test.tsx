@@ -16,6 +16,7 @@ describe("ActionTicker", () => {
 
 		const markup = renderToStaticMarkup(<ActionTicker items={items} />);
 
+		expect(markup).toContain("action-ticker-scroll");
 		expect(markup).toContain("evt-10");
 		expect(markup).toContain("evt-03");
 		expect(markup).not.toContain("evt-02");

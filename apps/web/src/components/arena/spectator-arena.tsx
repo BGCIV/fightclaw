@@ -149,27 +149,31 @@ export function SpectatorArena({
 				<div className="spectator-broadcast-grid">
 					<AgentBroadcastCard card={agentCards.A} />
 					<div className="spectator-stage">
-						<div className="spectator-stage-board">
-							{state ? (
-								<HexBoard
-									state={state}
-									effects={effects}
-									unitAnimStates={unitAnimStates}
-									dyingUnitIds={dyingUnitIds}
-									damageNumbers={damageNumbers}
-									lungeTargets={lungeTargets}
-									activePlayer={state.activePlayer}
-								/>
-							) : (
-								<div className="spectator-board-empty">
-									<div className="muted">{emptyStateLabel}</div>
-								</div>
-							)}
+						<div className="spectator-stage-body">
+							<div className="spectator-stage-board">
+								{state ? (
+									<HexBoard
+										state={state}
+										effects={effects}
+										unitAnimStates={unitAnimStates}
+										dyingUnitIds={dyingUnitIds}
+										damageNumbers={damageNumbers}
+										lungeTargets={lungeTargets}
+										activePlayer={state.activePlayer}
+									/>
+								) : (
+									<div className="spectator-board-empty">
+										<div className="muted">{emptyStateLabel}</div>
+									</div>
+								)}
+							</div>
 						</div>
-						<ActionTicker
-							items={tickerItems}
-							visibleItemLimit={tickerVisibleLimit}
-						/>
+						<div className="spectator-stage-ticker">
+							<ActionTicker
+								items={tickerItems}
+								visibleItemLimit={tickerVisibleLimit}
+							/>
+						</div>
 					</div>
 					<AgentBroadcastCard card={agentCards.B} />
 				</div>

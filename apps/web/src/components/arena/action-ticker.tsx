@@ -24,24 +24,26 @@ export function ActionTicker({
 			{visibleItems.length === 0 ? (
 				<div className="action-ticker-empty">Awaiting live action...</div>
 			) : (
-				<ul className="action-ticker-list">
-					{visibleItems.map((item) => (
-						<li
-							key={item.eventId}
-							className={`action-ticker-item action-ticker-item-${item.tone}`}
-						>
-							<span className="action-ticker-turn">
-								{item.turn === null ? "T?" : `T${item.turn}`}
-							</span>
-							<span
-								className={`action-ticker-player ${item.player ? `player-${item.player.toLowerCase()}-color` : ""}`}
+				<div className="action-ticker-scroll">
+					<ul className="action-ticker-list">
+						{visibleItems.map((item) => (
+							<li
+								key={item.eventId}
+								className={`action-ticker-item action-ticker-item-${item.tone}`}
 							>
-								{item.player ?? "?"}
-							</span>
-							<span className="action-ticker-text">{item.text}</span>
-						</li>
-					))}
-				</ul>
+								<span className="action-ticker-turn">
+									{item.turn === null ? "T?" : `T${item.turn}`}
+								</span>
+								<span
+									className={`action-ticker-player ${item.player ? `player-${item.player.toLowerCase()}-color` : ""}`}
+								>
+									{item.player ?? "?"}
+								</span>
+								<span className="action-ticker-text">{item.text}</span>
+							</li>
+						))}
+					</ul>
+				</div>
 			)}
 		</section>
 	);
