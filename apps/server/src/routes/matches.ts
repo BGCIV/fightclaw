@@ -250,6 +250,73 @@ matchesRoutes.post("/v1/internal/__test__/reset", async (c) => {
 	return c.json({ ok: false, error: "Reset unavailable." }, 503);
 });
 
+matchesRoutes.get("/v1/internal/__test__/runtime", async (c) => {
+	if (!c.env.TEST_MODE) return notFound(c, "Not found");
+	const expected = c.env.INTERNAL_RUNNER_KEY;
+	if (!expected) {
+		return c.json({ ok: false, error: "Internal auth not configured." }, 503);
+	}
+
+	const matchRows = await c.env.DB.prepare(
+		"SELECT id FROM matches ORDER BY id ASC",
+	).all<{
+		id: string | null;
+	}>();
+	const matchIds = (matchRows.results ?? [])
+		.map((row) => row.id)
+		.filter((value): value is string => typeof value === "string");
+	const shardCount = getMatchmakerShardCountForRequest(
+		c.env,
+		c.req.header("x-fc-test-matchmaker-shards"),
+	);
+	const shardNames = listMatchmakerShardNames(shardCount);
+
+	const matchmakers: unknown[] = [];
+	for (const shardName of shardNames) {
+		const stub = getMatchmakerStub(c, shardName);
+		const resp = await doFetchWithRetry(stub, "https://do/__test__/runtime", {
+			headers: withRequestId(c, {
+				"x-runner-key": expected,
+				"x-runner-id": "test-runner",
+			}),
+		});
+		if (!resp.ok) {
+			return c.json(
+				{
+					ok: false,
+					error: `Matchmaker runtime diagnostics unavailable for ${shardName}.`,
+				},
+				503,
+			);
+		}
+		matchmakers.push(await resp.json());
+	}
+
+	const matches: unknown[] = [];
+	for (const matchId of matchIds) {
+		const stub = getMatchStub(c, matchId);
+		const resp = await doFetchWithRetry(stub, "https://do/__test__/runtime", {
+			headers: withRequestId(c, {
+				"x-runner-key": expected,
+				"x-runner-id": "test-runner",
+				"x-match-id": matchId,
+			}),
+		});
+		if (!resp.ok) {
+			return c.json(
+				{
+					ok: false,
+					error: `Match runtime diagnostics unavailable for ${matchId}.`,
+				},
+				503,
+			);
+		}
+		matches.push(await resp.json());
+	}
+
+	return c.json({ ok: true, matchmakers, matches });
+});
+
 matchesRoutes.post("/v1/matches/:id/finish", requireAdminKey, async (c) => {
 	const matchIdResult = parseUuidParam(c, "id", "Match id");
 	if (!matchIdResult.ok) return matchIdResult.response;
