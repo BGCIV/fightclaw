@@ -38,3 +38,56 @@ test("gateway-openclaw-agent prompt encodes bounded multi-action continuation ru
 	assert.match(prompt, /remainingActionBudget=2/);
 	assert.match(prompt, /previousActionsThisTurn=/);
 });
+
+test("gateway-openclaw-agent prompt adds finish pressure guidance only when requested", () => {
+	const state = createInitialState(3, undefined, ["agent-a", "agent-b"]);
+	const legalMoves = listLegalMoves(state);
+
+	const withoutFinishOverlay = buildPrompt({
+		agentId: "agent-a",
+		agentName: "Kai",
+		matchId: "match-plain",
+		stateVersion: 5,
+		state,
+		legalMoves,
+	});
+	const withFinishOverlay = buildPrompt({
+		agentId: "agent-a",
+		agentName: "Kai",
+		matchId: "match-finish",
+		stateVersion: 5,
+		state,
+		legalMoves,
+		finishOverlay: true,
+	});
+
+	assert.doesNotMatch(
+		withoutFinishOverlay,
+		/legal attack or decisive follow-up/i,
+	);
+	assert.match(withFinishOverlay, /legal attack or decisive follow-up/i);
+	assert.match(
+		withFinishOverlay,
+		/Prefer a legal terminal or high-pressure line/i,
+	);
+});
+
+test("gateway-openclaw-agent prompt carries strategy focus and explicit finish pressure guidance", () => {
+	const state = createInitialState(3, undefined, ["agent-a", "agent-b"]);
+	const legalMoves = listLegalMoves(state);
+	const prompt = buildPrompt({
+		agentId: "agent-a",
+		agentName: "Kai",
+		matchId: "match-456",
+		stateVersion: 9,
+		state,
+		legalMoves,
+		strategyDirective:
+			"Contest crowns and income nodes early, then turn the edge into stronger stronghold pressure.",
+	});
+
+	assert.match(prompt, /strategyDirective=/);
+	assert.match(prompt, /Contest crowns and income nodes early/i);
+	assert.match(prompt, /terminal line/i);
+	assert.match(prompt, /do not choose end_turn/i);
+});

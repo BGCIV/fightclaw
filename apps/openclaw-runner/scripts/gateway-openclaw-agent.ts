@@ -18,6 +18,8 @@ type GatewayInput = {
 	turnActionIndex?: number;
 	remainingActionBudget?: number;
 	previousActionsThisTurn?: unknown;
+	finishOverlay?: boolean;
+	strategyDirective?: unknown;
 };
 
 type GatewaySuccessOutput = {
@@ -134,9 +136,17 @@ export const buildPrompt = (input: {
 	turnActionIndex?: number;
 	remainingActionBudget?: number;
 	previousActionsThisTurn?: unknown;
+	finishOverlay?: boolean;
+	strategyDirective?: string;
 }) => {
 	const summary = summarizeState(input.state);
-	return [
+	const strategyDirective =
+		typeof input.strategyDirective === "string"
+			? input.strategyDirective.trim()
+			: "";
+	const wantsFinishOverlay =
+		input.finishOverlay || strategyDirective.length > 0;
+	const promptLines = [
 		`You are Fightclaw agent "${input.agentName}" (${input.agentId}).`,
 		"Choose the best next legal move from the provided legalMoves array.",
 		"You may be called multiple times during the same player-turn.",
@@ -151,7 +161,24 @@ export const buildPrompt = (input: {
 		`previousActionsThisTurn=${JSON.stringify(input.previousActionsThisTurn ?? [])}`,
 		`stateSummary=${JSON.stringify(summary)}`,
 		`legalMoves=${JSON.stringify(input.legalMoves)}`,
-	].join("\n");
+	];
+	if (wantsFinishOverlay) {
+		promptLines.splice(
+			4,
+			0,
+			"Prefer a legal terminal or high-pressure line when it is available.",
+			"Take the terminal line when it is legal.",
+			"If a legal attack or decisive follow-up exists, do not choose end_turn yet.",
+		);
+	}
+	if (strategyDirective.length > 0) {
+		promptLines.splice(
+			8,
+			0,
+			`strategyDirective=${JSON.stringify(strategyDirective)}`,
+		);
+	}
+	return promptLines.join("\n");
 };
 
 const extractJsonObject = (text: string): Record<string, unknown> | null => {
@@ -347,6 +374,11 @@ const main = async () => {
 				? payload.remainingActionBudget
 				: undefined,
 		previousActionsThisTurn: payload.previousActionsThisTurn,
+		finishOverlay: payload.finishOverlay === true,
+		strategyDirective:
+			typeof payload.strategyDirective === "string"
+				? payload.strategyDirective
+				: undefined,
 	});
 
 	try {

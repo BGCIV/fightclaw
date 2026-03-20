@@ -66,10 +66,15 @@ type GatewayInvocationInput = {
 	turnActionIndex?: number;
 	remainingActionBudget?: number;
 	previousActionsThisTurn?: Move[];
+	finishOverlay?: boolean;
+	strategyDirective?: string;
 };
 
 type BetaMoveProviderOptions = {
 	maxActionsPerTurn?: number;
+	minActionsBeforeEndTurn?: number;
+	finishOverlay?: boolean;
+	strategyDirective?: string;
 	invokeGatewayImpl?: (
 		command: string,
 		input: GatewayInvocationInput,
@@ -83,6 +88,10 @@ const BETA_PROVIDER_FAILURE_REASONING =
 	"Public-safe summary: closing turn after provider failure.";
 const BETA_LEGAL_FALLBACK_REASONING =
 	"Public-safe fallback: selected a clearly legal move.";
+const BETA_FINISH_ATTACK_REASONING =
+	"Public-safe summary: continuing pressure with a legal attack before ending the turn.";
+const BETA_FINISH_FOLLOW_UP_REASONING =
+	"Public-safe summary: taking a legal follow-up before ending the turn.";
 
 export class InternalRunnerClient extends ArenaClient {
 	private readonly internalBaseUrl: string;
@@ -274,6 +283,27 @@ const buildEndTurnMove = (reasoning: string): Move => ({
 	reasoning,
 });
 
+const selectFinishFollowUpMove = (legalMoves: Move[]): Move | null => {
+	const priorities: Move["action"][] = [
+		"attack",
+		"recruit",
+		"fortify",
+		"upgrade",
+		"move",
+	];
+	for (const action of priorities) {
+		const match = legalMoves.find((move) => move.action === action);
+		if (match) {
+			return match;
+		}
+	}
+	return (
+		legalMoves.find(
+			(move) => move.action !== "end_turn" && move.action !== "pass",
+		) ?? null
+	);
+};
+
 export const createBetaMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
@@ -285,6 +315,12 @@ export const createBetaMoveProvider = (
 		1,
 		options.maxActionsPerTurn ?? DEFAULT_BETA_ACTION_BUDGET,
 	);
+	const minActionsBeforeEndTurn = Math.max(
+		0,
+		Math.min(maxActionsPerTurn, options.minActionsBeforeEndTurn ?? 0),
+	);
+	const finishOverlay = Boolean(options.finishOverlay);
+	const strategyDirective = options.strategyDirective?.trim();
 	const invokeGatewayImpl = options.invokeGatewayImpl ?? invokeGateway;
 
 	let turnKey: string | null = null;
@@ -329,6 +365,8 @@ export const createBetaMoveProvider = (
 						turnActionIndex: actionsTakenThisTurn + 1,
 						remainingActionBudget: maxActionsPerTurn - actionsTakenThisTurn,
 						previousActionsThisTurn,
+						finishOverlay,
+						...(strategyDirective ? { strategyDirective } : {}),
 					});
 
 					if (gateway?.move) {
@@ -338,6 +376,25 @@ export const createBetaMoveProvider = (
 						);
 
 						if (isLegal) {
+							const forcedFollowUp =
+								chosenMove.action === "end_turn" &&
+								(actionsTakenThisTurn < minActionsBeforeEndTurn ||
+									(finishOverlay && actionsTakenThisTurn === 0))
+									? selectFinishFollowUpMove(legalMoves)
+									: null;
+							if (forcedFollowUp) {
+								const annotatedFollowUp: Move = {
+									...forcedFollowUp,
+									reasoning:
+										forcedFollowUp.action === "attack"
+											? BETA_FINISH_ATTACK_REASONING
+											: BETA_FINISH_FOLLOW_UP_REASONING,
+								};
+								actionsTakenThisTurn += 1;
+								previousActionsThisTurn.push(annotatedFollowUp);
+								return annotatedFollowUp;
+							}
+
 							const thought =
 								typeof gateway.publicThought === "string" &&
 								gateway.publicThought.trim().length > 0
@@ -714,6 +771,11 @@ export const runTesterBetaJourney = async (input: {
 			onboarding.agentId,
 			onboarding.name,
 			input.gatewayCmd,
+			{
+				finishOverlay: true,
+				minActionsBeforeEndTurn: 2,
+				strategyDirective: onboarding.selection.privateStrategy,
+			},
 		),
 		moveProviderTimeoutMs: input.moveTimeoutMs,
 		session,
