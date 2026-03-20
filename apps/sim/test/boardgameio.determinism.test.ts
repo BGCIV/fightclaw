@@ -33,7 +33,6 @@ describe("boardgameio determinism", () => {
 					seed: 19,
 					players: [makeDeterministicBot("P1"), makeDeterministicBot("P2")],
 					maxTurns: 14,
-					harness: "boardgameio",
 					strict: true,
 					artifactDir: dir,
 				});

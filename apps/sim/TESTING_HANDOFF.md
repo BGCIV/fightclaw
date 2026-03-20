@@ -48,7 +48,7 @@ Iteratively balance gameplay so prompt-driven strategies are distinct and watcha
    - scenarios: `midfield`, `melee`, `all_infantry`, `all_cavalry`
    - pairs: `strategic/defensive`, `defensive/strategic`, `strategic/aggressive`, `aggressive/strategic`, `aggressive/defensive`, `defensive/aggressive`, `defensive/defensive`
    - 4 games per pair per scenario
-   - `--harness boardgameio --boardColumns 17 --maxTurns 180`
+   - `--boardColumns 17 --maxTurns 180`
 4. Compare vs Stage A and B3:
    - draws
    - mean turns
@@ -70,7 +70,7 @@ Iteratively balance gameplay so prompt-driven strategies are distinct and watcha
 
 ## Useful Commands
 - Single API test:
-  - `pnpm -C apps/sim exec tsx src/cli.ts single --harness boardgameio --boardColumns 17 --bot1 llm --bot2 llm --model1 openai/gpt-4o-mini --model2 openai/gpt-4o-mini --llmParallelCalls 2 --scenario midfield --maxTurns 180`
+  - `pnpm -C apps/sim exec tsx src/cli.ts single --boardColumns 17 --bot1 llm --bot2 llm --model1 openai/gpt-4o-mini --model2 openai/gpt-4o-mini --llmParallelCalls 2 --scenario midfield --maxTurns 180`
 - Locked benchmark profile (fast lane, reproducible):
   - `pnpm -C apps/sim run benchmark:v1`
 - Locked benchmark profile (fast + API spot-check):
