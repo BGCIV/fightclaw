@@ -13,8 +13,8 @@
 ### Task 1: Add a synthetic-state probe harness with failing classification tests
 
 **Files:**
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/src/kaiGatewayProbe.ts`
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
+- Create: `apps/openclaw-runner/src/kaiGatewayProbe.ts`
+- Create: `apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
 
 **Step 1: Write the failing tests**
 
@@ -70,11 +70,11 @@ git commit -m "test(openclaw-runner): classify kai gateway probe outcomes"
 ### Task 2: Add curated synthetic-state fixtures and an AWS probe command
 
 **Files:**
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/scripts/kai-gateway-probe.ts`
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/fixtures/kai-gateway/opening.json`
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/fixtures/kai-gateway/follow-up.json`
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/fixtures/kai-gateway/attack-pressure.json`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
+- Create: `apps/openclaw-runner/scripts/kai-gateway-probe.ts`
+- Create: `apps/openclaw-runner/test/fixtures/kai-gateway/opening.json`
+- Create: `apps/openclaw-runner/test/fixtures/kai-gateway/follow-up.json`
+- Create: `apps/openclaw-runner/test/fixtures/kai-gateway/attack-pressure.json`
+- Modify: `apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
 
 **Step 1: Write the failing fixture-driven test**
 
@@ -156,7 +156,7 @@ diagnostic-only.
 
 Write a compact report in:
 
-- `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/docs/plans/2026-03-19-offline-kai-gateway-quality-report.md`
+- `docs/plans/2026-03-19-offline-kai-gateway-quality-report.md`
 
 Include only the small number of probe outcomes needed to justify the next
 decision.
@@ -172,10 +172,10 @@ git commit -m "docs(openclaw-runner): classify kai gateway probe failures"
 
 **Files:**
 - Modify only the smallest relevant subset of:
-  - `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/scripts/gateway-openclaw-agent.ts`
-  - `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/src/kaiGatewayProbe.ts`
-  - `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
-  - `/Users/bgciv/Dev/fightclaw/.worktrees/offline-kai-gateway-quality/apps/openclaw-runner/test/gateway-openclaw-agent.test.ts`
+  - `apps/openclaw-runner/scripts/gateway-openclaw-agent.ts`
+  - `apps/openclaw-runner/src/kaiGatewayProbe.ts`
+  - `apps/openclaw-runner/test/kaiGatewayProbe.test.ts`
+  - `apps/openclaw-runner/test/gateway-openclaw-agent.test.ts`
 
 **Step 1: Write the failing test for the proven defect**
 

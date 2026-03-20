@@ -13,9 +13,9 @@
 ### Task 1: Lock the current structural problem with a focused diagnostic repro
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/test/integration.test.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/test/boardgameio.integration.test.ts`
-- Reference: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/DIAGNOSTICS_REPORT.md`
+- Modify: `apps/sim/test/integration.test.ts`
+- Modify: `apps/sim/test/boardgameio.integration.test.ts`
+- Reference: `apps/sim/DIAGNOSTICS_REPORT.md`
 
 **Step 1: Write a failing or revealing regression-style test**
 
@@ -46,10 +46,10 @@ git commit -m "test(sim): lock current stall reproduction"
 ### Task 2: Add structural pacing diagnostics to the sim reporting path
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/src/match.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/src/boardgameio/runner.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/src/types.ts`
-- Create or modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/test/structuralDiagnostics.test.ts`
+- Modify: `apps/sim/src/match.ts`
+- Modify: `apps/sim/src/boardgameio/runner.ts`
+- Modify: `apps/sim/src/types.ts`
+- Create or modify: `apps/sim/test/structuralDiagnostics.test.ts`
 
 **Step 1: Write the failing test for diagnostic fields**
 
@@ -94,9 +94,9 @@ git commit -m "feat(sim): add structural pacing diagnostics"
 ### Task 3: Expose the diagnostics through a tiny analysis command or summary output
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/src/cli.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/src/reporting/baselineScoreboard.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/test/baselineScoreboard.test.ts`
+- Modify: `apps/sim/src/cli.ts`
+- Modify: `apps/sim/src/reporting/baselineScoreboard.ts`
+- Modify: `apps/sim/test/baselineScoreboard.test.ts`
 
 **Step 1: Write the failing reporting test**
 
@@ -129,7 +129,7 @@ git commit -m "feat(sim): report structural pacing metrics"
 
 **Files:**
 - No code changes required unless a tiny script tweak is needed
-- Reference: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/scripts/benchmark-v2.ts`
+- Reference: `apps/sim/scripts/benchmark-v2.ts`
 
 **Step 1: Run a small baseline matrix**
 
@@ -162,9 +162,9 @@ If no code changed in this task, skip the commit.
 ### Task 5: Implement one geometry-first anti-stall candidate
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/packages/engine/src/index.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/packages/engine/test/engine.test.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/sim/test/integration.test.ts`
+- Modify: `packages/engine/src/index.ts`
+- Modify: `packages/engine/test/engine.test.ts`
+- Modify: `apps/sim/test/integration.test.ts`
 
 **Step 1: Write the failing engine/integration test**
 
@@ -227,8 +227,8 @@ If no code changed in this task, skip the commit.
 
 **Files:**
 - Modify only if a tiny scripted validation helper is needed
-- Reference: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/server/scripts/openclaw-duel-smoke.mjs`
-- Reference: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/apps/openclaw-runner/src/beta.ts`
+- Reference: `apps/server/scripts/openclaw-duel-smoke.mjs`
+- Reference: `apps/openclaw-runner/src/beta.ts`
 
 **Step 1: Use the smallest production-safe validation path**
 
@@ -253,7 +253,7 @@ If validation requires no code changes, skip the commit.
 ### Task 8: Write a short conclusion note
 
 **Files:**
-- Create: `/Users/bgciv/Dev/fightclaw/.worktrees/sim-first-destall/docs/plans/2026-03-19-sim-first-destall-results.md`
+- Create: `docs/plans/2026-03-19-sim-first-destall-results.md`
 
 **Step 1: Summarize the before/after**
 

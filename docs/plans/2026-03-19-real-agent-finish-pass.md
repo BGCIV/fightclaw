@@ -13,7 +13,7 @@
 ### Task 1: Lock the profile split in tests first
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/test/beta.test.ts`
+- Modify: `apps/openclaw-runner/test/beta.test.ts`
 
 **Step 1: Write the failing test**
 
@@ -36,7 +36,7 @@ Expected: FAIL on the new default-profile assertions.
 
 Update the beta defaults in:
 
-- `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/src/beta.ts`
+- `apps/openclaw-runner/src/beta.ts`
 
 Keep Kai on `objective_beta`. Change the house-opponent default to
 `safe_fallback_beta`.
@@ -61,8 +61,8 @@ git commit -m "feat(openclaw-runner): split beta and house presets"
 ### Task 2: Write the failing finish-overlay tests
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/test/beta.test.ts`
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/test/gateway-openclaw-agent.test.ts`
+- Modify: `apps/openclaw-runner/test/beta.test.ts`
+- Modify: `apps/openclaw-runner/test/gateway-openclaw-agent.test.ts`
 
 **Step 1: Write the failing tests**
 
@@ -88,8 +88,8 @@ Expected: FAIL on the new finish-overlay assertions.
 
 Modify:
 
-- `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/src/beta.ts`
-- `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/openclaw-runner/scripts/gateway-openclaw-agent.ts`
+- `apps/openclaw-runner/src/beta.ts`
+- `apps/openclaw-runner/scripts/gateway-openclaw-agent.ts`
 
 Implement a narrow finish overlay that only affects the beta tester path:
 
@@ -120,7 +120,7 @@ git commit -m "feat(openclaw-runner): add finish-oriented beta overlay"
 ### Task 3: Prove the finish pass in sim
 
 **Files:**
-- Modify: `/Users/bgciv/Dev/fightclaw/.worktrees/real-agent-finish-pass/apps/sim/test/mockLlmBot.test.ts` only if a small helper extraction is needed
+- Modify: `apps/sim/test/mockLlmBot.test.ts` only if a small helper extraction is needed
 
 **Step 1: Run the comparison probe**
 
