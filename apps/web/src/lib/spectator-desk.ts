@@ -9,10 +9,14 @@ import { MoveSchema } from "@fightclaw/engine";
 import type {
 	EngineEventsEvent,
 	FeaturedSnapshot,
-	GameEndedEvent,
 	MatchEndedEvent,
 	MatchEventEnvelope,
 } from "@fightclaw/protocol";
+
+import {
+	type PublicAgentIdentityMap,
+	resolveBroadcastIdentity,
+} from "./public-agent-identity";
 
 export type BroadcastTone = "neutral" | "positive" | "warning" | "danger";
 
@@ -28,6 +32,7 @@ export type BroadcastTickerItem = {
 export type BroadcastAgentCard = {
 	side: PlayerSide;
 	name: string;
+	publicPersona: string | null;
 	styleTag: string;
 	gold: number;
 	wood: number;
@@ -75,7 +80,8 @@ export type BroadcastDeskInput = {
 	thoughtsA: string[];
 	thoughtsB: string[];
 	tickerItems: BroadcastTickerItem[];
-	terminalEvent: MatchEndedEvent | GameEndedEvent | null;
+	terminalEvent: MatchEndedEvent | null;
+	publicIdentityById: PublicAgentIdentityMap;
 };
 
 const MAX_COMMENTARY_LENGTH = 140;
@@ -90,8 +96,18 @@ export function buildSpectatorDeskProjection(
 		!!input.terminalEvent,
 	);
 	const agentCards = {
-		A: buildAgentCard("A", input.state, input.thoughtsA),
-		B: buildAgentCard("B", input.state, input.thoughtsB),
+		A: buildAgentCard(
+			"A",
+			input.state,
+			input.thoughtsA,
+			input.publicIdentityById,
+		),
+		B: buildAgentCard(
+			"B",
+			input.state,
+			input.thoughtsB,
+			input.publicIdentityById,
+		),
 	};
 	const tickerItems = input.tickerItems.slice(-MAX_TICKER_ITEMS);
 	const resultSummary = buildResultSummary(input.state, input.terminalEvent);
@@ -139,8 +155,8 @@ export function projectBroadcastTickerItem(
 
 export function isTerminalDeskEvent(
 	event: MatchEventEnvelope,
-): event is MatchEndedEvent | GameEndedEvent {
-	return event.event === "match_ended" || event.event === "game_ended";
+): event is MatchEndedEvent {
+	return event.event === "match_ended";
 }
 
 export function projectPublicCommentary(thoughts: string[]): string {
@@ -193,16 +209,25 @@ function buildAgentCard(
 	side: PlayerSide,
 	state: MatchState | null,
 	thoughts: string[],
+	publicIdentityById: PublicAgentIdentityMap,
 ): BroadcastAgentCard {
 	const player = state?.players[side];
 	const opponent = state?.players[side === "A" ? "B" : "A"];
 	const unitCount = player?.units.length ?? 0;
 	const publicCommentary = projectPublicCommentary(thoughts);
+	const fallbackStyleTag = buildStyleTag(side, player, opponent, state);
+	const identity = resolveBroadcastIdentity({
+		agentId: player?.id,
+		fallbackName: player?.id ?? `Player ${side}`,
+		fallbackStyleTag,
+		publicIdentityById,
+	});
 
 	return {
 		side,
-		name: player?.id ?? `Player ${side}`,
-		styleTag: buildStyleTag(side, player, opponent, state),
+		name: identity.name,
+		publicPersona: identity.publicPersona,
+		styleTag: identity.styleTag,
 		gold: player?.gold ?? 0,
 		wood: player?.wood ?? 0,
 		vp: player?.vp ?? 0,
@@ -236,7 +261,7 @@ function buildStyleTag(
 
 function buildResultSummary(
 	state: MatchState | null,
-	terminalEvent: MatchEndedEvent | GameEndedEvent | null,
+	terminalEvent: MatchEndedEvent | null,
 ): BroadcastResultSummary | null {
 	if (!terminalEvent && state?.status !== "ended") return null;
 

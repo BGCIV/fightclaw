@@ -26,6 +26,7 @@ type BetaPhase =
 	| { phase: "matched" };
 
 export const DEFAULT_BETA_PRESET = "objective_beta";
+export const DEFAULT_HOUSE_PRESET = "safe_fallback_beta";
 export const DEFAULT_HOUSE_GATEWAY_CMD =
 	"pnpm exec tsx scripts/gateway-move.ts";
 
@@ -54,6 +55,42 @@ type GatewayMoveResult = {
 	move: Move;
 	publicThought?: string;
 };
+
+type GatewayInvocationInput = {
+	agentId: string;
+	agentName: string;
+	matchId: string;
+	stateVersion: number;
+	state: unknown;
+	turnActionIndex?: number;
+	remainingActionBudget?: number;
+	previousActionsThisTurn?: Move[];
+	finishOverlay?: boolean;
+	strategyDirective?: string;
+};
+
+type BetaMoveProviderOptions = {
+	maxActionsPerTurn?: number;
+	minActionsBeforeEndTurn?: number;
+	finishOverlay?: boolean;
+	strategyDirective?: string;
+	invokeGatewayImpl?: (
+		command: string,
+		input: GatewayInvocationInput,
+	) => Promise<GatewayMoveResult | null>;
+};
+
+const DEFAULT_BETA_ACTION_BUDGET = 3;
+const BETA_ACTION_BUDGET_REASONING =
+	"Public-safe summary: closing the turn after the bounded action budget.";
+const BETA_PROVIDER_FAILURE_REASONING =
+	"Public-safe summary: closing turn after provider failure.";
+const BETA_LEGAL_FALLBACK_REASONING =
+	"Public-safe fallback: selected a clearly legal move.";
+const BETA_FINISH_ATTACK_REASONING =
+	"Public-safe summary: continuing pressure with a legal attack before ending the turn.";
+const BETA_FINISH_FOLLOW_UP_REASONING =
+	"Public-safe summary: taking a legal follow-up before ending the turn.";
 
 export class InternalRunnerClient extends ArenaClient {
 	private readonly internalBaseUrl: string;
@@ -150,13 +187,7 @@ export const bindRunnerAgent = async (
 
 export const invokeGateway = async (
 	command: string,
-	input: {
-		agentId: string;
-		agentName: string;
-		matchId: string;
-		stateVersion: number;
-		state: unknown;
-	},
+	input: GatewayInvocationInput,
 ): Promise<GatewayMoveResult | null> => {
 	return await new Promise((resolve, reject) => {
 		const child = spawn(command, {
@@ -224,6 +255,220 @@ const selectLegalFallbackMove = (
 	return legalMoves[0] ?? null;
 };
 
+const extractGatewayGameState = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+) => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	const record = game as Record<string, unknown>;
+	if (!Array.isArray(record.board)) return null;
+	if (!record.players || typeof record.players !== "object") return null;
+	return game as Parameters<typeof listLegalMoves>[0] & {
+		turn?: number;
+		activePlayer?: string;
+	};
+};
+
+const buildBetaTurnKey = (
+	matchId: string,
+	game: { turn?: number; activePlayer?: string } | null,
+) => {
+	if (!game) return `${matchId}:unknown`;
+	return `${matchId}:${String(game.turn ?? "unknown")}:${String(game.activePlayer ?? "unknown")}`;
+};
+
+const buildEndTurnMove = (reasoning: string): Move => ({
+	action: "end_turn",
+	reasoning,
+});
+
+const selectFinishFollowUpMove = (legalMoves: Move[]): Move | null => {
+	const priorities: Move["action"][] = [
+		"attack",
+		"recruit",
+		"fortify",
+		"upgrade",
+		"move",
+	];
+	for (const action of priorities) {
+		const match = legalMoves.find((move) => move.action === action);
+		if (match) {
+			return match;
+		}
+	}
+	return (
+		legalMoves.find(
+			(move) => move.action !== "end_turn" && move.action !== "pass",
+		) ?? null
+	);
+};
+
+const movesMatchByIdentity = (candidate: Move, chosenMove: Move): boolean => {
+	if (candidate.action !== chosenMove.action) return false;
+	const fields: Array<"unitId" | "unitType" | "to" | "target" | "at"> = [
+		"unitId",
+		"unitType",
+		"to",
+		"target",
+		"at",
+	];
+	for (const field of fields) {
+		const candidateValue = (candidate as Record<string, unknown>)[field];
+		const chosenValue = (chosenMove as Record<string, unknown>)[field];
+		if (candidateValue !== chosenValue) return false;
+	}
+	return true;
+};
+
+export const createBetaMoveProvider = (
+	client: ArenaClient,
+	agentId: string,
+	agentName: string,
+	gatewayCmd?: string,
+	options: BetaMoveProviderOptions = {},
+): MoveProvider => {
+	const maxActionsPerTurn = Math.max(
+		1,
+		options.maxActionsPerTurn ?? DEFAULT_BETA_ACTION_BUDGET,
+	);
+	const minActionsBeforeEndTurn = Math.max(
+		0,
+		Math.min(maxActionsPerTurn, options.minActionsBeforeEndTurn ?? 0),
+	);
+	const finishOverlay = Boolean(options.finishOverlay);
+	const strategyDirective = options.strategyDirective?.trim();
+	const invokeGatewayImpl = options.invokeGatewayImpl ?? invokeGateway;
+
+	let turnKey: string | null = null;
+	let actionsTakenThisTurn = 0;
+	let previousActionsThisTurn: Move[] = [];
+
+	const resetTurnState = (nextTurnKey: string) => {
+		turnKey = nextTurnKey;
+		actionsTakenThisTurn = 0;
+		previousActionsThisTurn = [];
+	};
+
+	return {
+		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
+			const state = await client.getMatchState(matchId);
+			const game = extractGatewayGameState(state);
+			const nextTurnKey = buildBetaTurnKey(matchId, game);
+			if (turnKey !== nextTurnKey) {
+				resetTurnState(nextTurnKey);
+			}
+
+			const legalMoves = game ? listLegalMoves(game) : [];
+			const legalEndTurn =
+				legalMoves.find((move) => move.action === "end_turn") ??
+				buildEndTurnMove(BETA_ACTION_BUDGET_REASONING);
+
+			if (actionsTakenThisTurn >= maxActionsPerTurn) {
+				return {
+					...legalEndTurn,
+					reasoning: BETA_ACTION_BUDGET_REASONING,
+				};
+			}
+
+			if (gatewayCmd) {
+				try {
+					const gateway = await invokeGatewayImpl(gatewayCmd, {
+						agentId,
+						agentName,
+						matchId,
+						stateVersion,
+						state,
+						turnActionIndex: actionsTakenThisTurn + 1,
+						remainingActionBudget: maxActionsPerTurn - actionsTakenThisTurn,
+						previousActionsThisTurn,
+						finishOverlay,
+						...(strategyDirective ? { strategyDirective } : {}),
+					});
+
+					if (gateway?.move) {
+						const chosenMove = gateway.move;
+						const isLegal = legalMoves.some((candidate) =>
+							movesMatchByIdentity(candidate, chosenMove),
+						);
+
+						if (isLegal) {
+							const forcedFollowUp =
+								chosenMove.action === "end_turn" &&
+								(actionsTakenThisTurn < minActionsBeforeEndTurn ||
+									(finishOverlay && actionsTakenThisTurn === 0))
+									? selectFinishFollowUpMove(legalMoves)
+									: null;
+							if (forcedFollowUp) {
+								const annotatedFollowUp: Move = {
+									...forcedFollowUp,
+									reasoning:
+										forcedFollowUp.action === "attack"
+											? BETA_FINISH_ATTACK_REASONING
+											: BETA_FINISH_FOLLOW_UP_REASONING,
+								};
+								actionsTakenThisTurn += 1;
+								previousActionsThisTurn.push(annotatedFollowUp);
+								return annotatedFollowUp;
+							}
+
+							const thought =
+								typeof gateway.publicThought === "string" &&
+								gateway.publicThought.trim().length > 0
+									? gateway.publicThought
+									: "Public-safe summary unavailable.";
+							const annotatedMove: Move = {
+								...chosenMove,
+								reasoning: thought,
+							};
+
+							if (
+								chosenMove.action !== "end_turn" &&
+								chosenMove.action !== "pass"
+							) {
+								actionsTakenThisTurn += 1;
+								previousActionsThisTurn.push(annotatedMove);
+							}
+
+							return annotatedMove;
+						}
+					}
+				} catch {
+					if (actionsTakenThisTurn > 0) {
+						return {
+							...legalEndTurn,
+							reasoning: BETA_PROVIDER_FAILURE_REASONING,
+						};
+					}
+				}
+			}
+
+			if (actionsTakenThisTurn > 0) {
+				return {
+					...legalEndTurn,
+					reasoning: BETA_PROVIDER_FAILURE_REASONING,
+				};
+			}
+
+			const legalFallback = selectLegalFallbackMove(state);
+			if (legalFallback) {
+				if (
+					legalFallback.action !== "end_turn" &&
+					legalFallback.action !== "pass"
+				) {
+					actionsTakenThisTurn += 1;
+					previousActionsThisTurn.push(legalFallback);
+				}
+				return {
+					...legalFallback,
+					reasoning: BETA_LEGAL_FALLBACK_REASONING,
+				};
+			}
+
+			return buildEndTurnMove(BETA_PROVIDER_FAILURE_REASONING);
+		},
+	};
+};
+
 export const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
@@ -233,22 +478,26 @@ export const createMoveProvider = (
 	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
 		const state = await client.getMatchState(matchId);
 		if (gatewayCmd) {
-			const gateway = await invokeGateway(gatewayCmd, {
-				agentId,
-				agentName,
-				matchId,
-				stateVersion,
-				state,
-			});
-			if (gateway?.move) {
-				const thought =
-					typeof gateway.publicThought === "string"
-						? gateway.publicThought
-						: "Public-safe summary unavailable.";
-				return {
-					...gateway.move,
-					reasoning: thought,
-				};
+			try {
+				const gateway = await invokeGateway(gatewayCmd, {
+					agentId,
+					agentName,
+					matchId,
+					stateVersion,
+					state,
+				});
+				if (gateway?.move) {
+					const thought =
+						typeof gateway.publicThought === "string"
+							? gateway.publicThought
+							: "Public-safe summary unavailable.";
+					return {
+						...gateway.move,
+						reasoning: thought,
+					};
+				}
+			} catch {
+				// fall through to legal fallback
 			}
 		}
 		const legalFallback = selectLegalFallbackMove(state);
@@ -348,7 +597,8 @@ export const resolveHouseOpponentCommandOptions = (input: {
 		runnerId: input.runnerId,
 		selection: resolveBetaStrategySelection({
 			side: "A",
-			presetName: presetName && presetName.length > 0 ? presetName : undefined,
+			presetName:
+				presetName && presetName.length > 0 ? presetName : DEFAULT_HOUSE_PRESET,
 		}),
 		gatewayCmd: input.gatewayCmd ?? DEFAULT_HOUSE_GATEWAY_CMD,
 		moveTimeoutMs: input.moveTimeoutMs ?? 4000,
@@ -536,11 +786,16 @@ export const runTesterBetaJourney = async (input: {
 
 	const runMatchImpl = input.runMatchImpl ?? runMatch;
 	const result = await runMatchImpl(runnerClient, {
-		moveProvider: createMoveProvider(
+		moveProvider: createBetaMoveProvider(
 			runnerClient,
 			onboarding.agentId,
 			onboarding.name,
 			input.gatewayCmd,
+			{
+				finishOverlay: true,
+				minActionsBeforeEndTurn: 2,
+				strategyDirective: onboarding.selection.privateStrategy,
+			},
 		),
 		moveProviderTimeoutMs: input.moveTimeoutMs,
 		session,
@@ -630,7 +885,7 @@ export const runHouseOpponent = async (input: {
 	const started = await session.start();
 	const runMatchImpl = input.runMatchImpl ?? runMatch;
 	const result = await runMatchImpl(runnerClient, {
-		moveProvider: createMoveProvider(
+		moveProvider: createBetaMoveProvider(
 			runnerClient,
 			registered.agentId,
 			resolved.name,

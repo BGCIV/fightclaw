@@ -8,6 +8,7 @@ import type { AppBindings } from "../appTypes";
 import { ELO_START } from "../constants/rating";
 import { RUNNER_ID_RE } from "../constants/runner";
 import { emitMetric } from "../obs/metrics";
+import { buildRunnerSessionObservability } from "../obs/runnerSession";
 import {
 	buildMatchFoundEvent,
 	buildNoEventsEvent,
@@ -16,6 +17,7 @@ import {
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
 import { doFetchWithRetry } from "../utils/durable";
+import { createTestRuntimeDiagnostics } from "../utils/testRuntimeDiagnostics";
 import { getTestStreamMaxLifetimeMs } from "../utils/testStreamTimeout";
 import { isRecord } from "../utils/typeGuards";
 
@@ -66,145 +68,208 @@ type FeaturedCache = FeaturedSnapshot & { checkedAt: number };
 type StoredMatchStatus = "active" | "ended";
 
 export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
+	private readonly diagnostics: ReturnType<typeof createTestRuntimeDiagnostics>;
 	private waiters = new Map<string, Set<(event: MatchmakerEvent) => void>>();
+
+	constructor(ctx: DurableObjectState, env: MatchmakerEnv) {
+		super(ctx, env);
+		this.diagnostics = createTestRuntimeDiagnostics({
+			enabled: Boolean(env.TEST_MODE),
+			kind: "matchmaker",
+			getId: () => this.ctx.id.name ?? "global",
+		});
+	}
+
+	private async getRuntimeSummaryForTest() {
+		const queue = (await this.ctx.storage.get<QueueEntry[]>(QUEUE_KEY)) ?? [];
+		const base = this.diagnostics.snapshot();
+		let waiterCount = 0;
+		for (const waiters of this.waiters.values()) {
+			waiterCount += waiters.size;
+		}
+		return {
+			...base,
+			kind: "matchmaker" as const,
+			queueSize: queue.length,
+			waiterCount,
+		};
+	}
 
 	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
+		const shouldTraceRequest = url.pathname !== "/__test__/runtime";
+		if (shouldTraceRequest) {
+			this.diagnostics.noteRequestStart(request.method, url.pathname);
+		}
+		let responseStatus = 500;
+		const respond = <T extends Response>(response: T) => {
+			responseStatus = response.status;
+			return response;
+		};
 
-		if (request.method === "POST" && url.pathname === "/__test__/reset") {
-			if (!this.env.TEST_MODE) {
-				return Response.json({ error: "Not found." }, { status: 404 });
+		try {
+			if (request.method === "GET" && url.pathname === "/__test__/runtime") {
+				if (!this.env.TEST_MODE) {
+					return respond(
+						Response.json({ error: "Not found." }, { status: 404 }),
+					);
+				}
+				const auth = this.requireRunnerKey(request);
+				if (!auth.ok) return respond(auth.response);
+				return respond(Response.json(await this.getRuntimeSummaryForTest()));
 			}
-			const auth = this.requireRunnerKey(request);
-			if (!auth.ok) return auth.response;
-			await this.ctx.storage.deleteAll();
-			this.waiters.clear();
-			return Response.json({ ok: true });
-		}
 
-		if (
-			request.method === "POST" &&
-			(url.pathname === "/queue" || url.pathname === "/queue/join")
-		) {
-			return this.handleQueueJoin(request);
-		}
+			if (request.method === "POST" && url.pathname === "/__test__/reset") {
+				if (!this.env.TEST_MODE) {
+					return respond(
+						Response.json({ error: "Not found." }, { status: 404 }),
+					);
+				}
+				const auth = this.requireRunnerKey(request);
+				if (!auth.ok) return respond(auth.response);
+				this.diagnostics.noteResetStart();
+				await this.ctx.storage.deleteAll();
+				this.waiters.clear();
+				this.diagnostics.noteResetEnd();
+				return respond(Response.json({ ok: true }));
+			}
 
-		if (request.method === "GET" && url.pathname === "/queue/status") {
-			return this.handleQueueStatus(request);
-		}
+			if (
+				request.method === "POST" &&
+				(url.pathname === "/queue" || url.pathname === "/queue/join")
+			) {
+				return respond(await this.handleQueueJoin(request));
+			}
 
-		if (
-			(request.method === "DELETE" || request.method === "POST") &&
-			url.pathname === "/queue/leave"
-		) {
-			return this.handleQueueLeave(request);
-		}
+			if (request.method === "GET" && url.pathname === "/queue/status") {
+				return respond(await this.handleQueueStatus(request));
+			}
 
-		if (request.method === "GET" && url.pathname === "/events/wait") {
-			const agentId = request.headers.get("x-agent-id");
-			if (!agentId) {
-				return Response.json(
-					{ error: "Agent id is required." },
-					{ status: 400 },
+			if (
+				(request.method === "DELETE" || request.method === "POST") &&
+				url.pathname === "/queue/leave"
+			) {
+				return respond(await this.handleQueueLeave(request));
+			}
+
+			if (request.method === "GET" && url.pathname === "/events/wait") {
+				const agentId = request.headers.get("x-agent-id");
+				if (!agentId) {
+					return respond(
+						Response.json({ error: "Agent id is required." }, { status: 400 }),
+					);
+				}
+
+				const observability = buildRunnerSessionObservability({
+					requestId: request.headers.get("x-request-id"),
+					agentId,
+					route: "/v1/events/wait",
+					transport: "sse",
+				});
+				const timeoutParam = url.searchParams.get("timeout");
+				const timeoutSeconds = timeoutParam
+					? Number.parseInt(timeoutParam, 10)
+					: 30;
+				const event = await this.waitForEvent(
+					agentId,
+					Number.isNaN(timeoutSeconds) ? 30 : timeoutSeconds,
+					observability,
+				);
+				return respond(Response.json({ events: [event] }));
+			}
+
+			if (request.method === "POST" && url.pathname === "/featured/ended") {
+				const auth = this.requireRunnerKey(request);
+				if (!auth.ok) return respond(auth.response);
+
+				const body: unknown = await request.json().catch(() => null);
+				const matchId =
+					isRecord(body) && typeof body.matchId === "string"
+						? body.matchId
+						: null;
+				if (!matchId) {
+					return respond(
+						Response.json({ error: "matchId is required." }, { status: 400 }),
+					);
+				}
+
+				await this.rotateFeatured(matchId);
+				await this.clearActiveMatchesForMatch(matchId);
+				return respond(Response.json({ ok: true }));
+			}
+
+			if (request.method === "POST" && url.pathname === "/featured/queue") {
+				const auth = this.requireRunnerKey(request);
+				if (!auth.ok) return respond(auth.response);
+
+				const body: unknown = await request.json().catch(() => null);
+				const matchId =
+					isRecord(body) && typeof body.matchId === "string"
+						? body.matchId
+						: null;
+				if (!matchId) {
+					return respond(
+						Response.json({ error: "matchId is required." }, { status: 400 }),
+					);
+				}
+
+				const players =
+					isRecord(body) && Array.isArray(body.players)
+						? body.players.filter((value: unknown) => typeof value === "string")
+						: [];
+				await this.enqueueFeaturedMatch(matchId, players);
+				return respond(Response.json({ ok: true }));
+			}
+
+			if (request.method === "GET" && url.pathname === "/featured/queue") {
+				const auth = this.requireRunnerKey(request);
+				if (!auth.ok) return respond(auth.response);
+
+				const featured = await this.ctx.storage.get<string>(FEATURED_MATCH_KEY);
+				const queue =
+					(await this.ctx.storage.get<string[]>(FEATURED_QUEUE_KEY)) ?? [];
+				return respond(Response.json({ featured: featured ?? null, queue }));
+			}
+
+			if (request.method === "GET" && url.pathname === "/featured") {
+				const snapshot = await this.resolveFeatured({ verifyDo: true });
+				return respond(Response.json(snapshot));
+			}
+
+			if (request.method === "GET" && url.pathname === "/featured/stream") {
+				return respond(await this.handleFeaturedStream(request));
+			}
+
+			if (request.method === "GET" && url.pathname === "/live") {
+				const snapshot = await this.resolveFeatured({ verifyDo: true });
+				if (!snapshot.matchId) {
+					return respond(Response.json({ matchId: null, state: null }));
+				}
+
+				const id = this.env.MATCH.idFromName(snapshot.matchId);
+				const stub = this.env.MATCH.get(id);
+				const resp = await doFetchWithRetry(stub, "https://do/state");
+				if (!resp.ok) {
+					return respond(
+						Response.json({ matchId: snapshot.matchId, state: null }),
+					);
+				}
+
+				const payload = (await resp.json()) as { state?: unknown };
+				return respond(
+					Response.json({
+						matchId: snapshot.matchId,
+						state: payload.state ?? null,
+					}),
 				);
 			}
 
-			const timeoutParam = url.searchParams.get("timeout");
-			const timeoutSeconds = timeoutParam
-				? Number.parseInt(timeoutParam, 10)
-				: 30;
-			const event = await this.waitForEvent(
-				agentId,
-				Number.isNaN(timeoutSeconds) ? 30 : timeoutSeconds,
-			);
-			return Response.json({ events: [event] });
-		}
-
-		if (request.method === "POST" && url.pathname === "/featured/ended") {
-			const auth = this.requireRunnerKey(request);
-			if (!auth.ok) return auth.response;
-
-			const body: unknown = await request.json().catch(() => null);
-			const matchId =
-				isRecord(body) && typeof body.matchId === "string"
-					? body.matchId
-					: null;
-			if (!matchId) {
-				return Response.json(
-					{ error: "matchId is required." },
-					{ status: 400 },
-				);
+			return respond(new Response("Not found", { status: 404 }));
+		} finally {
+			if (shouldTraceRequest) {
+				this.diagnostics.noteRequestEnd(responseStatus);
 			}
-
-			await this.rotateFeatured(matchId);
-			await this.clearActiveMatchesForMatch(matchId);
-			return Response.json({ ok: true });
 		}
-
-		if (request.method === "POST" && url.pathname === "/featured/queue") {
-			const auth = this.requireRunnerKey(request);
-			if (!auth.ok) return auth.response;
-
-			const body: unknown = await request.json().catch(() => null);
-			const matchId =
-				isRecord(body) && typeof body.matchId === "string"
-					? body.matchId
-					: null;
-			if (!matchId) {
-				return Response.json(
-					{ error: "matchId is required." },
-					{ status: 400 },
-				);
-			}
-
-			const players =
-				isRecord(body) && Array.isArray(body.players)
-					? body.players.filter((value: unknown) => typeof value === "string")
-					: [];
-			await this.enqueueFeaturedMatch(matchId, players);
-			return Response.json({ ok: true });
-		}
-
-		if (request.method === "GET" && url.pathname === "/featured/queue") {
-			const auth = this.requireRunnerKey(request);
-			if (!auth.ok) return auth.response;
-
-			const featured = await this.ctx.storage.get<string>(FEATURED_MATCH_KEY);
-			const queue =
-				(await this.ctx.storage.get<string[]>(FEATURED_QUEUE_KEY)) ?? [];
-			return Response.json({ featured: featured ?? null, queue });
-		}
-
-		if (request.method === "GET" && url.pathname === "/featured") {
-			const snapshot = await this.resolveFeatured({ verifyDo: true });
-			return Response.json(snapshot);
-		}
-
-		if (request.method === "GET" && url.pathname === "/featured/stream") {
-			return this.handleFeaturedStream(request);
-		}
-
-		if (request.method === "GET" && url.pathname === "/live") {
-			const snapshot = await this.resolveFeatured({ verifyDo: true });
-			if (!snapshot.matchId) {
-				return Response.json({ matchId: null, state: null });
-			}
-
-			const id = this.env.MATCH.idFromName(snapshot.matchId);
-			const stub = this.env.MATCH.get(id);
-			const resp = await doFetchWithRetry(stub, "https://do/state");
-			if (!resp.ok) {
-				return Response.json({ matchId: snapshot.matchId, state: null });
-			}
-
-			const payload = (await resp.json()) as { state?: unknown };
-			return Response.json({
-				matchId: snapshot.matchId,
-				state: payload.state ?? null,
-			});
-		}
-
-		return new Response("Not found", { status: 404 });
 	}
 
 	private queueMutex: Promise<void> = Promise.resolve();
@@ -1045,6 +1110,7 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 	private async waitForEvent(
 		agentId: string,
 		timeoutSeconds: number,
+		observability: ReturnType<typeof buildRunnerSessionObservability>,
 	): Promise<MatchmakerEvent> {
 		const key = `${EVENT_BUFFER_PREFIX}${agentId}`;
 		const events = (await this.ctx.storage.get<MatchmakerEvent[]>(key)) ?? [];
@@ -1056,11 +1122,26 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			}
 		}
 
+		const timeoutMs = Math.max(timeoutSeconds, 0) * 1000;
+		if (timeoutMs <= 0) {
+			observability.emitQueueWaitNoEvents(this.env);
+			return buildNoEventsEvent({
+				eventId: Date.now(),
+				ts: new Date().toISOString(),
+			});
+		}
+
+		observability.logQueueWaitStarted({ timeoutSeconds });
+		const startedAt = Date.now();
 		return new Promise((resolve) => {
-			const timeoutMs = Math.max(timeoutSeconds, 0) * 1000;
 			let resolver: (event: MatchmakerEvent) => void;
 			const timer = setTimeout(() => {
 				this.removeWaiter(agentId, resolver);
+				observability.logQueueWaitResolved({
+					waitMs: Date.now() - startedAt,
+					resolution: "timeout",
+				});
+				observability.emitQueueWaitNoEvents(this.env);
 				resolve(
 					buildNoEventsEvent({
 						eventId: Date.now(),
@@ -1073,6 +1154,12 @@ export class MatchmakerDO extends DurableObject<MatchmakerEnv> {
 			resolver = (event: MatchmakerEvent) => {
 				clearTimeout(timer);
 				this.removeWaiter(agentId, resolver);
+				if (event.event === "match_found") {
+					observability.logQueueWaitResolved({
+						waitMs: Date.now() - startedAt,
+						resolution: "match_found",
+					});
+				}
 				resolve(event);
 			};
 

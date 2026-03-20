@@ -1,0 +1,100 @@
+{
+	"name": "attack-pressure",
+	"agentId": "Kai",
+	"agentName": "Kai",
+	"matchId": "synthetic-attack-pressure",
+	"seed": 0,
+	"players": ["Kai", "House"],
+	"history": [
+		{
+			"action": "move",
+			"unitId": "A-4",
+			"to": "B7"
+		},
+		{
+			"action": "move",
+			"unitId": "A-5",
+			"to": "H7"
+		},
+		{
+			"action": "move",
+			"unitId": "A-6",
+			"to": "B4"
+		},
+		{
+			"action": "move",
+			"unitId": "A-2",
+			"to": "H4"
+		},
+		{
+			"action": "move",
+			"unitId": "A-3",
+			"to": "G4"
+		},
+		{
+			"action": "move",
+			"unitId": "A-1",
+			"to": "A4"
+		},
+		{
+			"action": "recruit",
+			"unitType": "infantry",
+			"at": "B2"
+		},
+		{
+			"action": "move",
+			"unitId": "B-4",
+			"to": "B11"
+		},
+		{
+			"action": "move",
+			"unitId": "B-5",
+			"to": "H11"
+		},
+		{
+			"action": "move",
+			"unitId": "B-6",
+			"to": "B13"
+		},
+		{
+			"action": "move",
+			"unitId": "B-1",
+			"to": "B14"
+		},
+		{
+			"action": "move",
+			"unitId": "B-2",
+			"to": "H14"
+		},
+		{
+			"action": "move",
+			"unitId": "B-3",
+			"to": "G14"
+		},
+		{
+			"action": "recruit",
+			"unitType": "infantry",
+			"at": "B16"
+		},
+		{
+			"action": "move",
+			"unitId": "A-4",
+			"to": "A11"
+		}
+	],
+	"stateVersion": 16,
+	"turnActionIndex": 2,
+	"remainingActionBudget": 2,
+	"previousActionsThisTurn": [
+		{
+			"action": "move",
+			"unitId": "A-4",
+			"to": "A11"
+		}
+	],
+	"finishOverlay": true,
+	"strategyDirective": "Pressure objectives, keep income flowing, and convert resource edge into stronghold pressure.",
+	"expectations": {
+		"attackAvailable": true
+	}
+}

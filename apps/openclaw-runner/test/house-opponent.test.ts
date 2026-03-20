@@ -6,7 +6,7 @@ import {
 	runHouseOpponent,
 } from "../src/beta";
 
-test("defaults the house opponent command to objective_beta and the gateway move script", () => {
+test("defaults the house opponent command to safe_fallback_beta and the gateway move script", () => {
 	const resolved = resolveHouseOpponentCommandOptions({
 		baseUrl: "https://example.com",
 		name: "HouseOpponent",
@@ -20,11 +20,46 @@ test("defaults the house opponent command to objective_beta and the gateway move
 	if (resolved.selection.source.kind !== "preset") {
 		throw new Error("Expected preset strategy selection.");
 	}
-	assert.equal(resolved.selection.source.presetId, "objective_beta");
+	assert.equal(resolved.selection.source.presetId, "safe_fallback_beta");
+});
+
+test("allows explicit house opponent preset overrides while preserving preset resolution", () => {
+	const safeFallback = resolveHouseOpponentCommandOptions({
+		baseUrl: "https://example.com",
+		adminKey: "admin-key",
+		runnerKey: "runner-key",
+		runnerId: "runner-1",
+		strategyPreset: "safe_fallback_beta",
+	});
+	assert.equal(safeFallback.selection.source.kind, "preset");
+	if (safeFallback.selection.source.kind !== "preset") {
+		throw new Error("Expected preset strategy selection.");
+	}
+	assert.equal(safeFallback.selection.source.presetId, "safe_fallback_beta");
+
+	const objective = resolveHouseOpponentCommandOptions({
+		baseUrl: "https://example.com",
+		adminKey: "admin-key",
+		runnerKey: "runner-key",
+		runnerId: "runner-1",
+		strategyPreset: "objective_beta",
+	});
+	assert.equal(objective.selection.source.kind, "preset");
+	if (objective.selection.source.kind !== "preset") {
+		throw new Error("Expected preset strategy selection.");
+	}
+	assert.equal(objective.selection.source.presetId, "objective_beta");
 });
 
 test("house opponent registers one agent, verifies it, publishes the preset, binds runner ownership, and runs until terminal", async () => {
 	const calls: string[] = [];
+	const expectedSelection = resolveHouseOpponentCommandOptions({
+		baseUrl: "https://example.com",
+		name: "HouseOpponent",
+		adminKey: "admin-key",
+		runnerKey: "runner-key",
+		runnerId: "runner-1",
+	}).selection;
 	const originalFetch = globalThis.fetch;
 	globalThis.fetch = (async (input, init) => {
 		const url = String(input);
@@ -72,12 +107,11 @@ test("house opponent registers one agent, verifies it, publishes the preset, bin
 
 		if (url.endsWith("/v1/agents/me/strategy/hex_conquest")) {
 			assert.equal(init?.method, "POST");
-			assert.equal(
-				String((init?.body as string | undefined) ?? "").includes(
-					"Terrain-first opportunist who wins by pressure and income.",
-				),
-				true,
-			);
+			const payload = JSON.parse(
+				String((init?.body as string | undefined) ?? "{}"),
+			) as Record<string, unknown>;
+			assert.equal(payload.publicPersona, expectedSelection.publicPersona);
+			assert.equal(payload.privateStrategy, expectedSelection.privateStrategy);
 			return new Response(JSON.stringify({ created: { version: 1 } }), {
 				status: 201,
 				headers: { "content-type": "application/json" },

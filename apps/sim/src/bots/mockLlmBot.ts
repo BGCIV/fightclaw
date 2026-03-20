@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Engine } from "../engineAdapter";
 import { pickOne } from "../rng";
 import type { Bot, MatchState, Move } from "../types";
 import {
@@ -42,6 +43,9 @@ interface MoveCandidate {
 	move: Move;
 	metadata: MoveMetadata;
 }
+
+const MAX_MULTI_ACTIONS_PER_TURN = 3;
+const CONTINUATION_SCORE_THRESHOLD = 90;
 
 /** Configuration for mock LLM bot */
 export interface MockLlmConfig {
@@ -518,6 +522,107 @@ function buildWhyThisMove(breakdown: MoveUtilityBreakdown): string {
 	return `phase=${breakdown.phase}(${triggerLabel}) archetype=${breakdown.archetype} total=${breakdown.total}; ${termSummary}`;
 }
 
+function rankMoveCandidates(
+	ctx: Omit<ScoringContext, "move"> & { legalMoves: Move[] },
+	rng: () => number,
+): {
+	selected: MoveCandidate | null;
+	bestNonTerminalScore: number | null;
+} {
+	let bestScore = Number.NEGATIVE_INFINITY;
+	let bestMoves: MoveCandidate[] = [];
+	let bestNonTerminalScore = Number.NEGATIVE_INFINITY;
+
+	for (const move of ctx.legalMoves) {
+		const metadata = scoreMoveWithUtility({
+			...ctx,
+			move,
+		});
+		if (move.action !== "end_turn" && move.action !== "pass") {
+			bestNonTerminalScore = Math.max(
+				bestNonTerminalScore,
+				metadata.breakdown.total,
+			);
+		}
+		if (metadata.breakdown.total > bestScore) {
+			bestScore = metadata.breakdown.total;
+			bestMoves = [{ move, metadata }];
+		} else if (metadata.breakdown.total === bestScore) {
+			bestMoves.push({ move, metadata });
+		}
+	}
+
+	if (bestMoves.length === 0) {
+		return {
+			selected: null,
+			bestNonTerminalScore: null,
+		};
+	}
+
+	return {
+		selected: pickOne(bestMoves, rng),
+		bestNonTerminalScore:
+			bestNonTerminalScore === Number.NEGATIVE_INFINITY
+				? null
+				: bestNonTerminalScore,
+	};
+}
+
+function shouldContinueTurnPlan(args: {
+	actionCount: number;
+	state: MatchState;
+	side: "A" | "B";
+	nextLegalMoves: Move[];
+	nextBestNonTerminalScore: number | null;
+}): boolean {
+	if (args.actionCount >= MAX_MULTI_ACTIONS_PER_TURN) return false;
+	if (Engine.isTerminal(args.state).ended) return false;
+	if (Engine.currentPlayer(args.state) !== args.state.players[args.side].id) {
+		return false;
+	}
+	if (args.nextLegalMoves.length === 0) return false;
+	const hasFollowUpAttack = args.nextLegalMoves.some(
+		(move) => move.action === "attack",
+	);
+	if (hasFollowUpAttack) return true;
+	if (typeof args.nextBestNonTerminalScore !== "number") return false;
+	return args.nextBestNonTerminalScore >= CONTINUATION_SCORE_THRESHOLD;
+}
+
+function shouldAppendSyntheticEndTurn(args: {
+	originalState: MatchState;
+	plannedMoves: Move[];
+}): boolean {
+	if (args.plannedMoves.length === 0) return false;
+	const originalPlayer = Engine.currentPlayer(args.originalState);
+	let simulatedState = args.originalState;
+	for (const move of args.plannedMoves) {
+		if (move.action === "end_turn" || move.action === "pass") {
+			return false;
+		}
+		const {
+			metadata: _metadata,
+			reasoning: _reasoning,
+			...plainMove
+		} = move as Move & {
+			metadata?: unknown;
+			reasoning?: string;
+		};
+		const applied = Engine.applyMove(simulatedState, plainMove);
+		if (!applied.ok) {
+			return true;
+		}
+		simulatedState = applied.state;
+		if (Engine.isTerminal(simulatedState).ended) {
+			return false;
+		}
+		if (Engine.currentPlayer(simulatedState) !== originalPlayer) {
+			return false;
+		}
+	}
+	return true;
+}
+
 function scoreMoveWithUtility(ctx: ScoringContext): MoveMetadata {
 	const baseActionBias = ctx.archetype.actionBias[ctx.move.action] ?? 0;
 	const phaseActionBias =
@@ -602,6 +707,15 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 		name:
 			fileConfig?.botId ??
 			`MockLLM[strategy=${strategy},archetype=${effectiveArchetype ?? "random"},prompt=${promptTag}]`,
+		serializedConfig: {
+			type: "mockllm",
+			llmConfig: {
+				strategy,
+				inline: effectiveInline,
+				file: config.file,
+				archetype: effectiveArchetype ?? undefined,
+			},
+		},
 		chooseMove: async ({ legalMoves, rng, state, turn }) => {
 			if (strategy === "random" || !effectiveArchetype) {
 				const randomMove = pickOne(legalMoves, rng);
@@ -656,13 +770,8 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 				hasLegalAttack,
 			});
 			const archetype = MOCK_LLM_ARCHETYPES[effectiveArchetype];
-
-			let bestScore = Number.NEGATIVE_INFINITY;
-			let bestMoves: MoveCandidate[] = [];
-
-			for (const move of legalMoves) {
-				const metadata = scoreMoveWithUtility({
-					move,
+			const ranked = rankMoveCandidates(
+				{
 					state,
 					side,
 					archetype,
@@ -672,17 +781,161 @@ export function makeMockLlmBot(id: string, config: MockLlmConfig = {}): Bot {
 					promptIntents,
 					hasPlayableAlternatives,
 					hasLegalAttack,
+					legalMoves,
+				},
+				rng,
+			);
+			const selected = ranked.selected;
+			if (!selected) {
+				return {
+					action: "end_turn",
+					reasoning: "No selectable legal move remained.",
+				};
+			}
+			return withMetadata(selected.move, selected.metadata);
+		},
+		chooseTurn: async ({ legalMoves, rng, state, turn }) => {
+			if (strategy === "random" || !effectiveArchetype) {
+				const selectedMove = {
+					...pickOne(legalMoves, rng),
+					reasoning:
+						"phase=midgame(default) archetype=random total=0; random_pick",
+				};
+				if (
+					!shouldAppendSyntheticEndTurn({
+						originalState: state,
+						plannedMoves: [selectedMove],
+					})
+				) {
+					return [selectedMove];
+				}
+				return [
+					selectedMove,
+					{ action: "end_turn", reasoning: "bounded_random_turn" },
+				];
+			}
+
+			const side = inferSide(state, id);
+			const archetype = MOCK_LLM_ARCHETYPES[effectiveArchetype];
+			const plannedMoves: Move[] = [];
+			let simulatedState = state;
+			let currentLegalMoves = legalMoves;
+
+			while (plannedMoves.length < MAX_MULTI_ACTIONS_PER_TURN) {
+				const hasLegalAttack = currentLegalMoves.some(
+					(move) => move.action === "attack",
+				);
+				const hasPlayableAlternatives = currentLegalMoves.some(
+					(move) => move.action !== "end_turn" && move.action !== "pass",
+				);
+				const { phase, triggers } = resolvePhase({
+					state: simulatedState,
+					side,
+					turn,
+					hasLegalAttack,
 				});
-				if (metadata.breakdown.total > bestScore) {
-					bestScore = metadata.breakdown.total;
-					bestMoves = [{ move, metadata }];
-				} else if (metadata.breakdown.total === bestScore) {
-					bestMoves.push({ move, metadata });
+				const ranked = rankMoveCandidates(
+					{
+						state: simulatedState,
+						side,
+						archetype,
+						phase,
+						phaseTriggers: triggers,
+						turn,
+						promptIntents,
+						hasPlayableAlternatives,
+						hasLegalAttack,
+						legalMoves: currentLegalMoves,
+					},
+					rng,
+				);
+				const selected = ranked.selected;
+				if (!selected) break;
+				if (
+					selected.move.action === "end_turn" ||
+					selected.move.action === "pass"
+				) {
+					break;
+				}
+
+				const applied = Engine.applyMove(simulatedState, selected.move);
+				if (!applied.ok) {
+					break;
+				}
+				const annotatedMove = withMetadata(selected.move, selected.metadata);
+				plannedMoves.push(annotatedMove);
+				simulatedState = applied.state;
+				currentLegalMoves = Engine.listLegalMoves(simulatedState);
+
+				const nextHasLegalAttack = currentLegalMoves.some(
+					(move) => move.action === "attack",
+				);
+				const nextHasPlayableAlternatives = currentLegalMoves.some(
+					(move) => move.action !== "end_turn" && move.action !== "pass",
+				);
+				const nextPhase = resolvePhase({
+					state: simulatedState,
+					side,
+					turn,
+					hasLegalAttack: nextHasLegalAttack,
+				});
+				const nextRanked = rankMoveCandidates(
+					{
+						state: simulatedState,
+						side,
+						archetype,
+						phase: nextPhase.phase,
+						phaseTriggers: nextPhase.triggers,
+						turn,
+						promptIntents,
+						hasPlayableAlternatives: nextHasPlayableAlternatives,
+						hasLegalAttack: nextHasLegalAttack,
+						legalMoves: currentLegalMoves,
+					},
+					rng,
+				);
+				if (
+					!shouldContinueTurnPlan({
+						actionCount: plannedMoves.length,
+						state: simulatedState,
+						side,
+						nextLegalMoves: currentLegalMoves,
+						nextBestNonTerminalScore: nextRanked.bestNonTerminalScore,
+					})
+				) {
+					break;
 				}
 			}
 
-			const selected = pickOne(bestMoves, rng);
-			return withMetadata(selected.move, selected.metadata);
+			if (
+				!shouldAppendSyntheticEndTurn({
+					originalState: state,
+					plannedMoves,
+				})
+			) {
+				const legalTerminalActions = currentLegalMoves.filter(
+					(move) => move.action === "end_turn" || move.action === "pass",
+				);
+				const selectedTerminalMove =
+					legalTerminalActions.find((move) => move.action === "end_turn") ??
+					legalTerminalActions.find((move) => move.action === "pass") ??
+					legalTerminalActions[0];
+				return plannedMoves.length > 0
+					? plannedMoves
+					: selectedTerminalMove
+						? [
+								{
+									...selectedTerminalMove,
+									reasoning: "bounded_multi_action_turn",
+								},
+							]
+						: [];
+			}
+
+			return [
+				...plannedMoves,
+				{ action: "end_turn", reasoning: "bounded_multi_action_turn" },
+			];
 		},
 	};
 }

@@ -5,10 +5,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSmokeArtifactBundle } from "./openclaw-duel-smoke-artifacts.mjs";
-import {
-	buildOpenClawDuelCommand,
-	DEFAULT_SMOKE_PRESET_ID,
-} from "./openclaw-duel-smoke-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
@@ -24,10 +20,7 @@ const SERVER_START_TIMEOUT_MS = 30_000;
 const MATCH_PROGRESS_TIMEOUT_MS = 20_000;
 const CLI_TIMEOUT_MS = 25_000;
 const MIGRATION_TIMEOUT_MS = 30_000;
-const NATURAL_END_TIMEOUT_MS = Number.parseInt(
-	process.env.SMOKE_NATURAL_END_TIMEOUT_MS ?? "3000",
-	10,
-);
+const NATURAL_END_TIMEOUT_MS = 15_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -389,20 +382,40 @@ const main = async () => {
 
 	try {
 		await waitForHealth();
-		const duelCommand = buildOpenClawDuelCommand({
-			baseUrl: SERVER_BASE_URL,
-			adminKey: ADMIN_KEY,
-			runnerKey: RUNNER_KEY,
-			runnerId: RUNNER_ID,
-			moveTimeoutMs: 2000,
-		});
 
-		cli = spawnLoggedProcess(duelCommand.command, duelCommand.args, {
-			cwd: repoRoot,
-			timeoutMs: CLI_TIMEOUT_MS,
-			stdoutFile: logFiles.cliStdout,
-			stderrFile: logFiles.cliStderr,
-		});
+		cli = spawnLoggedProcess(
+			"pnpm",
+			[
+				"-C",
+				"apps/openclaw-runner",
+				"exec",
+				"tsx",
+				"src/cli.ts",
+				"duel",
+				"--baseUrl",
+				SERVER_BASE_URL,
+				"--adminKey",
+				ADMIN_KEY,
+				"--runnerKey",
+				RUNNER_KEY,
+				"--runnerId",
+				RUNNER_ID,
+				"--strategyA",
+				"Smoke strategy A.",
+				"--strategyB",
+				"Smoke strategy B.",
+				"--gatewayCmd",
+				"pnpm exec tsx scripts/gateway-move.ts",
+				"--moveTimeoutMs",
+				"2000",
+			],
+			{
+				cwd: repoRoot,
+				timeoutMs: CLI_TIMEOUT_MS,
+				stdoutFile: logFiles.cliStdout,
+				stderrFile: logFiles.cliStderr,
+			},
+		);
 
 		const livePayload = await waitFor(
 			async () => {
@@ -667,7 +680,6 @@ const main = async () => {
 				{
 					ok: true,
 					matchId: observedMatchId,
-					presetId: DEFAULT_SMOKE_PRESET_ID,
 					stateVersion: finalState.json?.state?.stateVersion ?? null,
 					logDir: logFiles.dir,
 				},

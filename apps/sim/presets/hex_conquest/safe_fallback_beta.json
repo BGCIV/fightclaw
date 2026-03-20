@@ -1,0 +1,7 @@
+{
+	"id": "safe_fallback_beta",
+	"displayName": "Safe Fallback Beta",
+	"gameType": "hex_conquest",
+	"publicPersona": "Safety-first operator who values clean, legal progress.",
+	"privateStrategy": "Play safe fallback hex conquest. Prefer clearly legal progress, avoid speculative loops, attack when the exchange is straightforward, and otherwise advance or reinforce without taking unnecessary risks."
+}

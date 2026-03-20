@@ -13,7 +13,6 @@ import {
 	type EngineEventsEvent,
 	type FeaturedSnapshot,
 	FeaturedStreamEnvelopeSchema,
-	type GameEndedEvent,
 	type MatchEndedEvent,
 	type MatchEventEnvelope,
 	MatchEventEnvelopeSchema,
@@ -34,6 +33,11 @@ import {
 	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
+import {
+	buildParticipantIdentityRequest,
+	fetchPublicAgentIdentityMap,
+	type PublicAgentIdentityMap,
+} from "@/lib/public-agent-identity";
 import {
 	appendBroadcastTickerItem,
 	type BroadcastTickerItem,
@@ -92,7 +96,6 @@ function createSpectateStreamController(input: {
 		source.addEventListener("engine_events", onEnvelope as EventListener);
 		source.addEventListener("agent_thought", onEnvelope as EventListener);
 		source.addEventListener("match_ended", onEnvelope as EventListener);
-		source.addEventListener("game_ended", onEnvelope as EventListener);
 		source.addEventListener("error", () => {
 			if (!active) return;
 			source?.close();
@@ -132,9 +135,11 @@ function SpectatorLanding() {
 	const [thoughtsA, setThoughtsA] = useState<string[]>([]);
 	const [thoughtsB, setThoughtsB] = useState<string[]>([]);
 	const [tickerItems, setTickerItems] = useState<BroadcastTickerItem[]>([]);
-	const [terminalEvent, setTerminalEvent] = useState<
-		MatchEndedEvent | GameEndedEvent | null
-	>(null);
+	const [terminalEvent, setTerminalEvent] = useState<MatchEndedEvent | null>(
+		null,
+	);
+	const [publicIdentityById, setPublicIdentityById] =
+		useState<PublicAgentIdentityMap>({});
 	const thoughtEventIdsRef = useRef(new Set<string>());
 
 	const featured = featuredState.featured;
@@ -159,8 +164,21 @@ function SpectatorLanding() {
 		setThoughtsB([]);
 		setTickerItems([]);
 		setTerminalEvent(null);
+		setPublicIdentityById({});
 		thoughtEventIdsRef.current.clear();
 	});
+
+	const participantIdentity = useMemo(
+		() =>
+			buildParticipantIdentityRequest({
+				agentAId: latestState?.players.A.id ?? null,
+				agentBId: latestState?.players.B.id ?? null,
+			}),
+		[latestState?.players.A.id, latestState?.players.B.id],
+	);
+
+	const participantAgentIds = participantIdentity.agentIds;
+	const participantIdentityKey = participantIdentity.identityKey;
 
 	const applyThoughtEvent = useEffectEvent((event: AgentThoughtEvent) => {
 		const player = event.payload.player;
@@ -198,7 +216,6 @@ function SpectatorLanding() {
 				setConnectionStatus("live");
 				return;
 			case "match_ended":
-			case "game_ended":
 				setTerminalEvent(event);
 				setConnectionStatus("live");
 				return;
@@ -501,6 +518,36 @@ function SpectatorLanding() {
 		});
 	}, [isAnimating, replayMatchId, replayShouldFollowLive]);
 
+	useEffect(() => {
+		let active = true;
+		if (!participantIdentityKey || participantAgentIds.length !== 2) {
+			setPublicIdentityById({});
+			return () => {
+				active = false;
+			};
+		}
+
+		const loadPublicIdentity = async () => {
+			try {
+				const identities = await fetchPublicAgentIdentityMap({
+					agentIds: participantAgentIds,
+					baseUrl: env.VITE_SERVER_URL,
+				});
+				if (!active) return;
+				setPublicIdentityById(identities);
+			} catch {
+				if (!active) return;
+				setPublicIdentityById({});
+			}
+		};
+
+		void loadPublicIdentity();
+
+		return () => {
+			active = false;
+		};
+	}, [participantIdentityKey, participantAgentIds]);
+
 	const statusBadge = useMemo(() => {
 		switch (connectionStatus) {
 			case "live":
@@ -526,6 +573,7 @@ function SpectatorLanding() {
 				thoughtsB,
 				tickerItems,
 				terminalEvent,
+				publicIdentityById,
 			}),
 		[
 			connectionStatus,
@@ -535,6 +583,7 @@ function SpectatorLanding() {
 			thoughtsB,
 			tickerItems,
 			terminalEvent,
+			publicIdentityById,
 		],
 	);
 

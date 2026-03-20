@@ -1,0 +1,17 @@
+{
+	"name": "opening",
+	"agentId": "Kai",
+	"agentName": "Kai",
+	"matchId": "synthetic-opening",
+	"seed": 0,
+	"players": ["Kai", "House"],
+	"history": [],
+	"stateVersion": 1,
+	"turnActionIndex": 1,
+	"remainingActionBudget": 3,
+	"previousActionsThisTurn": [],
+	"strategyDirective": "Pressure objectives, keep income flowing, and convert resource edge into stronghold pressure.",
+	"expectations": {
+		"attackAvailable": false
+	}
+}

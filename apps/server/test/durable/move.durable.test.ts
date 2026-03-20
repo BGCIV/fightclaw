@@ -1,34 +1,92 @@
 import { SELF } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { authHeader, resetDb, setupMatch } from "../helpers";
+
+const readStructuredLogs = (...spies: Array<ReturnType<typeof vi.spyOn>>) =>
+	spies
+		.flatMap((spy) => spy.mock.calls)
+		.map(([message]) => {
+			if (typeof message !== "string") return null;
+			try {
+				return JSON.parse(message) as Record<string, unknown>;
+			} catch {
+				return null;
+			}
+		})
+		.filter((entry): entry is Record<string, unknown> => entry !== null);
 
 beforeEach(async () => {
 	await resetDb();
 });
 
 it("rejects stale versions", async () => {
-	const { matchId, agentA } = await setupMatch();
+	const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+	const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+	try {
+		const { matchId, agentA, agentB } = await setupMatch();
 
-	const res = await SELF.fetch(
-		`https://example.com/v1/matches/${matchId}/move`,
-		{
-			method: "POST",
-			headers: {
-				...authHeader(agentA.key),
-				"content-type": "application/json",
+		const stateRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/state`,
+		);
+		const payload = (await stateRes.json()) as {
+			state: { stateVersion: number } | null;
+		};
+		const expectedVersion = payload.state?.stateVersion ?? 0;
+
+		const advanceRes = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/move`,
+			{
+				method: "POST",
+				headers: {
+					...authHeader(agentA.key),
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					moveId: crypto.randomUUID(),
+					expectedVersion,
+					move: { action: "pass" },
+				}),
 			},
-			body: JSON.stringify({
-				moveId: crypto.randomUUID(),
-				expectedVersion: 999,
-				move: { action: "pass" },
-			}),
-		},
-	);
+		);
+		expect(advanceRes.status).toBe(200);
 
-	expect(res.status).toBe(409);
-	const json = (await res.json()) as { ok: boolean; stateVersion?: number };
-	expect(json.ok).toBe(false);
-	expect(typeof json.stateVersion).toBe("number");
+		const res = await SELF.fetch(
+			`https://example.com/v1/matches/${matchId}/move`,
+			{
+				method: "POST",
+				headers: {
+					...authHeader(agentB.key),
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					moveId: crypto.randomUUID(),
+					expectedVersion,
+					move: { action: "pass" },
+				}),
+			},
+		);
+
+		expect(res.status).toBe(409);
+		const json = (await res.json()) as { ok: boolean; stateVersion?: number };
+		expect(json.ok).toBe(false);
+		expect(typeof json.stateVersion).toBe("number");
+
+		const logs = readStructuredLogs(infoSpy, warnSpy);
+		const conflict = logs.find(
+			(entry) => entry.message === "runner_move_conflict",
+		);
+		expect(conflict).toMatchObject({
+			event: "runner_move_conflict",
+			route: `/v1/matches/${matchId}/move`,
+			expectedVersion,
+			actualVersion: expectedVersion + 1,
+			delta: 1,
+			agentId: agentB.id,
+		});
+	} finally {
+		infoSpy.mockRestore();
+		warnSpy.mockRestore();
+	}
 });
 
 it("rejects wrong agent turn", async () => {

@@ -12,18 +12,19 @@ import type {
 } from "../boardgameio/types";
 import { makeAggressiveBot } from "../bots/aggressiveBot";
 import { makeGreedyBot } from "../bots/greedyBot";
-import type { MockLlmConfig } from "../bots/mockLlmBot";
 import { makeMockLlmBot } from "../bots/mockLlmBot";
 import { makeRandomLegalBot } from "../bots/randomBot";
 import { playMatch } from "../match";
-import type { Bot, EngineConfigInput, MatchResult } from "../types";
+import type {
+	Bot,
+	EngineConfigInput,
+	MatchResult,
+	SerializedBotConfig,
+} from "../types";
 
-export interface BotConfig {
+export interface BotConfig extends SerializedBotConfig {
 	id: string;
 	name: string;
-	type: "random" | "greedy" | "aggressive" | "mockllm";
-	/** Mock LLM config (strategy + inline prompt), only used when type is "mockllm" */
-	llmConfig?: MockLlmConfig;
 }
 
 interface BatchRequest {

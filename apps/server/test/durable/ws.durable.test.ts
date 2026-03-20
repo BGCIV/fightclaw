@@ -1,14 +1,23 @@
 import { env, SELF } from "cloudflare:test";
-import { beforeEach, expect, it } from "vitest";
-import { authHeader, createAgent, resetDb } from "../helpers";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
 
 beforeEach(async () => {
 	await resetDb();
 });
 
+afterEach(async () => {
+	try {
+		await resetDb();
+	} finally {
+		await ensureResetDb();
+	}
+});
+
 it("does not expose /ws after the SSE cutover", async () => {
 	const unauth = await SELF.fetch("https://example.com/ws");
 	expect(unauth.status).toBe(404);
+	await unauth.text();
 });
 
 it("does not expose /v1/matches/:id/ws after the SSE cutover", async () => {
@@ -33,6 +42,7 @@ it("does not expose /v1/matches/:id/ws after the SSE cutover", async () => {
 		},
 	);
 	expect(noUpgrade.status).toBe(404);
+	await noUpgrade.text();
 });
 
 it("allows admin finish to infer actor from bearer token for compatibility", async () => {

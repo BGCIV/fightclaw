@@ -9,6 +9,9 @@ export function makeAggressiveBot(id: string): Bot {
 	return {
 		id,
 		name: "AggressiveBot",
+		serializedConfig: {
+			type: "aggressive",
+		},
 		chooseMove: async ({ legalMoves, rng }) => {
 			const byAction = (action: Move["action"]) =>
 				legalMoves.filter((m) => m.action === action);

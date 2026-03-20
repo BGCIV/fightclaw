@@ -1,7 +1,38 @@
 import { env, SELF } from "cloudflare:test";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { resolveMatchmakerShardName } from "../../src/utils/matchmakerShards";
-import { authHeader, createAgent, ensureResetDb, resetDb } from "../helpers";
+import {
+	authHeader,
+	createAgent,
+	ensureResetDb,
+	pollUntil,
+	resetDb,
+} from "../helpers";
+
+const readInfoLogs = (spy: ReturnType<typeof vi.spyOn>) => {
+	return spy.mock.calls
+		.map(([message]) => {
+			if (typeof message !== "string") return null;
+			try {
+				return JSON.parse(message) as Record<string, unknown>;
+			} catch {
+				return null;
+			}
+		})
+		.filter((entry): entry is Record<string, unknown> => entry !== null);
+};
+
+const waitForInfoLog = async (
+	spy: ReturnType<typeof vi.spyOn>,
+	predicate: (entry: Record<string, unknown>) => boolean,
+) => {
+	return await pollUntil(
+		async () => readInfoLogs(spy),
+		(entries) => entries.some(predicate),
+		2_000,
+		20,
+	);
+};
 
 beforeEach(async () => {
 	await resetDb();
@@ -359,5 +390,186 @@ it("keeps agents in separate queue shards from matching each other", async () =>
 		});
 	} finally {
 		await ensureResetDb();
+	}
+});
+
+it("returns buffered events immediately without blocking", async () => {
+	const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+	try {
+		const agentA = await createAgent("BufferedAlpha", "buffered-alpha-key");
+		const agentB = await createAgent("BufferedBeta", "buffered-beta-key");
+
+		await SELF.fetch("https://example.com/v1/matches/queue", {
+			method: "POST",
+			headers: authHeader(agentA.key),
+		});
+		await SELF.fetch("https://example.com/v1/matches/queue", {
+			method: "POST",
+			headers: authHeader(agentB.key),
+		});
+
+		const waitRes = await SELF.fetch("https://example.com/v1/events/wait", {
+			headers: authHeader(agentA.key),
+		});
+		expect(waitRes.status).toBe(200);
+		const payload = (await waitRes.json()) as {
+			events: Array<{ event: string }>;
+		};
+		expect(payload.events[0]?.event).toBe("match_found");
+		expect(payload.events).toHaveLength(1);
+
+		const logs = readInfoLogs(infoSpy);
+		expect(
+			logs.some((entry) => entry.message === "runner_queue_wait_started"),
+		).toBe(false);
+		expect(
+			logs.some((entry) => entry.message === "runner_queue_wait_resolved"),
+		).toBe(false);
+	} finally {
+		infoSpy.mockRestore();
+	}
+});
+
+it("blocks until a match is found when no buffered event exists", async () => {
+	const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+	try {
+		const agentA = await createAgent("BlockingAlpha", "blocking-alpha-key");
+		const agentB = await createAgent("BlockingBeta", "blocking-beta-key");
+
+		const firstJoin = await SELF.fetch("https://example.com/v1/matches/queue", {
+			method: "POST",
+			headers: authHeader(agentA.key),
+		});
+		expect(firstJoin.ok).toBe(true);
+
+		const waitPromise = SELF.fetch(
+			"https://example.com/v1/events/wait?timeout=2",
+			{
+				headers: authHeader(agentA.key),
+			},
+		);
+		await waitForInfoLog(
+			infoSpy,
+			(entry) => entry.message === "runner_queue_wait_started",
+		);
+
+		const joinRes = await SELF.fetch("https://example.com/v1/matches/queue", {
+			method: "POST",
+			headers: authHeader(agentB.key),
+		});
+		expect(joinRes.ok).toBe(true);
+
+		const waitRes = await waitPromise;
+		expect(waitRes.status).toBe(200);
+		const payload = (await waitRes.json()) as {
+			events: Array<{ event: string; matchId?: string }>;
+		};
+		expect(payload.events.some((event) => event.event === "match_found")).toBe(
+			true,
+		);
+		expect(payload.events).toHaveLength(1);
+
+		const logs = readInfoLogs(infoSpy);
+		const started = logs.find(
+			(entry) => entry.message === "runner_queue_wait_started",
+		);
+		const resolved = logs.find(
+			(entry) => entry.message === "runner_queue_wait_resolved",
+		);
+		expect(started).toMatchObject({
+			event: "runner_queue_wait_started",
+			route: "/v1/events/wait",
+			agentId: agentA.id,
+			timeoutSeconds: 2,
+		});
+		expect(resolved).toMatchObject({
+			event: "runner_queue_wait_resolved",
+			route: "/v1/events/wait",
+			agentId: agentA.id,
+			resolution: "match_found",
+		});
+		expect(
+			typeof resolved?.waitMs === "number" &&
+				Number.isFinite(resolved.waitMs as number),
+		).toBe(true);
+	} finally {
+		infoSpy.mockRestore();
+	}
+});
+
+it("returns no_events immediately for timeout=0 without wait logs", async () => {
+	const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+	try {
+		const agentA = await createAgent("TimeoutAlpha", "timeout-alpha-key");
+
+		const waitRes = await SELF.fetch(
+			"https://example.com/v1/events/wait?timeout=0",
+			{
+				headers: authHeader(agentA.key),
+			},
+		);
+		expect(waitRes.status).toBe(200);
+		const payload = (await waitRes.json()) as {
+			events: Array<{ event: string }>;
+		};
+		expect(payload.events[0]?.event).toBe("no_events");
+		expect(payload.events).toHaveLength(1);
+
+		const logs = readInfoLogs(infoSpy);
+		expect(
+			logs.some((entry) => entry.message === "runner_queue_wait_started"),
+		).toBe(false);
+		expect(
+			logs.some((entry) => entry.message === "runner_queue_wait_resolved"),
+		).toBe(false);
+	} finally {
+		infoSpy.mockRestore();
+	}
+});
+
+it("logs timeout resolution when a blocking wait expires without a match", async () => {
+	const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+	try {
+		const agentA = await createAgent("TimeoutBeta", "timeout-beta-key");
+
+		const waitRes = await SELF.fetch(
+			"https://example.com/v1/events/wait?timeout=1",
+			{
+				headers: authHeader(agentA.key),
+			},
+		);
+		expect(waitRes.status).toBe(200);
+		const payload = (await waitRes.json()) as {
+			events: Array<{ event: string }>;
+		};
+		expect(payload.events[0]?.event).toBe("no_events");
+		expect(payload.events).toHaveLength(1);
+
+		const logs = readInfoLogs(infoSpy);
+		const started = logs.find(
+			(entry) => entry.message === "runner_queue_wait_started",
+		);
+		const resolved = logs.find(
+			(entry) => entry.message === "runner_queue_wait_resolved",
+		);
+		expect(started).toMatchObject({
+			event: "runner_queue_wait_started",
+			route: "/v1/events/wait",
+			agentId: agentA.id,
+			timeoutSeconds: 1,
+		});
+		expect(resolved).toMatchObject({
+			event: "runner_queue_wait_resolved",
+			route: "/v1/events/wait",
+			agentId: agentA.id,
+			resolution: "timeout",
+		});
+		expect(
+			typeof resolved?.waitMs === "number" &&
+				Number.isFinite(resolved.waitMs as number) &&
+				(resolved.waitMs as number) >= 1000,
+		).toBe(true);
+	} finally {
+		infoSpy.mockRestore();
 	}
 });

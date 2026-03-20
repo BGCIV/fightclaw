@@ -35,7 +35,8 @@
 		"smoke:openclaw-beta": "node ./apps/server/scripts/openclaw-beta-loop-smoke.mjs",
 		"check": "biome check --write .",
 		"test": "turbo -F server test",
-		"test:durable": "turbo -F server test:durable"
+		"test:durable": "turbo -F server test:durable",
+		"test:durable:smoke": "turbo -F server test:durable:smoke"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.0",
