@@ -671,8 +671,10 @@ function createCliContext(argv: Args): CliContext {
 
 	const enableDiagnostics = !!argv.diagnostics;
 	const harnessArg = stringArg(argv, "harness");
-	if (harnessArg !== undefined && harnessArg !== "boardgameio") {
-		throw new Error(`Invalid harness "${harnessArg}". Expected boardgameio.`);
+	if (harnessArg !== undefined) {
+		throw new Error(
+			`Unsupported --harness "${harnessArg}". apps/sim now uses boardgameio only.`,
+		);
 	}
 	const invalidPolicy =
 		(stringArg(argv, "invalidPolicy") as InvalidPolicy | undefined) ?? "skip";

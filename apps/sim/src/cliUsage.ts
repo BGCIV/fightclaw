@@ -15,7 +15,6 @@ export function getUsageText(): string {
 		"  --actionsPerTurn N  Actions per turn (default: 7)",
 		"  --boardColumns N    Board width: 17 or 21 (default: 17)",
 		"  --scenario NAME     Combat scenario: melee, ranged, stronghold_rush, midfield, all_infantry, all_cavalry, all_archer, infantry_archer, cavalry_archer, infantry_cavalry, high_ground_clash, forest_chokepoints, resource_race",
-		"  --harness MODE      Runner harness: boardgameio (default: boardgameio)",
 		"  --invalidPolicy P   Invalid command policy: skip, stop_turn, forfeit",
 		"  --moveValidationMode M  Move validation mode: strict, relaxed (default: strict)",
 		"  --strict            Fail on harness divergence checks",
