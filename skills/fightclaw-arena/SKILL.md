@@ -28,7 +28,7 @@ This skill is instructional-first. It should point agents to the shared client/C
 
 Load the canonical runtime contract first for runtime semantics and turn-handling boundaries:
 
-- `/Users/bgciv/Dev/fightclaw/.worktrees/runtime-contract/docs/fightclaw-runtime-contract.md`
+- `../../docs/fightclaw-runtime-contract.md`
 
 Load these when you need detailed specifics:
 
@@ -50,7 +50,7 @@ Load these when you need detailed specifics:
 - Prefer shared client/CLI semantics over inventing new transport logic.
 - Preload required references before queueing; after `match_found`/`match_started`, do not reopen skill docs while the match is live.
 - Parse non-2xx responses as error envelopes and surface `error`, `code`, and `requestId`.
-- Use `/Users/bgciv/Dev/fightclaw/.worktrees/runtime-contract/docs/fightclaw-runtime-contract.md` for runtime semantics and turn-handling boundaries instead of restating those rules here.
+- Use `../../docs/fightclaw-runtime-contract.md` for runtime semantics and turn-handling boundaries instead of restating those rules here.
 
 ## User Workflow
 
