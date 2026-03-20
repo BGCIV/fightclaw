@@ -17,6 +17,7 @@ afterEach(async () => {
 it("does not expose /ws after the SSE cutover", async () => {
 	const unauth = await SELF.fetch("https://example.com/ws");
 	expect(unauth.status).toBe(404);
+	await unauth.text();
 });
 
 it("does not expose /v1/matches/:id/ws after the SSE cutover", async () => {
@@ -41,6 +42,7 @@ it("does not expose /v1/matches/:id/ws after the SSE cutover", async () => {
 		},
 	);
 	expect(noUpgrade.status).toBe(404);
+	await noUpgrade.text();
 });
 
 it("allows admin finish to infer actor from bearer token for compatibility", async () => {

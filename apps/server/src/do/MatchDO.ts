@@ -26,6 +26,7 @@ import {
 	buildStoredMatchEventEnvelope,
 } from "../protocol/events";
 import { formatSse } from "../protocol/sse";
+import { createTestRuntimeDiagnostics } from "../utils/testRuntimeDiagnostics";
 import { isRecord } from "../utils/typeGuards";
 
 type MatchEnv = Pick<
@@ -227,6 +228,7 @@ const sanitizePublicThought = (value: unknown) => {
 
 export class MatchDO extends DurableObject<MatchEnv> {
 	private readonly encoder = new TextEncoder();
+	private readonly diagnostics: ReturnType<typeof createTestRuntimeDiagnostics>;
 	private spectators = new Set<StreamWriter>();
 	private agentStreams = new Map<string, Set<StreamWriter>>();
 	private streamAttachments = new Map<StreamWriter, StreamAttachmentMeta>();
@@ -235,14 +237,24 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	constructor(ctx: DurableObjectState, env: MatchEnv) {
 		super(ctx, env);
 		this.matchId = ctx.id.name ?? null;
+		this.diagnostics = createTestRuntimeDiagnostics({
+			enabled: Boolean(env.TEST_MODE),
+			kind: "match",
+			getId: () => this.matchId ?? this.ctx.id.name ?? null,
+		});
 	}
 
 	async alarm(): Promise<void> {
+		this.diagnostics.record("alarm_started");
 		const state = await this.ctx.storage.get<MatchState>("state");
-		if (!state) return;
+		if (!state) {
+			this.diagnostics.record("alarm_finished", { statePresent: false });
+			return;
+		}
 
 		const timeoutChecked = await this.maybeEnforceTurnTimeout(state);
 		await this.scheduleNextAlarm(timeoutChecked);
+		this.diagnostics.record("alarm_finished", { statePresent: true });
 	}
 
 	private turnTimeoutMs(): number {
@@ -258,6 +270,7 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	private async scheduleNextAlarm(state: MatchState) {
 		if (state.status !== "active") {
 			await this.ctx.storage.deleteAlarm();
+			this.diagnostics.noteAlarmDeleted("match_ended");
 			return;
 		}
 
@@ -271,10 +284,24 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 		if (deadlines.length === 0) {
 			await this.ctx.storage.deleteAlarm();
+			this.diagnostics.noteAlarmDeleted("no_deadlines");
 			return;
 		}
 
-		await this.ctx.storage.setAlarm(Math.min(...deadlines));
+		const nextAlarmAtMs = Math.min(...deadlines);
+		await this.ctx.storage.setAlarm(nextAlarmAtMs);
+		this.diagnostics.noteAlarmSet(nextAlarmAtMs);
+	}
+
+	private waitUntilTracked<T>(label: string, task: Promise<T>) {
+		const tracked = this.diagnostics.trackWaitUntil(label, task);
+		this.ctx.waitUntil(
+			tracked.then(
+				() => undefined,
+				() => undefined,
+			),
+		);
+		return tracked;
 	}
 
 	private async maybeEnforceTurnTimeout(
@@ -448,541 +475,596 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		}
 
 		const url = new URL(request.url);
-
-		if (request.method === "POST" && url.pathname === "/__test__/reset") {
-			if (!this.env.TEST_MODE)
-				return new Response("Not found", { status: 404 });
-			const runnerKey = request.headers.get("x-runner-key");
-			if (!runnerKey || runnerKey !== this.env.INTERNAL_RUNNER_KEY) {
-				return new Response("Unauthorized", { status: 401 });
-			}
-			await this.resetForTest();
-			return Response.json({ ok: true });
+		const shouldTraceRequest = url.pathname !== "/__test__/runtime";
+		if (shouldTraceRequest) {
+			this.diagnostics.noteRequestStart(request.method, url.pathname);
 		}
+		let responseStatus = 500;
+		const respond = <T extends Response>(response: T) => {
+			responseStatus = response.status;
+			return response;
+		};
 
-		if (request.method === "POST" && url.pathname === "/init") {
-			const body = await request.json().catch(() => null);
-			const parsed = initPayloadSchema.safeParse(body);
-			if (!parsed.success) {
-				return Response.json(
-					{ ok: false, error: "Init payload must include two players." },
-					{ status: 400 },
-				);
-			}
-
-			const existing = await this.ctx.storage.get<MatchState>("state");
-			if (existing) {
-				const enforced = await this.maybeEnforceTurnTimeout(existing);
-				return Response.json({ ok: true, state: enforced });
-			}
-
-			const seed = parsed.data.seed ?? Math.floor(Math.random() * 1_000_000);
-			const nextState = createInitialState(
-				parsed.data.players,
-				seed,
-				parsed.data.mode ?? "ranked",
-			);
-			const timeoutMs = this.turnTimeoutMs();
-			nextState.turnExpiresAtMs = Date.now() + timeoutMs;
-			if (this.matchId) {
-				await this.ctx.storage.put(MATCH_ID_KEY, this.matchId);
-			}
-			await this.ctx.storage.put("state", nextState);
-			await this.scheduleNextAlarm(nextState);
-			await this.recordEvent(nextState, "match_started", {
-				players: nextState.players,
-				seed,
-				engineConfig: getEngineConfig(nextState.game),
-				stateVersion: nextState.stateVersion,
-				mode: nextState.mode,
-			});
-
-			// Emit match_started metric
-			const matchIdForMetric = this.matchId ?? this.ctx.id.name;
-			if (matchIdForMetric) {
-				emitMetric(this.env, "match_started", {
-					scope: "match_do",
-					matchId: matchIdForMetric,
-				});
-			}
-
-			await this.broadcastState(nextState);
-			await this.broadcastYourTurn(nextState);
-			return Response.json({ ok: true, state: nextState });
-		}
-
-		if (request.method === "POST" && url.pathname === "/move") {
-			const body = await request.json().catch(() => null);
-			if (!isMovePayload(body)) {
-				return Response.json(
-					{
-						ok: false,
-						error:
-							"Move payload must include moveId, expectedVersion, and move.",
-					},
-					{ status: 400 },
-				);
-			}
-
-			const agentId = request.headers.get("x-agent-id");
-			if (!agentId) {
-				return Response.json(
-					{ ok: false, error: "Agent id is required." },
-					{ status: 400 },
-				);
-			}
-
-			const telemetry = extractRunnerTelemetry(request.headers);
-			if (telemetry) {
-				this.ctx.waitUntil(this.persistRunnerTelemetry(agentId, telemetry));
-			}
-
-			const idempotencyKey = `${IDEMPOTENCY_PREFIX}${body.moveId}`;
-			const cached =
-				await this.ctx.storage.get<IdempotencyEntry>(idempotencyKey);
-			if (cached) {
-				return Response.json(cached.body, { status: cached.status });
-			}
-
-			let state = await this.ctx.storage.get<MatchState>("state");
-			if (!state) {
-				const response = {
-					ok: false,
-					error: "Match not initialized.",
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 409, body: response },
-					-1,
-				);
-				return Response.json(response, { status: 409 });
-			}
-
-			state = await this.maybeEnforceTurnTimeout(state);
-			if (state.status === "ended") {
-				const response = {
-					ok: false,
-					error: "Match has ended.",
-					stateVersion: state.stateVersion,
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 409, body: response },
-					state.stateVersion,
-				);
-				return Response.json(response, { status: 409 });
-			}
-
-			if (body.expectedVersion !== state.stateVersion) {
-				const response = {
-					ok: false,
-					error: "Version mismatch.",
-					stateVersion: state.stateVersion,
-				} satisfies MoveResponse;
-				if (state.stateVersion > body.expectedVersion) {
-					const matchId =
-						request.headers.get("x-match-id") ??
-						this.matchId ??
-						this.ctx.id.name;
-					const observability = buildRunnerSessionObservability({
-						requestId: request.headers.get("x-request-id"),
-						agentId,
-						matchId,
-						route: matchId
-							? `/v1/matches/${matchId}/move`
-							: "/v1/matches/:id/move",
-						transport: "sse",
-					});
-					observability.logMoveConflict({
-						expectedVersion: body.expectedVersion,
-						actualVersion: state.stateVersion,
-					});
-					observability.emitMoveConflict(this.env);
+		try {
+			if (request.method === "GET" && url.pathname === "/__test__/runtime") {
+				if (!this.env.TEST_MODE) {
+					return respond(new Response("Not found", { status: 404 }));
 				}
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 409, body: response },
-					state.stateVersion,
-				);
-				return Response.json(response, { status: 409 });
+				const runnerKey = request.headers.get("x-runner-key");
+				if (!runnerKey || runnerKey !== this.env.INTERNAL_RUNNER_KEY) {
+					return respond(new Response("Unauthorized", { status: 401 }));
+				}
+				return respond(Response.json(await this.getRuntimeSummaryForTest()));
 			}
 
-			const moveParse = MoveSchema.safeParse(body.move);
-			if (!moveParse.success) {
-				const forfeited = await this.forfeitMatch(
-					state,
-					agentId,
-					"invalid_move_schema",
-				);
-				const response = {
-					ok: false,
-					error: "Invalid move schema.",
-					stateVersion: forfeited.stateVersion,
-					forfeited: true,
-					matchStatus: "ended",
-					winnerAgentId: forfeited.winnerAgentId ?? null,
-					reason: "invalid_move_schema",
-					reasonCode: "invalid_move_schema",
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 400, body: response },
-					forfeited.stateVersion,
-				);
-				return Response.json(response, { status: 400 });
+			if (request.method === "POST" && url.pathname === "/__test__/reset") {
+				if (!this.env.TEST_MODE) {
+					return respond(new Response("Not found", { status: 404 }));
+				}
+				const runnerKey = request.headers.get("x-runner-key");
+				if (!runnerKey || runnerKey !== this.env.INTERNAL_RUNNER_KEY) {
+					return respond(new Response("Unauthorized", { status: 401 }));
+				}
+				await this.resetForTest();
+				return respond(Response.json({ ok: true }));
 			}
 
-			if (!state.players.includes(agentId)) {
-				const response = {
-					ok: false,
-					error: "Agent not part of match.",
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 403, body: response },
-					state.stateVersion,
-				);
-				return Response.json(response, { status: 403 });
-			}
-
-			const active = getActiveAgentId(state.game);
-			if (!active || active !== agentId) {
-				const response = {
-					ok: false,
-					error: "Not your turn.",
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 409, body: response },
-					state.stateVersion,
-				);
-				return Response.json(response, { status: 409 });
-			}
-
-			const result = applyMoveToState(state, moveParse.data);
-
-			if (!result.ok) {
-				const reasonCode =
-					result.reason === "illegal_move" ? "illegal_move" : "invalid_move";
-				const forfeited = await this.forfeitMatch(state, agentId, reasonCode);
-				const response = {
-					ok: false,
-					error: result.error,
-					stateVersion: forfeited.stateVersion,
-					forfeited: true,
-					matchStatus: "ended",
-					winnerAgentId: forfeited.winnerAgentId ?? null,
-					reason: reasonCode,
-					reasonCode,
-				} satisfies MoveResponse;
-				await this.storeIdempotency(
-					body.moveId,
-					{ status: 400, body: response },
-					forfeited.stateVersion,
-				);
-				return Response.json(response, { status: 400 });
-			}
-
-			let nextState = result.state;
-			if (nextState.status !== "active") {
-				await this.ctx.storage.deleteAlarm();
-			} else if (
-				nextState.game.turn !== state.game.turn ||
-				nextState.game.activePlayer !== state.game.activePlayer
-			) {
-				const baseMs = Date.parse(nextState.updatedAt);
-				const nowMs = Number.isFinite(baseMs) ? baseMs : Date.now();
-				const timeoutMs = this.turnTimeoutMs();
-				const expiresAtMs = nowMs + timeoutMs;
-				nextState = { ...nextState, turnExpiresAtMs: expiresAtMs };
-			}
-			await this.ctx.storage.put("state", nextState);
-			await this.scheduleNextAlarm(nextState);
-
-			const response = { ok: true, state: nextState } satisfies MoveResponse;
-			await this.storeIdempotency(
-				body.moveId,
-				{ status: 200, body: response },
-				nextState.stateVersion,
-			);
-
-			if (nextState.status === "ended") {
-				await this.finalizeMatch(nextState, "terminal");
-			}
-
-			const moveAppliedEventId = await this.recordEvent(
-				nextState,
-				"move_applied",
-				{
-					payloadVersion: 2,
-					agentId,
-					moveId: body.moveId,
-					move: moveParse.data,
-					stateVersion: nextState.stateVersion,
-					engineEvents: result.engineEvents,
-					ts: nextState.updatedAt,
-				},
-			);
-
-			await this.broadcastState(nextState);
-			{
-				const matchId = this.matchId ?? this.ctx.id.name;
-				if (matchId) {
-					const liveWriters = [...this.spectators, ...this.allAgentWriters()];
-					await this.broadcast(
-						liveWriters,
-						"engine_events",
-						buildEngineEventsEvent({
-							eventId: moveAppliedEventId,
-							ts: nextState.updatedAt,
-							matchId,
-							stateVersion: nextState.stateVersion,
-							agentId,
-							moveId: body.moveId,
-							move: moveParse.data,
-							engineEvents: result.engineEvents,
-						}),
+			if (request.method === "POST" && url.pathname === "/init") {
+				const body = await request.json().catch(() => null);
+				const parsed = initPayloadSchema.safeParse(body);
+				if (!parsed.success) {
+					return respond(
+						Response.json(
+							{ ok: false, error: "Init payload must include two players." },
+							{ status: 400 },
+						),
 					);
-					const safeThought = sanitizePublicThought(body.publicThought);
-					const player =
-						getPlayerSideForAgent(nextState.game, agentId) ??
-						getPlayerSideForAgent(state.game, agentId);
-					if (safeThought && player) {
-						const thoughtEventId = await this.recordEvent(
-							nextState,
-							"agent_thought",
+				}
+
+				const existing = await this.ctx.storage.get<MatchState>("state");
+				if (existing) {
+					const enforced = await this.maybeEnforceTurnTimeout(existing);
+					return respond(Response.json({ ok: true, state: enforced }));
+				}
+
+				const seed = parsed.data.seed ?? Math.floor(Math.random() * 1_000_000);
+				const nextState = createInitialState(
+					parsed.data.players,
+					seed,
+					parsed.data.mode ?? "ranked",
+				);
+				const timeoutMs = this.turnTimeoutMs();
+				nextState.turnExpiresAtMs = Date.now() + timeoutMs;
+				if (this.matchId) {
+					await this.ctx.storage.put(MATCH_ID_KEY, this.matchId);
+				}
+				await this.ctx.storage.put("state", nextState);
+				await this.scheduleNextAlarm(nextState);
+				await this.recordEvent(nextState, "match_started", {
+					players: nextState.players,
+					seed,
+					engineConfig: getEngineConfig(nextState.game),
+					stateVersion: nextState.stateVersion,
+					mode: nextState.mode,
+				});
+
+				// Emit match_started metric
+				const matchIdForMetric = this.matchId ?? this.ctx.id.name;
+				if (matchIdForMetric) {
+					emitMetric(this.env, "match_started", {
+						scope: "match_do",
+						matchId: matchIdForMetric,
+					});
+				}
+
+				await this.broadcastState(nextState);
+				await this.broadcastYourTurn(nextState);
+				return respond(Response.json({ ok: true, state: nextState }));
+			}
+
+			if (request.method === "POST" && url.pathname === "/move") {
+				const body = await request.json().catch(() => null);
+				if (!isMovePayload(body)) {
+					return respond(
+						Response.json(
 							{
-								payloadVersion: 1,
+								ok: false,
+								error:
+									"Move payload must include moveId, expectedVersion, and move.",
+							},
+							{ status: 400 },
+						),
+					);
+				}
+
+				const agentId = request.headers.get("x-agent-id");
+				if (!agentId) {
+					return respond(
+						Response.json(
+							{ ok: false, error: "Agent id is required." },
+							{ status: 400 },
+						),
+					);
+				}
+
+				const telemetry = extractRunnerTelemetry(request.headers);
+				if (telemetry) {
+					this.waitUntilTracked(
+						"persist_runner_telemetry",
+						this.persistRunnerTelemetry(agentId, telemetry),
+					);
+				}
+
+				const idempotencyKey = `${IDEMPOTENCY_PREFIX}${body.moveId}`;
+				const cached =
+					await this.ctx.storage.get<IdempotencyEntry>(idempotencyKey);
+				if (cached) {
+					return respond(Response.json(cached.body, { status: cached.status }));
+				}
+
+				let state = await this.ctx.storage.get<MatchState>("state");
+				if (!state) {
+					const response = {
+						ok: false,
+						error: "Match not initialized.",
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 409, body: response },
+						-1,
+					);
+					return respond(Response.json(response, { status: 409 }));
+				}
+
+				state = await this.maybeEnforceTurnTimeout(state);
+				if (state.status === "ended") {
+					const response = {
+						ok: false,
+						error: "Match has ended.",
+						stateVersion: state.stateVersion,
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 409, body: response },
+						state.stateVersion,
+					);
+					return respond(Response.json(response, { status: 409 }));
+				}
+
+				if (body.expectedVersion !== state.stateVersion) {
+					const response = {
+						ok: false,
+						error: "Version mismatch.",
+						stateVersion: state.stateVersion,
+					} satisfies MoveResponse;
+					if (state.stateVersion > body.expectedVersion) {
+						const matchId =
+							request.headers.get("x-match-id") ??
+							this.matchId ??
+							this.ctx.id.name;
+						const observability = buildRunnerSessionObservability({
+							requestId: request.headers.get("x-request-id"),
+							agentId,
+							matchId,
+							route: matchId
+								? `/v1/matches/${matchId}/move`
+								: "/v1/matches/:id/move",
+							transport: "sse",
+						});
+						observability.logMoveConflict({
+							expectedVersion: body.expectedVersion,
+							actualVersion: state.stateVersion,
+						});
+						observability.emitMoveConflict(this.env);
+					}
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 409, body: response },
+						state.stateVersion,
+					);
+					return respond(Response.json(response, { status: 409 }));
+				}
+
+				const moveParse = MoveSchema.safeParse(body.move);
+				if (!moveParse.success) {
+					const forfeited = await this.forfeitMatch(
+						state,
+						agentId,
+						"invalid_move_schema",
+					);
+					const response = {
+						ok: false,
+						error: "Invalid move schema.",
+						stateVersion: forfeited.stateVersion,
+						forfeited: true,
+						matchStatus: "ended",
+						winnerAgentId: forfeited.winnerAgentId ?? null,
+						reason: "invalid_move_schema",
+						reasonCode: "invalid_move_schema",
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 400, body: response },
+						forfeited.stateVersion,
+					);
+					return respond(Response.json(response, { status: 400 }));
+				}
+
+				if (!state.players.includes(agentId)) {
+					const response = {
+						ok: false,
+						error: "Agent not part of match.",
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 403, body: response },
+						state.stateVersion,
+					);
+					return respond(Response.json(response, { status: 403 }));
+				}
+
+				const active = getActiveAgentId(state.game);
+				if (!active || active !== agentId) {
+					const response = {
+						ok: false,
+						error: "Not your turn.",
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 409, body: response },
+						state.stateVersion,
+					);
+					return respond(Response.json(response, { status: 409 }));
+				}
+
+				const result = applyMoveToState(state, moveParse.data);
+
+				if (!result.ok) {
+					const reasonCode =
+						result.reason === "illegal_move" ? "illegal_move" : "invalid_move";
+					const forfeited = await this.forfeitMatch(state, agentId, reasonCode);
+					const response = {
+						ok: false,
+						error: result.error,
+						stateVersion: forfeited.stateVersion,
+						forfeited: true,
+						matchStatus: "ended",
+						winnerAgentId: forfeited.winnerAgentId ?? null,
+						reason: reasonCode,
+						reasonCode,
+					} satisfies MoveResponse;
+					await this.storeIdempotency(
+						body.moveId,
+						{ status: 400, body: response },
+						forfeited.stateVersion,
+					);
+					return respond(Response.json(response, { status: 400 }));
+				}
+
+				let nextState = result.state;
+				if (nextState.status !== "active") {
+					await this.ctx.storage.deleteAlarm();
+					this.diagnostics.noteAlarmDeleted("move_terminal");
+				} else if (
+					nextState.game.turn !== state.game.turn ||
+					nextState.game.activePlayer !== state.game.activePlayer
+				) {
+					const baseMs = Date.parse(nextState.updatedAt);
+					const nowMs = Number.isFinite(baseMs) ? baseMs : Date.now();
+					const timeoutMs = this.turnTimeoutMs();
+					const expiresAtMs = nowMs + timeoutMs;
+					nextState = { ...nextState, turnExpiresAtMs: expiresAtMs };
+				}
+				await this.ctx.storage.put("state", nextState);
+				await this.scheduleNextAlarm(nextState);
+
+				const response = { ok: true, state: nextState } satisfies MoveResponse;
+				await this.storeIdempotency(
+					body.moveId,
+					{ status: 200, body: response },
+					nextState.stateVersion,
+				);
+
+				if (nextState.status === "ended") {
+					await this.finalizeMatch(nextState, "terminal");
+				}
+
+				const moveAppliedEventId = await this.recordEvent(
+					nextState,
+					"move_applied",
+					{
+						payloadVersion: 2,
+						agentId,
+						moveId: body.moveId,
+						move: moveParse.data,
+						stateVersion: nextState.stateVersion,
+						engineEvents: result.engineEvents,
+						ts: nextState.updatedAt,
+					},
+				);
+
+				await this.broadcastState(nextState);
+				{
+					const matchId = this.matchId ?? this.ctx.id.name;
+					if (matchId) {
+						const liveWriters = [...this.spectators, ...this.allAgentWriters()];
+						await this.broadcast(
+							liveWriters,
+							"engine_events",
+							buildEngineEventsEvent({
+								eventId: moveAppliedEventId,
+								ts: nextState.updatedAt,
+								matchId,
+								stateVersion: nextState.stateVersion,
+								agentId,
+								moveId: body.moveId,
+								move: moveParse.data,
+								engineEvents: result.engineEvents,
+							}),
+						);
+						const safeThought = sanitizePublicThought(body.publicThought);
+						const player =
+							getPlayerSideForAgent(nextState.game, agentId) ??
+							getPlayerSideForAgent(state.game, agentId);
+						if (safeThought && player) {
+							const thoughtEventId = await this.recordEvent(
+								nextState,
+								"agent_thought",
+								{
+									payloadVersion: 1,
+									player,
+									agentId,
+									moveId: body.moveId,
+									stateVersion: nextState.stateVersion,
+									text: safeThought,
+									ts: nextState.updatedAt,
+								},
+							);
+							const thoughtPayload = buildAgentThoughtEvent({
+								eventId: thoughtEventId,
+								ts: nextState.updatedAt,
+								matchId,
+								stateVersion: nextState.stateVersion,
 								player,
 								agentId,
 								moveId: body.moveId,
-								stateVersion: nextState.stateVersion,
 								text: safeThought,
-								ts: nextState.updatedAt,
-							},
-						);
-						const thoughtPayload = buildAgentThoughtEvent({
-							eventId: thoughtEventId,
-							ts: nextState.updatedAt,
-							matchId,
-							stateVersion: nextState.stateVersion,
-							player,
-							agentId,
-							moveId: body.moveId,
-							text: safeThought,
-						});
-						await this.broadcast(liveWriters, "agent_thought", thoughtPayload);
-					}
-				}
-			}
-			await this.broadcastYourTurn(nextState);
-			if (nextState.status === "ended") {
-				await this.recordEvent(nextState, "match_ended", {
-					stateVersion: nextState.stateVersion,
-					winnerAgentId: nextState.winnerAgentId ?? null,
-					loserAgentId: nextState.loserAgentId ?? null,
-					reason: "terminal",
-				});
-				await this.broadcastGameEnd(nextState, "terminal");
-			}
-
-			return Response.json(response);
-		}
-
-		if (request.method === "POST" && url.pathname === "/finish") {
-			const body = await request.json().catch(() => null);
-			if (!isFinishPayload(body)) {
-				return Response.json(
-					{
-						ok: false,
-						error: "Finish payload must be empty or include reason.",
-					},
-					{ status: 400 },
-				);
-			}
-
-			const agentId = request.headers.get("x-agent-id");
-			if (!agentId) {
-				return Response.json(
-					{ ok: false, error: "Agent id is required." },
-					{ status: 400 },
-				);
-			}
-
-			const state = await this.ctx.storage.get<MatchState>("state");
-			if (!state) {
-				return Response.json(
-					{ ok: false, error: "Match not initialized." },
-					{ status: 409 },
-				);
-			}
-
-			const enforced = await this.maybeEnforceTurnTimeout(state);
-
-			if (enforced.status === "ended") {
-				const response: FinishResponse = { ok: true, state: enforced };
-				return Response.json(response);
-			}
-
-			if (!enforced.players.includes(agentId)) {
-				return Response.json(
-					{ ok: false, error: "Agent not part of match." },
-					{ status: 403 },
-				);
-			}
-
-			const nextState = await this.forfeitMatch(enforced, agentId, "forfeit");
-
-			const response: FinishResponse = { ok: true, state: nextState };
-			return Response.json(response);
-		}
-
-		if (request.method === "GET" && url.pathname === "/state") {
-			let state = await this.ctx.storage.get<MatchState>("state");
-			if (state) {
-				state = await this.maybeEnforceTurnTimeout(state);
-			}
-			return Response.json({ state: state ?? null });
-		}
-
-		if (request.method === "GET" && url.pathname === "/stream") {
-			const agentId = request.headers.get("x-agent-id");
-			if (!agentId) {
-				return new Response("Agent id is required.", { status: 400 });
-			}
-			let state = await this.ctx.storage.get<MatchState>("state");
-			if (state && !state.players.includes(agentId)) {
-				return new Response("Agent not part of match.", { status: 403 });
-			}
-			if (state) {
-				state = await this.maybeEnforceTurnTimeout(state);
-			}
-
-			const { readable, writer } = this.createStream();
-			const matchId =
-				request.headers.get("x-match-id") ?? this.matchId ?? this.ctx.id.name;
-			const route = matchId
-				? `/v1/matches/${matchId}/stream`
-				: "/v1/matches/:id/stream";
-			const afterId = this.parseAfterId(request);
-			const observability = buildRunnerSessionObservability({
-				requestId: request.headers.get("x-request-id"),
-				agentId,
-				matchId,
-				route,
-				transport: "sse",
-			});
-			this.registerStreamAttachment(writer, {
-				observability,
-				kind: "agent",
-				requestId: request.headers.get("x-request-id"),
-				agentId,
-				matchId: matchId ?? null,
-				route,
-				afterId,
-				lastObservedEventId: null,
-				closeReason: null,
-				closed: false,
-			});
-			this.registerAgentStream(agentId, writer);
-			observability.logStreamAttached({ streamKind: "agent", afterId });
-			let cleanedUp = false;
-			let testTimeout: ReturnType<typeof setTimeout> | null = null;
-			const cleanup = (reason: RunnerStreamCloseReason = "client_abort") => {
-				if (cleanedUp) return;
-				cleanedUp = true;
-				if (testTimeout !== null) {
-					clearTimeout(testTimeout);
-					testTimeout = null;
-				}
-				this.markStreamCloseReason(writer, reason);
-				void this.finalizeStreamAttachment(writer);
-			};
-			if (this.env.TEST_MODE) {
-				testTimeout = setTimeout(
-					() => cleanup("client_abort"),
-					TEST_STREAM_MAX_LIFETIME_MS,
-				);
-			}
-			this.handleAbort(request, () => cleanup("client_abort"));
-
-			if (state) {
-				const resolvedMatchId = await this.resolveMatchId();
-				if (!resolvedMatchId) {
-					return new Response("Match id unavailable.", { status: 409 });
-				}
-				void (async () => {
-					const replaySummary =
-						afterId > 0
-							? await this.replayRecordedEvents(
-									writer,
-									resolvedMatchId,
-									afterId,
-								)
-							: {
-									replayedCount: 0,
-									replayedTerminal: false,
-									lastReplayedEventId: null,
-								};
-					if (afterId > 0) {
-						observability.logStreamReplay({
-							streamKind: "agent",
-							afterId,
-							replayedCount: replaySummary.replayedCount,
-							replayedTerminal: replaySummary.replayedTerminal,
-							stateVersion: state.stateVersion,
-						});
-						observability.emitStreamResume(this.env);
-					}
-					try {
-						await this.sendEvent(
-							writer,
-							"state",
-							buildLiveStateEvent({
-								ts: state.updatedAt,
-								matchId: resolvedMatchId,
-								stateVersion: state.stateVersion,
-								state: state.game,
-							}),
-						);
-					} catch {
-						cleanup();
-						return;
-					}
-					this.sendYourTurnIfActive(state, agentId, writer);
-					if (state.status === "ended") {
-						if (!replaySummary.replayedTerminal) {
-							try {
-								await this.sendEvent(
-									writer,
-									"match_ended",
-									buildLiveMatchEndedEvent({
-										ts: state.updatedAt,
-										matchId: resolvedMatchId,
-										stateVersion: state.stateVersion,
-										winnerAgentId: state.winnerAgentId ?? null,
-										loserAgentId: state.loserAgentId ?? null,
-										reason: state.endReason ?? "ended",
-									}),
-								);
-							} catch {
-								cleanup();
-								return;
-							}
+							});
+							await this.broadcast(
+								liveWriters,
+								"agent_thought",
+								thoughtPayload,
+							);
 						}
-						cleanup("terminal_complete");
 					}
-				})();
+				}
+				await this.broadcastYourTurn(nextState);
+				if (nextState.status === "ended") {
+					await this.recordEvent(nextState, "match_ended", {
+						stateVersion: nextState.stateVersion,
+						winnerAgentId: nextState.winnerAgentId ?? null,
+						loserAgentId: nextState.loserAgentId ?? null,
+						reason: "terminal",
+					});
+					await this.broadcastGameEnd(nextState, "terminal");
+				}
+
+				return respond(Response.json(response));
 			}
 
-			return this.streamResponse(readable, cleanup);
-		}
+			if (request.method === "POST" && url.pathname === "/finish") {
+				const body = await request.json().catch(() => null);
+				if (!isFinishPayload(body)) {
+					return respond(
+						Response.json(
+							{
+								ok: false,
+								error: "Finish payload must be empty or include reason.",
+							},
+							{ status: 400 },
+						),
+					);
+				}
 
-		if (request.method === "GET" && url.pathname === "/spectate") {
-			return this.handleSpectate(request);
-		}
+				const agentId = request.headers.get("x-agent-id");
+				if (!agentId) {
+					return respond(
+						Response.json(
+							{ ok: false, error: "Agent id is required." },
+							{ status: 400 },
+						),
+					);
+				}
 
-		return new Response("Not found", { status: 404 });
+				const state = await this.ctx.storage.get<MatchState>("state");
+				if (!state) {
+					return respond(
+						Response.json(
+							{ ok: false, error: "Match not initialized." },
+							{ status: 409 },
+						),
+					);
+				}
+
+				const enforced = await this.maybeEnforceTurnTimeout(state);
+
+				if (enforced.status === "ended") {
+					const response: FinishResponse = { ok: true, state: enforced };
+					return respond(Response.json(response));
+				}
+
+				if (!enforced.players.includes(agentId)) {
+					return respond(
+						Response.json(
+							{ ok: false, error: "Agent not part of match." },
+							{ status: 403 },
+						),
+					);
+				}
+
+				const nextState = await this.forfeitMatch(enforced, agentId, "forfeit");
+
+				const response: FinishResponse = { ok: true, state: nextState };
+				return respond(Response.json(response));
+			}
+
+			if (request.method === "GET" && url.pathname === "/state") {
+				let state = await this.ctx.storage.get<MatchState>("state");
+				if (state) {
+					state = await this.maybeEnforceTurnTimeout(state);
+				}
+				return respond(Response.json({ state: state ?? null }));
+			}
+
+			if (request.method === "GET" && url.pathname === "/stream") {
+				const agentId = request.headers.get("x-agent-id");
+				if (!agentId) {
+					return respond(
+						new Response("Agent id is required.", { status: 400 }),
+					);
+				}
+				let state = await this.ctx.storage.get<MatchState>("state");
+				if (state && !state.players.includes(agentId)) {
+					return respond(
+						new Response("Agent not part of match.", { status: 403 }),
+					);
+				}
+				if (state) {
+					state = await this.maybeEnforceTurnTimeout(state);
+				}
+
+				const { readable, writer } = this.createStream();
+				const matchId =
+					request.headers.get("x-match-id") ?? this.matchId ?? this.ctx.id.name;
+				const route = matchId
+					? `/v1/matches/${matchId}/stream`
+					: "/v1/matches/:id/stream";
+				const afterId = this.parseAfterId(request);
+				const observability = buildRunnerSessionObservability({
+					requestId: request.headers.get("x-request-id"),
+					agentId,
+					matchId,
+					route,
+					transport: "sse",
+				});
+				this.registerStreamAttachment(writer, {
+					observability,
+					kind: "agent",
+					requestId: request.headers.get("x-request-id"),
+					agentId,
+					matchId: matchId ?? null,
+					route,
+					afterId,
+					lastObservedEventId: null,
+					closeReason: null,
+					closed: false,
+				});
+				this.registerAgentStream(agentId, writer);
+				observability.logStreamAttached({ streamKind: "agent", afterId });
+				let cleanedUp = false;
+				let testTimeout: ReturnType<typeof setTimeout> | null = null;
+				const cleanup = (reason: RunnerStreamCloseReason = "client_abort") => {
+					if (cleanedUp) return;
+					cleanedUp = true;
+					if (testTimeout !== null) {
+						clearTimeout(testTimeout);
+						testTimeout = null;
+					}
+					this.markStreamCloseReason(writer, reason);
+					void this.finalizeStreamAttachment(writer);
+				};
+				if (this.env.TEST_MODE) {
+					testTimeout = setTimeout(
+						() => cleanup("client_abort"),
+						TEST_STREAM_MAX_LIFETIME_MS,
+					);
+				}
+				this.handleAbort(request, () => cleanup("client_abort"));
+
+				if (state) {
+					const resolvedMatchId = await this.resolveMatchId();
+					if (!resolvedMatchId) {
+						return respond(
+							new Response("Match id unavailable.", { status: 409 }),
+						);
+					}
+					void (async () => {
+						const replaySummary =
+							afterId > 0
+								? await this.replayRecordedEvents(
+										writer,
+										resolvedMatchId,
+										afterId,
+									)
+								: {
+										replayedCount: 0,
+										replayedTerminal: false,
+										lastReplayedEventId: null,
+									};
+						if (afterId > 0) {
+							observability.logStreamReplay({
+								streamKind: "agent",
+								afterId,
+								replayedCount: replaySummary.replayedCount,
+								replayedTerminal: replaySummary.replayedTerminal,
+								stateVersion: state.stateVersion,
+							});
+							observability.emitStreamResume(this.env);
+						}
+						try {
+							await this.sendEvent(
+								writer,
+								"state",
+								buildLiveStateEvent({
+									ts: state.updatedAt,
+									matchId: resolvedMatchId,
+									stateVersion: state.stateVersion,
+									state: state.game,
+								}),
+							);
+						} catch {
+							cleanup();
+							return;
+						}
+						this.sendYourTurnIfActive(state, agentId, writer);
+						if (state.status === "ended") {
+							if (!replaySummary.replayedTerminal) {
+								try {
+									await this.sendEvent(
+										writer,
+										"match_ended",
+										buildLiveMatchEndedEvent({
+											ts: state.updatedAt,
+											matchId: resolvedMatchId,
+											stateVersion: state.stateVersion,
+											winnerAgentId: state.winnerAgentId ?? null,
+											loserAgentId: state.loserAgentId ?? null,
+											reason: state.endReason ?? "ended",
+										}),
+									);
+								} catch {
+									cleanup();
+									return;
+								}
+							}
+							cleanup("terminal_complete");
+						}
+					})();
+				}
+
+				return respond(this.streamResponse(readable, cleanup));
+			}
+
+			if (request.method === "GET" && url.pathname === "/spectate") {
+				return respond(await this.handleSpectate(request));
+			}
+
+			return respond(new Response("Not found", { status: 404 }));
+		} finally {
+			if (shouldTraceRequest) {
+				this.diagnostics.noteRequestEnd(responseStatus);
+			}
+		}
 	}
 
 	private createStream() {
@@ -1052,6 +1134,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		meta: StreamAttachmentMeta,
 	) {
 		this.streamAttachments.set(writer, meta);
+		this.diagnostics.record("stream_attached", {
+			streamKind: meta.kind,
+			agentId: meta.agentId,
+		});
 	}
 
 	private markStreamCloseReason(
@@ -1100,11 +1186,39 @@ export class MatchDO extends DurableObject<MatchEnv> {
 		} else {
 			this.spectators.delete(writer);
 		}
+		this.diagnostics.record("stream_closed", {
+			streamKind: meta.kind,
+			agentId: meta.agentId,
+			reason,
+		});
 		try {
 			await writer.close();
 		} catch {
 			// ignore
 		}
+	}
+
+	private async getRuntimeSummaryForTest() {
+		const state = await this.ctx.storage.get<MatchState>("state");
+		const turnExpiresAtMs =
+			typeof state?.turnExpiresAtMs === "number" &&
+			Number.isFinite(state.turnExpiresAtMs)
+				? state.turnExpiresAtMs
+				: null;
+		const base = this.diagnostics.snapshot();
+		return {
+			...base,
+			kind: "match" as const,
+			id: (await this.resolveMatchId()) ?? base.id,
+			status: state?.status ?? null,
+			hasAlarm:
+				base.hasAlarm ||
+				(state?.status === "active" && turnExpiresAtMs !== null),
+			turnExpiresAtMs,
+			spectatorStreams: this.spectators.size,
+			agentStreams: this.allAgentWriters().length,
+			streamAttachments: this.streamAttachments.size,
+		};
 	}
 
 	private registerAgentStream(agentId: string, writer: StreamWriter) {
@@ -1730,10 +1844,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 
 		const task = this.persistFinalization(state, reason);
 		if (this.env.TEST_MODE) {
-			await task;
+			await this.diagnostics.trackWaitUntil("persist_finalization", task);
 			return;
 		}
-		this.ctx.waitUntil(task);
+		this.waitUntilTracked("persist_finalization", task);
 	}
 
 	private async resolveMatchId(): Promise<string | null> {
@@ -1747,7 +1861,10 @@ export class MatchDO extends DurableObject<MatchEnv> {
 	}
 
 	private async resetForTest() {
+		this.diagnostics.noteResetStart();
 		await this.ctx.storage.deleteAlarm();
+		this.diagnostics.noteAlarmDeleted("reset");
+		await this.ctx.storage.deleteAll();
 		for (const writer of this.spectators) {
 			try {
 				await writer.close();
@@ -1766,6 +1883,14 @@ export class MatchDO extends DurableObject<MatchEnv> {
 			}
 			this.agentStreams.delete(agentId);
 		}
+		this.streamAttachments.clear();
+		this.matchId = this.ctx.id.name ?? null;
+		this.diagnostics.record("reset_stream_cleanup", {
+			spectatorStreams: this.spectators.size,
+			agentStreams: this.allAgentWriters().length,
+			streamAttachments: this.streamAttachments.size,
+		});
+		this.diagnostics.noteResetEnd();
 	}
 }
 
