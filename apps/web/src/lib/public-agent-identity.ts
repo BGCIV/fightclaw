@@ -11,6 +11,28 @@ type PublicAgentIdentityBatchResponse = {
 	agents: PublicAgentIdentity[];
 };
 
+export function buildParticipantIdentityRequest(input: {
+	agentAId: string | null | undefined;
+	agentBId: string | null | undefined;
+}): {
+	agentIds: string[];
+	identityKey: string;
+} {
+	const agentAId =
+		typeof input.agentAId === "string" ? input.agentAId.trim() : "";
+	const agentBId =
+		typeof input.agentBId === "string" ? input.agentBId.trim() : "";
+
+	if (!agentAId || !agentBId) {
+		return { agentIds: [], identityKey: "" };
+	}
+
+	return {
+		agentIds: [agentAId, agentBId],
+		identityKey: `${agentAId}|${agentBId}`,
+	};
+}
+
 export function buildPublicAgentIdentityMap(
 	agents: readonly PublicAgentIdentity[],
 ): PublicAgentIdentityMap {

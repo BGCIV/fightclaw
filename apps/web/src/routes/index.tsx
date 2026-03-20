@@ -35,6 +35,7 @@ import {
 	useArenaAnimator,
 } from "@/lib/arena-animator";
 import {
+	buildParticipantIdentityRequest,
 	fetchPublicAgentIdentityMap,
 	type PublicAgentIdentityMap,
 } from "@/lib/public-agent-identity";
@@ -169,12 +170,17 @@ function SpectatorLanding() {
 		thoughtEventIdsRef.current.clear();
 	});
 
-	const participantAgentIds = useMemo(() => {
-		if (!latestState) return [];
-		return [latestState.players.A.id, latestState.players.B.id];
-	}, [latestState]);
+	const participantIdentity = useMemo(
+		() =>
+			buildParticipantIdentityRequest({
+				agentAId: latestState?.players.A.id ?? null,
+				agentBId: latestState?.players.B.id ?? null,
+			}),
+		[latestState?.players.A.id, latestState?.players.B.id],
+	);
 
-	const participantIdentityKey = participantAgentIds.join("|");
+	const participantAgentIds = participantIdentity.agentIds;
+	const participantIdentityKey = participantIdentity.identityKey;
 
 	const applyThoughtEvent = useEffectEvent((event: AgentThoughtEvent) => {
 		const player = event.payload.player;
@@ -517,7 +523,7 @@ function SpectatorLanding() {
 
 	useEffect(() => {
 		let active = true;
-		if (participantAgentIds.length !== 2) {
+		if (!participantIdentityKey || participantAgentIds.length !== 2) {
 			setPublicIdentityById({});
 			return () => {
 				active = false;

@@ -1,11 +1,36 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+	buildParticipantIdentityRequest,
 	buildPublicAgentIdentityMap,
 	resolveBroadcastIdentity,
 } from "../src/lib/public-agent-identity";
 
 describe("public agent identity helper", () => {
+	test("builds a stable participant identity request from agent ids", () => {
+		expect(
+			buildParticipantIdentityRequest({
+				agentAId: "agent-a",
+				agentBId: "agent-b",
+			}),
+		).toEqual({
+			agentIds: ["agent-a", "agent-b"],
+			identityKey: "agent-a|agent-b",
+		});
+	});
+
+	test("returns an empty request when either participant id is missing", () => {
+		expect(
+			buildParticipantIdentityRequest({
+				agentAId: "agent-a",
+				agentBId: null,
+			}),
+		).toEqual({
+			agentIds: [],
+			identityKey: "",
+		});
+	});
+
 	test("uses fetched public identity and falls back to live style when identity style is missing", () => {
 		const publicIdentityById = buildPublicAgentIdentityMap([
 			{
