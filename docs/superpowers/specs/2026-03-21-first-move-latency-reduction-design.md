@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-21
 **Branch**: `model-test/opus-4-6/first-move-latency-reduction`
-**Status**: Design approved
+**Status**: Design approved (rev 2 — post spec review)
 
 ## Problem
 
@@ -35,67 +35,109 @@ Three independent optimizations, each deployable separately.
 
 **Current**: `getMatchState` and `buildTurnContext` run sequentially in `createMoveProvider.nextMove()`.
 
-**Change**: Run them concurrently via `Promise.all`. The `buildTurnContext` method only needs `matchId` and `agentId` for its HTTP call to the match log endpoint. It also accepts `state` for extracting `current.turn/actionsRemaining/activePlayer`, but this is optional metadata — the context build can proceed without it and we patch the `current` field in after the parallel fetch completes.
+**Change**: Run `getMatchState` concurrently with `buildTurnContext` (without the `state` param). The state fetch remains on the critical path — legal moves, budget, turn key, gateway payload, and `singleActionTurns` all depend on it. But the context-build HTTP call (match log fetch) can run in parallel, overlapping with the state fetch.
+
+After both resolve, patch `turnContext.current` from the fetched state.
+
+**Error isolation**: Use individual `.catch()` wrappers, not bare `Promise.all`. A `buildTurnContext` failure must remain non-fatal (set `turnContext = undefined`), matching current behavior. A `getMatchState` failure is fatal and should propagate.
 
 **Implementation**:
 ```typescript
-// Before (sequential)
-const state = await client.getMatchState(matchId);
-// ... use state ...
-const turnContext = await matchContextStore.buildTurnContext({ matchId, agentId, state });
+// Launch context build in parallel (non-fatal on failure)
+const turnContextPromise = gatewayCmd
+  ? matchContextStore.buildTurnContext({ matchId, agentId }).catch(() => undefined)
+  : Promise.resolve(undefined);
 
-// After (parallel)
-const [state, partialTurnContext] = await Promise.all([
-  client.getMatchState(matchId),
-  matchContextStore.buildTurnContext({ matchId, agentId }),
-]);
-// Patch current-state metadata onto the context after both resolve
-if (partialTurnContext && state) {
-  partialTurnContext.current = extractCurrentFromState(state);
+// State fetch is on the critical path — must complete before move logic
+const state = await client.getMatchState(matchId);
+
+// ... compute legal moves, budget, turn key using state ...
+
+// Await the already-in-flight context build
+let turnContext = await turnContextPromise;
+
+// Patch current-state metadata onto context
+if (turnContext && state) {
+  turnContext.current = extractCurrentFromState(state);
 }
 ```
 
 **Savings**: ~100-300ms (match log fetch runs concurrently with state fetch).
 
-**Risk**: Low. The two HTTP calls are independent. The only dependency is that `current` metadata in the turn context is slightly less informative if state fetch fails, which is already handled (turnContext falls through to `undefined` on error).
+**Risk**: Low. The two HTTP calls are independent. Context-build failure is non-fatal.
 
 ### 2. Cache state from SSE events
 
 **Files**: `packages/agent-client/src/runner.ts`, `packages/agent-client/src/types.ts`, `apps/openclaw-runner/src/cli.ts`
 
-**Current**: The runner receives `state` events via SSE (containing full game state) immediately before `your_turn` events. But `moveProvider.nextMove()` ignores this and makes a fresh HTTP GET to `getMatchState`.
+**Current**: The runner receives `state` events via SSE (containing game state in `payload.state`) immediately before `your_turn` events. But `moveProvider.nextMove()` ignores this and makes a fresh HTTP GET to `getMatchState`.
+
+#### Shape mismatch
+
+The SSE `state` event and HTTP `getMatchState` return **different shapes**:
+
+- **SSE `state` event** (from `broadcastState` in MatchDO): `payload.state` = the raw game object (`state.game` on server side). The envelope also carries `stateVersion` at the top level.
+- **HTTP `GET /state`** response (parsed as `MatchStateResponse`): `{ state: { stateVersion, status, game, turnExpiresAtMs, players, ... } }` — the full `MatchState` object nested under `state`.
+
+Key difference: SSE gives us `game` directly; HTTP gives us the full `MatchState` wrapper that includes `turnExpiresAtMs`, `status`, `stateVersion`, etc.
+
+#### Approach: pass SSE game state as a separate field
+
+Rather than trying to normalize the SSE payload into `MatchStateResponse`, we pass the raw SSE game state on `MoveProviderContext` as a new field `lastKnownGame`. The consumer (`createMoveProvider` in cli.ts) can use this directly for `listLegalMoves`, turn key computation, and the gateway payload — all of which access `state.state.game` anyway.
+
+For fields only available from the HTTP response (`turnExpiresAtMs`, `status`), the move provider either:
+- Falls back to HTTP GET (when the SSE game is absent/stale), or
+- Uses conservative defaults when SSE game is present (e.g., `turnExpiresAtMs` unavailable = skip budget checks for the first action, which is safe since the turn just started and the full 60s budget is available).
 
 **Change**:
-1. In `runner.ts`, capture the most recent SSE `state` event payload and its `stateVersion`.
-2. Extend `MoveProviderContext` with an optional `lastKnownState` field.
-3. In `createMoveProvider`, when `lastKnownState` is present and its version matches `stateVersion`, use it directly. Fall back to HTTP GET if absent or version mismatch.
+1. In `runner.ts`, capture the most recent SSE `state` event's `payload.state` (the game object) and `stateVersion`.
+2. Extend `MoveProviderContext` with optional `lastKnownGame: unknown` and `lastKnownGameVersion: number`.
+3. In `createMoveProvider`, when `lastKnownGame` is present and `lastKnownGameVersion === stateVersion`, use it to compute legal moves and build the gateway payload. Skip the `getMatchState` HTTP call. Use `null` for `turnExpiresAtMs` (acceptable: first action of a turn always has full budget).
+4. Fall back to HTTP GET when `lastKnownGame` is absent, version mismatches, or on second+ actions in the same turn (where the version has advanced past the SSE snapshot).
 
 **Implementation sketch** (runner.ts):
 ```typescript
-// In handleEvent, before your_turn dispatch:
+let cachedGame: unknown = undefined;
+let cachedGameVersion = -1;
+
+// In handleEvent:
 if (event.event === "state" && event.payload) {
-  cachedState = event.payload;
-  cachedStateVersion = event.stateVersion ?? -1;
+  cachedGame = event.payload.state;
+  cachedGameVersion = event.stateVersion ?? -1;
 }
 
-// In resolveMove, pass cached state to moveProvider:
-const moveContext = {
+// In resolveMove:
+const moveContext: MoveProviderContext = {
   agentId, matchId, stateVersion,
-  lastKnownState: cachedStateVersion === stateVersion ? cachedState : undefined,
+  ...(cachedGameVersion === stateVersion
+    ? { lastKnownGame: cachedGame, lastKnownGameVersion: cachedGameVersion }
+    : {}),
 };
 ```
 
-**Implementation sketch** (cli.ts createMoveProvider):
+**Implementation sketch** (cli.ts):
 ```typescript
-// Use cached state if available, otherwise fetch
-const state = context.lastKnownState
-  ? context.lastKnownState
-  : await client.getMatchState(matchId);
+// In nextMove:
+let state: MatchStateResponse;
+if (context.lastKnownGame && context.lastKnownGameVersion === stateVersion) {
+  // Build a minimal MatchStateResponse-compatible object from SSE data
+  state = {
+    state: { stateVersion, status: "active", game: context.lastKnownGame },
+    // turnExpiresAtMs unavailable from SSE — null is safe for first action
+  };
+} else {
+  state = await client.getMatchState(matchId);
+}
 ```
 
-**Savings**: ~100ms per move when SSE state is fresh (always true on first move of a turn).
+**Savings**: ~100ms on the first action per turn (SSE state is fresh). Subsequent actions within the same turn always fall back to HTTP (version advances after each move).
 
-**Risk**: Low. The SSE `state` event is the authoritative state broadcast by the server immediately before `your_turn`. Version check ensures staleness is impossible. HTTP fallback preserved for edge cases (reconnection, missed events).
+**Edge cases**:
+- **Reconnection**: `sendYourTurnIfActive` on the server does NOT broadcast a `state` event before `your_turn`. On reconnect, the cache will be empty or stale, and the version check correctly triggers HTTP fallback.
+- **Multi-action turns**: After the first move, `stateVersion` advances. The cached version won't match, triggering HTTP fallback. This is correct.
+- **`turnExpiresAtMs` absence**: Only affects `getRemainingTurnBudgetMs`. When null, `resolveEffectiveGatewayTimeoutMs` uses `baseGatewayTimeoutMs` without budget capping, which is correct for the first action (full turn budget available).
+
+**Risk**: Low. Version check prevents stale data. HTTP fallback preserved for all edge cases.
 
 ### 3. Pre-compile gateway script to JS
 
@@ -110,13 +152,20 @@ OPENCLAW_BIN=/usr/local/bin/openclaw OPENCLAW_AGENT_ID=main OPENCLAW_TIMEOUT_SEC
 `tsx` compiles TypeScript on every invocation.
 
 **Change**:
-1. Add a build target to `apps/openclaw-runner/package.json` that compiles the gateway scripts to JS using `esbuild` (already in the monorepo via tsup/vitest).
-2. Output to `apps/openclaw-runner/dist/gateway-openclaw-agent.js` as a self-contained ESM bundle.
-3. Update the EC2 run scripts to use `node dist/gateway-openclaw-agent.js` instead of `tsx scripts/gateway-openclaw-agent.ts`.
+1. Add a `build:gateway` script to `apps/openclaw-runner/package.json` using `esbuild` to compile gateway scripts to JS.
+2. Output to `apps/openclaw-runner/dist/gateway-openclaw-agent.mjs` as a self-contained ESM bundle.
+3. `dist/` is gitignored; operators run `pnpm -C apps/openclaw-runner build:gateway` after checkout.
+4. Dev workflow still uses `tsx` for iteration; pre-compiled JS is for production only.
+5. `esbuild` must externalize `@fightclaw/engine` if it contains native bindings, otherwise bundle everything.
 
 **Savings**: ~1-3s per gateway invocation.
 
-**Risk**: Low. The compiled JS is functionally identical. The source `.ts` files remain for development. Only the production invocation path changes.
+**Risk**: Low. The compiled JS is functionally identical. The source `.ts` files remain for development.
+
+## Scope notes
+
+- **`beta.ts`**: Has a similar `createMoveProvider` pattern but delegates to `createMoveProvider` from `cli.ts` internally. Changes to `cli.ts` will propagate. No separate changes needed.
+- **`resolveTimeoutFallbackMove`**: The timeout fallback in cli.ts (line 578) independently calls `client.getMatchState`. This is only invoked when the move provider times out, which is a rare error path. Not optimizing this — it would add complexity for a path that shouldn't fire under normal operation.
 
 ## Out of scope
 
@@ -127,11 +176,15 @@ OPENCLAW_BIN=/usr/local/bin/openclaw OPENCLAW_AGENT_ID=main OPENCLAW_TIMEOUT_SEC
 
 ## Testing
 
-- Existing tests in `apps/openclaw-runner/test/cli.test.ts` cover `createMoveProvider` with a mock `invokeGatewayImpl`. These tests will be extended to verify:
-  - Parallel fetch behavior (state + context build)
-  - SSE state cache hit path vs HTTP fallback
-- Gateway script compilation verified by running `node dist/gateway-openclaw-agent.js` with piped stdin matching the existing test fixtures.
-- Integration validation: run a real match on EC2 and compare first-move latency before/after.
+Existing tests in `apps/openclaw-runner/test/cli.test.ts` cover `createMoveProvider` with a mock `invokeGatewayImpl`. Extend with:
+
+1. **Parallel fetch**: Verify `buildTurnContext` failure does not prevent move selection (non-fatal isolation).
+2. **SSE cache hit**: Provide `lastKnownGame` + matching version; verify no HTTP call to `getMatchState`.
+3. **SSE cache miss**: Provide stale `lastKnownGameVersion`; verify HTTP fallback fires.
+4. **SSE cache absent**: Omit `lastKnownGame`; verify HTTP fallback fires.
+5. **Multi-action turn**: Verify second action falls back to HTTP (version advanced).
+6. **Gateway compilation**: Run `node dist/gateway-openclaw-agent.mjs` with piped stdin matching test fixtures; verify identical output to tsx-executed version.
+7. **Integration**: Run a real match on EC2 and compare first-move latency before/after.
 
 ## Success criteria
 
