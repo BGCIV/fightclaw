@@ -605,6 +605,13 @@ export const createMoveProvider = (
 		nextMove: async (context: MoveProviderContext) => {
 			const { matchId, stateVersion } = context;
 
+			// Launch context build early — runs in parallel with state fetch (non-fatal)
+			const turnContextPromise = gatewayCmd
+				? matchContextStore
+						.buildTurnContext({ matchId, agentId })
+						.catch(() => undefined)
+				: Promise.resolve(undefined);
+
 			// Use SSE-cached game if version matches (saves ~100ms HTTP round-trip)
 			const useCache =
 				context.lastKnownGame !== undefined &&
@@ -672,11 +679,34 @@ export const createMoveProvider = (
 			if (gatewayCmd) {
 				let turnContext: unknown;
 				try {
-					turnContext = await matchContextStore.buildTurnContext({
-						matchId,
-						agentId,
-						state,
-					});
+					const partialContext = await turnContextPromise;
+					if (
+						partialContext &&
+						typeof partialContext === "object" &&
+						state.state
+					) {
+						const gameObj = state.state.game as
+							| {
+									turn?: number;
+									actionsRemaining?: number;
+									activePlayer?: string;
+							  }
+							| undefined;
+						if (gameObj) {
+							(partialContext as Record<string, unknown>).current = {
+								...(typeof gameObj.turn === "number"
+									? { turn: gameObj.turn }
+									: {}),
+								...(typeof gameObj.actionsRemaining === "number"
+									? { actionsRemaining: gameObj.actionsRemaining }
+									: {}),
+								...(typeof gameObj.activePlayer === "string"
+									? { activePlayer: gameObj.activePlayer }
+									: {}),
+							};
+						}
+					}
+					turnContext = partialContext;
 				} catch {
 					turnContext = undefined;
 				}
