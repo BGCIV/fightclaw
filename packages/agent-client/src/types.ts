@@ -155,6 +155,7 @@ export type RunMatchMoveResolutionEvent = {
 	outcome: "provider_success" | "provider_timeout";
 	fallbackUsed: boolean;
 	fallbackKind: "non_terminal" | "terminal" | null;
+	fallbackResolverTimedOut?: boolean;
 	moveAction: Move["action"];
 };
 

@@ -22,6 +22,7 @@ const DEFAULT_TIMEOUT_FALLBACK_MOVE: Move = {
 };
 
 const MAX_CONSECUTIVE_ACTIONS_PER_TURN = 32;
+const TIMEOUT_FALLBACK_RESOLVER_TIMEOUT_MS = 250;
 
 const getActiveAgentIdFromGame = (
 	game:
@@ -432,12 +433,17 @@ export const runMatch = async (
 		try {
 			return await Promise.race([
 				options.moveProvider.nextMove(moveContext).then((move) => {
-					if (moveSettled) return move;
+					if (moveSettled) {
+						return new Promise<Move>(() => {
+							// The timeout path already owns resolution.
+						});
+					}
 					moveSettled = true;
 					emitMoveResolution(options, {
 						outcome: "provider_success",
 						fallbackUsed: false,
 						fallbackKind: null,
+						fallbackResolverTimedOut: false,
 						moveAction: move.action,
 					});
 					return move;
@@ -446,9 +452,17 @@ export const runMatch = async (
 					timeout = setTimeout(() => {
 						void (async () => {
 							moveSettled = true;
+							let fallbackResolverTimedOut = false;
 							try {
-								const fallback =
-									await options.resolveTimeoutFallbackMove?.(moveContext);
+								const fallback = await Promise.race([
+									Promise.resolve(
+										options.resolveTimeoutFallbackMove?.(moveContext),
+									),
+									sleep(TIMEOUT_FALLBACK_RESOLVER_TIMEOUT_MS).then(() => {
+										fallbackResolverTimedOut = true;
+										return null;
+									}),
+								]);
 								if (fallback) {
 									timeoutFallbackState.value = fallback;
 								}
@@ -460,6 +474,7 @@ export const runMatch = async (
 								outcome: "provider_timeout",
 								fallbackUsed: true,
 								fallbackKind: classifyFallbackKind(fallbackMove),
+								fallbackResolverTimedOut,
 								moveAction: fallbackMove.action,
 							});
 							resolveTimeout(fallbackMove);

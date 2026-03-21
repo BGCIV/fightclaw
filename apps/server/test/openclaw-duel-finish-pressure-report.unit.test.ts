@@ -9,6 +9,31 @@ import {
 } from "../scripts/openclaw-duel-finish-pressure-report.mjs";
 
 describe("summarizeFinishPressure", () => {
+	it("keeps turns from different matches in separate groups", () => {
+		const summary = summarizeFinishPressure({
+			events: [
+				{
+					matchId: "match-1",
+					event: "engine_events",
+					payload: {
+						move: { action: "end_turn" },
+						engineEvents: [{ type: "turn_end", turn: 1, player: "A" }],
+					},
+				},
+				{
+					matchId: "match-2",
+					event: "engine_events",
+					payload: {
+						move: { action: "end_turn" },
+						engineEvents: [{ type: "turn_end", turn: 1, player: "A" }],
+					},
+				},
+			],
+		});
+
+		expect(summary.completedTurns).toBe(2);
+	});
+
 	it("counts immediate explicit end_turn closures separately from multi-action turns", () => {
 		const summary = summarizeFinishPressure({
 			events: [

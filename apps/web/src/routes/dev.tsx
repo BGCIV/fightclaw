@@ -281,6 +281,7 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 	const [logExpanded, setLogExpanded] = useState(false);
 	const [replayError, setReplayError] = useState<string | null>(null);
 	const nextActionLogIdRef = useRef(1);
+	const observerRef = useRef<ResizeObserver | null>(null);
 	const playIntervalRef = useRef<number | null>(null);
 	const replayStateRef = useRef<MatchState | null>(null);
 	function createLogEntry(
@@ -561,7 +562,7 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 
 	useEffect(() => {
 		const root = stageFrameRef.current;
-		if (!root || typeof ResizeObserver === "undefined") return;
+		if (!root) return;
 
 		const measure = () => {
 			const board = root.querySelector(".spectator-stage-board");
@@ -581,24 +582,15 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 		};
 
 		measure();
-		const observer = new ResizeObserver(() => {
-			measure();
-		});
-		observer.observe(root);
+		observerRef.current?.observe(root);
 		for (const selector of [
 			".spectator-stage-board",
 			".action-ticker",
 			".result-band",
 		]) {
 			const element = root.querySelector(selector);
-			if (element) observer.observe(element);
+			if (element) observerRef.current?.observe(element);
 		}
-		window.addEventListener("resize", measure);
-
-		return () => {
-			window.removeEventListener("resize", measure);
-			observer.disconnect();
-		};
 	}, [
 		mode,
 		actionLog.length,
@@ -614,6 +606,51 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 		replayPly,
 		selectedMatch?.id,
 	]);
+
+	useEffect(() => {
+		const root = stageFrameRef.current;
+		if (!root || typeof ResizeObserver === "undefined") return;
+
+		const measure = () => {
+			const board = root.querySelector(".spectator-stage-board");
+			const ticker = root.querySelector(".action-ticker");
+			const resultBand = root.querySelector(".result-band");
+
+			setMeasuredLayout({
+				frameHeightPx: Math.round(root.getBoundingClientRect().height),
+				boardHeightPx: Math.round(board?.getBoundingClientRect().height ?? 0),
+				tickerHeightPx: Math.round(ticker?.getBoundingClientRect().height ?? 0),
+				resultBandHeightPx: Math.round(
+					resultBand?.getBoundingClientRect().height ?? 0,
+				),
+				viewportWidthPx: window.innerWidth,
+				viewportHeightPx: window.innerHeight,
+			});
+		};
+
+		const observer = new ResizeObserver(() => {
+			measure();
+		});
+		observerRef.current = observer;
+		observer.observe(root);
+		for (const selector of [
+			".spectator-stage-board",
+			".action-ticker",
+			".result-band",
+		]) {
+			const element = root.querySelector(selector);
+			if (element) observer.observe(element);
+		}
+		window.addEventListener("resize", measure);
+
+		return () => {
+			window.removeEventListener("resize", measure);
+			observer.disconnect();
+			if (observerRef.current === observer) {
+				observerRef.current = null;
+			}
+		};
+	}, [stageFrameRef]);
 
 	// Switch mode resets
 	const switchMode = useCallback(
@@ -663,14 +700,8 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 
 	const stageModel = mode === "lab" ? labModel : advancedStage;
 	const visibleState = stageModel.state;
-	const unitCountA = useMemo(
-		() => visibleState.players.A.units.length,
-		[visibleState.players.A.units.length],
-	);
-	const unitCountB = useMemo(
-		() => visibleState.players.B.units.length,
-		[visibleState.players.B.units.length],
-	);
+	const unitCountA = visibleState.players.A.units.length;
+	const unitCountB = visibleState.players.B.units.length;
 	const stageTickerVisibleLimit =
 		mode === "lab"
 			? Math.max(8, stageModel.tickerItems.length)

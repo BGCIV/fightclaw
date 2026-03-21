@@ -30,14 +30,15 @@ export const extractTurnSummaries = (logPayload) => {
 			typeof taggedEvent?.turn === "number" ? taggedEvent.turn : null;
 		const player =
 			typeof taggedEvent?.player === "string" ? taggedEvent.player : null;
-		const key = `${player ?? "unknown"}:${turn ?? "unknown"}`;
+		const matchId = typeof event.matchId === "string" ? event.matchId : null;
+		const key = `${matchId ?? "unknown"}:${player ?? "unknown"}:${turn ?? "unknown"}`;
 		const current = turns.get(key) ?? {
 			turn,
 			player,
 			actions: [],
 			ended: false,
 			hasAttack: false,
-			matchId: typeof event.matchId === "string" ? event.matchId : null,
+			matchId,
 		};
 		current.actions.push(action);
 		if (action === "attack") current.hasAttack = true;
