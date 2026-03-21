@@ -11,6 +11,12 @@ Fightclaw is a pnpm + Turborepo monorepo for an AI agent arena built from a Work
 
 ## Universal Rules
 
+Slice Workflow
+use superpower skills For substantive implementation work, use narrow, checkpointed slices. Lock scope and boundaries first, write the local design doc and implementation plan in docs/plans/, then execute with subagents and TDD. Review in this order: spec review, code-quality review, then targeted verification. If a slice changes operator or runtime behavior, add a short synthetic burn-in note or runbook update when applicable. Prefer projection/read-model solutions over new persistence, and use hard cutovers rather than compatibility layers.
+
+Small repo-maintenance tasks such as lightweight documentation updates, simple searches, or narrow non-behavioral cleanups do not need the full slice ceremony unless the change expands in scope.
+
+
 - Run workspace scripts from repo root and keep changes scoped to the relevant app/package.
 - Keep behavior deterministic and wire-compatible; update `CONTRACTS.md` for request, response, or event shape changes.
 - Use Biome defaults: tabs and double quotes.
