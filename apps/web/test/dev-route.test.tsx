@@ -74,13 +74,41 @@ describe("Dev spectator lab route", () => {
 		]);
 	});
 
-	test("synthesizes a replay terminal event from the selected match result", () => {
+	test("does not synthesize a replay terminal event before the replay board ends", () => {
+		const activeState = createInitialState(1, { boardColumns: 17 }, [
+			"Alpha",
+			"Bravo",
+		]);
 		const terminalEvent = resolveAdvancedTerminalEvent({
 			mode: "replay",
-			boardState: createInitialState(1, { boardColumns: 17 }, [
-				"Alpha",
-				"Bravo",
-			]),
+			boardState: activeState,
+			selectedMatch: {
+				id: "match-42",
+				label: "Replay",
+				scenario: null,
+				seed: 1,
+				engineConfig: null,
+				participants: ["Alpha", "Bravo"],
+				result: { winner: "Alpha", reason: "elimination" },
+				initialState: createInitialState(1, { boardColumns: 17 }, [
+					"Alpha",
+					"Bravo",
+				]),
+				steps: [],
+			},
+		});
+
+		expect(terminalEvent).toBeNull();
+	});
+
+	test("synthesizes a replay terminal event from the selected match result after the board ends", () => {
+		const endedState = {
+			...createInitialState(1, { boardColumns: 17 }, ["Alpha", "Bravo"]),
+			status: "ended" as const,
+		};
+		const terminalEvent = resolveAdvancedTerminalEvent({
+			mode: "replay",
+			boardState: endedState,
 			selectedMatch: {
 				id: "match-42",
 				label: "Replay",
