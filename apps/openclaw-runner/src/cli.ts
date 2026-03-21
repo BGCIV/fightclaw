@@ -602,8 +602,24 @@ export const createMoveProvider = (
 		actionsTakenThisTurn = 0;
 	};
 	return {
-		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
-			const state = await client.getMatchState(matchId);
+		nextMove: async (context: MoveProviderContext) => {
+			const { matchId, stateVersion } = context;
+
+			// Use SSE-cached game if version matches (saves ~100ms HTTP round-trip)
+			const useCache =
+				context.lastKnownGame !== undefined &&
+				context.lastKnownGameVersion === stateVersion;
+
+			const state = useCache
+				? {
+						state: {
+							stateVersion,
+							status: "active" as const,
+							game: context.lastKnownGame,
+						},
+					}
+				: await client.getMatchState(matchId);
+
 			const game = (state.state?.game ?? null) as {
 				actionsRemaining?: number;
 				turn?: number;
