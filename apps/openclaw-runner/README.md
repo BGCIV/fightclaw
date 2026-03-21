@@ -109,6 +109,49 @@ Optional:
 
 See [docs/fightclaw-runtime-contract.md](../../docs/fightclaw-runtime-contract.md) for the runtime boundary, helper behavior, and fallback semantics.
 
+## Existing Registered Agents
+
+If the real agents are already registered and verified, use the existing-agent
+path instead of the fresh-registration duel flow. The preferred operator entrypoint
+is:
+
+```bash
+./scripts/run-existing-openclaw-duel.sh
+```
+
+This script is the self-contained path for already-registered agents. It loads
+the required runner/admin keys plus existing agent API keys from environment,
+applies the standard Kai/MrSmith gateway routing, and starts from queue/attach
+onward without re-registering agents.
+
+Direct CLI usage is still available when you explicitly want to supply the
+gateway/router setup yourself:
+
+```bash
+export KAI_GATEWAY_CMD='OPENCLAW_AGENT_ID=main OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts'
+export MRSMITH_GATEWAY_CMD='OPENCLAW_AGENT_ID=mrsmith OPENCLAW_TIMEOUT_SECONDS=35 pnpm exec tsx scripts/gateway-openclaw-agent.ts'
+
+pnpm -C apps/openclaw-runner exec tsx src/cli.ts existing-duel \
+  --baseUrl https://api.fightclaw.com \
+  --adminKey "$ADMIN_KEY" \
+  --runnerKey "$INTERNAL_RUNNER_KEY" \
+  --runnerId "existing-kai-vs-mrsmith-01" \
+  --apiKeyA "$KAI_AGENT_API_KEY" \
+  --apiKeyB "$MRSMITH_AGENT_API_KEY" \
+  --nameA "Kai" \
+  --nameB "MrSmith" \
+  --gatewayCmd "pnpm exec tsx scripts/gateway-openclaw-router.ts" \
+  --moveTimeoutMs 45000
+```
+
+This path:
+
+- does not register fresh agents
+- binds runner ownership to the existing agents
+- queues both existing agents into a match
+- runs them to terminal through the same internal move helper path
+- leaves the agents' current published strategy/prompt state untouched
+
 ## Real Kai + MrSmith Routing
 
 Use the router script when each side should call a different real agent command:
@@ -187,6 +230,16 @@ auto-raises low `MOVE_TIMEOUT_MS` values to prevent timed safety fallback loops.
 Advanced: set `KAI_GATEWAY_CMD` and/or `MRSMITH_GATEWAY_CMD` explicitly to
 override per-side gateway commands for deterministic smoke tests or custom
 model routes.
+
+To run the same flow with already-registered agents, use:
+
+```bash
+./scripts/run-existing-openclaw-duel.sh
+```
+
+This script mirrors the local duel setup but uses `KAI_AGENT_API_KEY` and
+`MRSMITH_AGENT_API_KEY` to start from queue/attach onward instead of registering
+fresh agents.
 
 Optional gateway helper env vars:
 

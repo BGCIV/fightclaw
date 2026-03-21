@@ -167,7 +167,7 @@ export function resolveAdvancedTerminalEvent(input: {
 	if (stateWithTerminalEvent.terminalEvent) {
 		return stateWithTerminalEvent.terminalEvent;
 	}
-	if (input.mode === "replay") {
+	if (input.mode === "replay" && input.boardState.status === "ended") {
 		return synthesizeReplayTerminalEvent(input.selectedMatch);
 	}
 	return null;

@@ -100,6 +100,7 @@ export type MatchStateResponse = {
 			players?: Record<string, { id?: string }>;
 		};
 	} | null;
+	turnExpiresAtMs?: number;
 };
 
 export type QueueWaitEvent = MatchFoundEvent | NoEventsEvent;
