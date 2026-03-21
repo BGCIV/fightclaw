@@ -9,6 +9,7 @@ import {
 	runMatch,
 } from "@fightclaw/agent-client";
 import { listLegalMoves, type Move } from "@fightclaw/engine";
+import { selectPreferredLegalFallbackMove } from "./legalFallback";
 import {
 	publishAgentStrategy,
 	resolveStrategySelection,
@@ -249,11 +250,18 @@ const selectLegalFallbackMove = (
 ): Move | null => {
 	const game = state.state?.game;
 	if (!game || typeof game !== "object") return null;
-	const legalMoves = listLegalMoves(
-		game as Parameters<typeof listLegalMoves>[0],
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]),
 	);
-	return legalMoves[0] ?? null;
 };
+
+const createTimeoutFallbackResolver =
+	(client: ArenaClient) =>
+	async ({ matchId }: MoveProviderContext): Promise<Move | null> => {
+		const state = await client.getMatchState(matchId).catch(() => null);
+		if (!state) return null;
+		return selectLegalFallbackMove(state);
+	};
 
 const extractGatewayGameState = (
 	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
@@ -798,6 +806,7 @@ export const runTesterBetaJourney = async (input: {
 			},
 		),
 		moveProviderTimeoutMs: input.moveTimeoutMs,
+		resolveTimeoutFallbackMove: createTimeoutFallbackResolver(runnerClient),
 		session,
 	});
 
@@ -892,6 +901,7 @@ export const runHouseOpponent = async (input: {
 			resolved.gatewayCmd,
 		),
 		moveProviderTimeoutMs: resolved.moveTimeoutMs,
+		resolveTimeoutFallbackMove: createTimeoutFallbackResolver(runnerClient),
 		session,
 	});
 

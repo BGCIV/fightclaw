@@ -8,7 +8,7 @@ import {
 	type RunMatchResult,
 	runMatch,
 } from "@fightclaw/agent-client";
-import type { Move } from "@fightclaw/engine";
+import { listLegalMoves, type Move } from "@fightclaw/engine";
 import {
 	bindRunnerAgent,
 	InternalRunnerClient,
@@ -17,6 +17,7 @@ import {
 	runHouseOpponent,
 	runTesterBetaJourney,
 } from "./beta";
+import { selectPreferredLegalFallbackMove } from "./legalFallback";
 import { MatchContextStore } from "./match-context";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
@@ -283,6 +284,24 @@ const fallbackMove: Move = {
 	reasoning: "Public-safe fallback: pass turn.",
 };
 
+const selectCliFallbackMove = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+): Move | null => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]),
+	);
+};
+
+const createCliTimeoutFallbackResolver =
+	(client: ArenaClient) =>
+	async ({ matchId }: MoveProviderContext): Promise<Move | null> => {
+		const state = await client.getMatchState(matchId).catch(() => null);
+		if (!state) return null;
+		return selectCliFallbackMove(state);
+	};
+
 const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
@@ -343,8 +362,22 @@ const createMoveProvider = (
 					};
 				}
 			} catch {
+				const legalFallback = selectCliFallbackMove(state);
+				if (legalFallback) {
+					return {
+						...legalFallback,
+						reasoning: "Public-safe fallback: selected a clearly legal move.",
+					};
+				}
 				return fallbackMove;
 			}
+		}
+		const legalFallback = selectCliFallbackMove(state);
+		if (legalFallback) {
+			return {
+				...legalFallback,
+				reasoning: "Public-safe fallback: selected a clearly legal move.",
+			};
 		}
 		return fallbackMove;
 	},
@@ -484,11 +517,15 @@ const runDuel = async (args: ArgMap) => {
 			runMatch(runnerClientA, {
 				moveProvider: moveProviderA,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				resolveTimeoutFallbackMove:
+					createCliTimeoutFallbackResolver(runnerClientA),
 				session: sessionA,
 			}),
 			runMatch(runnerClientB, {
 				moveProvider: moveProviderB,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				resolveTimeoutFallbackMove:
+					createCliTimeoutFallbackResolver(runnerClientB),
 				session: sessionB,
 			}),
 		]);
