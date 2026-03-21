@@ -6,6 +6,7 @@ import { ArenaHttpError } from "./errors";
 import type {
 	MatchEventHandler,
 	MatchStateResponse,
+	MoveProviderContext,
 	MoveSubmitResponse,
 	QueueWaitEvent,
 	QueueWaitResponse,
@@ -412,10 +413,13 @@ export const runMatch = async (
 	const opponentId = started.opponentId;
 
 	const resolveMove = async (stateVersion: number): Promise<Move> => {
-		const moveContext = {
+		const moveContext: MoveProviderContext = {
 			agentId,
 			matchId,
 			stateVersion,
+			...(cachedGameVersion === stateVersion && cachedGame !== undefined
+				? { lastKnownGame: cachedGame, lastKnownGameVersion: cachedGameVersion }
+				: {}),
 		};
 		if (
 			typeof moveProviderTimeoutMs !== "number" ||
@@ -486,6 +490,9 @@ export const runMatch = async (
 			if (timeout) clearTimeout(timeout);
 		}
 	};
+
+	let cachedGame: unknown;
+	let cachedGameVersion = -1;
 
 	let lastObservedVersion = -1;
 	const handledTurns = new Set<number>();
@@ -618,6 +625,15 @@ export const runMatch = async (
 				if (event.event === "error") {
 					fail(new Error(`Match stream error: ${event.payload.error}`));
 					return;
+				}
+
+				if (event.event === "state" && event.payload) {
+					const payload = event.payload as { state?: unknown };
+					if (payload.state !== undefined) {
+						cachedGame = payload.state;
+						cachedGameVersion =
+							typeof event.stateVersion === "number" ? event.stateVersion : -1;
+					}
 				}
 
 				if (event.event === "your_turn") {
