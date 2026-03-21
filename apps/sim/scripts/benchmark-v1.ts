@@ -133,8 +133,6 @@ function createMassCommandBaseArgs(options: MassCommandBaseOptions): string[] {
 		String(options.parallel),
 		"--output",
 		options.output,
-		"--harness",
-		"boardgameio",
 		"--boardColumns",
 		"17",
 		"--turnLimit",

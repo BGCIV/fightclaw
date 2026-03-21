@@ -16,7 +16,6 @@ describe("boardgameio explainability artifact fields", () => {
 				makeRandomLegalBot("P2"),
 			],
 			maxTurns: 12,
-			harness: "boardgameio",
 			strict: true,
 			invalidPolicy: "skip",
 			artifactDir,

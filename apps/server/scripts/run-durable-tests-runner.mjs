@@ -35,7 +35,7 @@ const killChildProcess = (child, signal) => {
 };
 
 export const spawnVitestRun = (run, options = {}) => {
-	const child = spawn(process.execPath, run.args, {
+	const child = spawn(run.command ?? process.execPath, run.args, {
 		stdio: options.stdio ?? "inherit",
 		env: {
 			...process.env,

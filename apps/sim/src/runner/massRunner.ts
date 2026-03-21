@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -14,7 +13,6 @@ import type { Bot, EngineConfigInput, MatchResult } from "../types";
 import type { BotConfig } from "./forkWorker";
 
 interface HarnessRunOptions {
-	harness?: HarnessMode;
 	scenario?: ScenarioName;
 	invalidPolicy?: InvalidPolicy;
 	moveValidationMode?: MoveValidationMode;
@@ -401,10 +399,8 @@ export async function runMassSimulation(
 			maxTurns: options.maxTurns,
 			verbose: false,
 			record: false,
-			autofixIllegal: true,
 			engineConfig,
 			scenario: harnessOptions?.scenario,
-			harness: harnessOptions?.harness,
 			invalidPolicy: harnessOptions?.invalidPolicy,
 			moveValidationMode: harnessOptions?.moveValidationMode,
 			strict: harnessOptions?.strict,

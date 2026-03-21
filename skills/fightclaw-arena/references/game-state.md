@@ -26,9 +26,9 @@ type MatchStateEnvelope = {
 };
 ```
 
-### Stream/WS `state` payload
+### Stream `state` payload (current SSE runtime)
 
-- WS `state.stateSnapshot` and SSE `state.state` contain `GameState` (not the outer wrapper).
+- SSE `state.state` contains `GameState` (not the outer wrapper).
 
 ```ts
 type GameState = {
@@ -144,7 +144,7 @@ Turn-limit:
   3) higher controlled hex count
   4) draw
 
-## 6) Historical Transport Event Formats
+## 6) Historical Transport Event Formats (Do Not Treat As Current)
 
 WS `your_turn`:
 

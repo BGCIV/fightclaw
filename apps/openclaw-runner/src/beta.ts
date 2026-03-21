@@ -10,6 +10,12 @@ import {
 } from "@fightclaw/agent-client";
 import { listLegalMoves, type Move } from "@fightclaw/engine";
 import {
+	buildMoveProviderTurnKey,
+	movesMatchByIdentity,
+	resolveEarlyEndTurnOverride,
+} from "./finishPressure";
+import { selectPreferredLegalFallbackMove } from "./legalFallback";
+import {
 	publishAgentStrategy,
 	resolveStrategySelection,
 	type StrategySelection,
@@ -249,11 +255,30 @@ const selectLegalFallbackMove = (
 ): Move | null => {
 	const game = state.state?.game;
 	if (!game || typeof game !== "object") return null;
-	const legalMoves = listLegalMoves(
-		game as Parameters<typeof listLegalMoves>[0],
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]),
 	);
-	return legalMoves[0] ?? null;
 };
+
+const selectLegalTerminalFallbackMove = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+): Move | null => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]).filter(
+			(move) => move.action === "end_turn" || move.action === "pass",
+		),
+	);
+};
+
+const createTimeoutFallbackResolver =
+	(client: ArenaClient) =>
+	async ({ matchId }: MoveProviderContext): Promise<Move | null> => {
+		const state = await client.getMatchState(matchId).catch(() => null);
+		if (!state) return null;
+		return selectLegalTerminalFallbackMove(state);
+	};
 
 const extractGatewayGameState = (
 	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
@@ -269,56 +294,10 @@ const extractGatewayGameState = (
 	};
 };
 
-const buildBetaTurnKey = (
-	matchId: string,
-	game: { turn?: number; activePlayer?: string } | null,
-) => {
-	if (!game) return `${matchId}:unknown`;
-	return `${matchId}:${String(game.turn ?? "unknown")}:${String(game.activePlayer ?? "unknown")}`;
-};
-
 const buildEndTurnMove = (reasoning: string): Move => ({
 	action: "end_turn",
 	reasoning,
 });
-
-const selectFinishFollowUpMove = (legalMoves: Move[]): Move | null => {
-	const priorities: Move["action"][] = [
-		"attack",
-		"recruit",
-		"fortify",
-		"upgrade",
-		"move",
-	];
-	for (const action of priorities) {
-		const match = legalMoves.find((move) => move.action === action);
-		if (match) {
-			return match;
-		}
-	}
-	return (
-		legalMoves.find(
-			(move) => move.action !== "end_turn" && move.action !== "pass",
-		) ?? null
-	);
-};
-
-const movesMatchByIdentity = (candidate: Move, chosenMove: Move): boolean => {
-	if (candidate.action !== chosenMove.action) return false;
-	const fields: Array<"unitId" | "unitType" | "to" | "target" | "at"> = [
-		"unitId",
-		"unitType",
-		"to",
-		"target",
-		"at",
-	];
-	for (const field of fields) {
-		const candidateValue = (candidate as Record<string, unknown>)[field];
-		const chosenValue = (chosenMove as Record<string, unknown>)[field];
-		if (candidateValue !== chosenValue) return false;
-	}
-	return true;
-};
 
 export const createBetaMoveProvider = (
 	client: ArenaClient,
@@ -353,7 +332,7 @@ export const createBetaMoveProvider = (
 		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
 			const state = await client.getMatchState(matchId);
 			const game = extractGatewayGameState(state);
-			const nextTurnKey = buildBetaTurnKey(matchId, game);
+			const nextTurnKey = buildMoveProviderTurnKey(matchId, game);
 			if (turnKey !== nextTurnKey) {
 				resetTurnState(nextTurnKey);
 			}
@@ -392,12 +371,13 @@ export const createBetaMoveProvider = (
 						);
 
 						if (isLegal) {
-							const forcedFollowUp =
-								chosenMove.action === "end_turn" &&
-								(actionsTakenThisTurn < minActionsBeforeEndTurn ||
-									(finishOverlay && actionsTakenThisTurn === 0))
-									? selectFinishFollowUpMove(legalMoves)
-									: null;
+							const forcedFollowUp = resolveEarlyEndTurnOverride({
+								chosenMove,
+								legalMoves,
+								actionsTakenThisTurn,
+								minActionsBeforeEndTurn,
+								requireOpeningPressure: finishOverlay,
+							});
 							if (forcedFollowUp) {
 								const annotatedFollowUp: Move = {
 									...forcedFollowUp,
@@ -798,6 +778,7 @@ export const runTesterBetaJourney = async (input: {
 			},
 		),
 		moveProviderTimeoutMs: input.moveTimeoutMs,
+		resolveTimeoutFallbackMove: createTimeoutFallbackResolver(runnerClient),
 		session,
 	});
 
@@ -892,6 +873,7 @@ export const runHouseOpponent = async (input: {
 			resolved.gatewayCmd,
 		),
 		moveProviderTimeoutMs: resolved.moveTimeoutMs,
+		resolveTimeoutFallbackMove: createTimeoutFallbackResolver(runnerClient),
 		session,
 	});
 

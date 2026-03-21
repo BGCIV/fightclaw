@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as DevRouteImport } from './routes/dev'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AgentsAgentIdRouteImport } from './routes/agents.$agentId'
 
 const LeaderboardRoute = LeaderboardRouteImport.update({
   id: '/leaderboard',
@@ -28,35 +29,44 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
+  id: '/agents/$agentId',
+  path: '/agents/$agentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dev': typeof DevRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/agents/$agentId': typeof AgentsAgentIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dev': typeof DevRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/agents/$agentId': typeof AgentsAgentIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dev': typeof DevRoute
   '/leaderboard': typeof LeaderboardRoute
+  '/agents/$agentId': typeof AgentsAgentIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dev' | '/leaderboard'
+  fullPaths: '/' | '/dev' | '/leaderboard' | '/agents/$agentId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dev' | '/leaderboard'
-  id: '__root__' | '/' | '/dev' | '/leaderboard'
+  to: '/' | '/dev' | '/leaderboard' | '/agents/$agentId'
+  id: '__root__' | '/' | '/dev' | '/leaderboard' | '/agents/$agentId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DevRoute: typeof DevRoute
   LeaderboardRoute: typeof LeaderboardRoute
+  AgentsAgentIdRoute: typeof AgentsAgentIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agents/$agentId': {
+      id: '/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/agents/$agentId'
+      preLoaderRoute: typeof AgentsAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DevRoute: DevRoute,
   LeaderboardRoute: LeaderboardRoute,
+  AgentsAgentIdRoute: AgentsAgentIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

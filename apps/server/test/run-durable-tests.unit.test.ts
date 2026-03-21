@@ -14,6 +14,7 @@ describe("buildVitestRuns", () => {
 	it("discovers durable files by default and isolates each file run", () => {
 		expect(buildVitestRuns([])).toEqual(
 			EXPECTED_DURABLE_FILES.map((file) => ({
+				command: process.execPath,
 				args: [
 					"./node_modules/vitest/vitest.mjs",
 					"-c",
@@ -31,6 +32,7 @@ describe("buildVitestRuns", () => {
 		expect(buildVitestRuns(["--", "test/durable/log.durable.test.ts"])).toEqual(
 			[
 				{
+					command: process.execPath,
 					args: [
 						"./node_modules/vitest/vitest.mjs",
 						"-c",
@@ -55,6 +57,7 @@ describe("buildVitestRuns", () => {
 			]),
 		).toEqual([
 			{
+				command: process.execPath,
 				args: [
 					"./node_modules/vitest/vitest.mjs",
 					"-c",
@@ -67,6 +70,7 @@ describe("buildVitestRuns", () => {
 				},
 			},
 			{
+				command: process.execPath,
 				args: [
 					"./node_modules/vitest/vitest.mjs",
 					"-c",

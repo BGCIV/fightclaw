@@ -1,3 +1,4 @@
+import { createInitialState, listLegalMoves } from "@fightclaw/engine";
 import { describe, expect, it, vi } from "vitest";
 import { ArenaHttpError } from "../../../packages/agent-client/src/errors";
 import {
@@ -807,7 +808,13 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		expect(stopStream).toHaveBeenCalledTimes(1);
 	});
 
-	it("falls back to pass when move provider exceeds timeout", async () => {
+	it("uses a non-terminal legal fallback when move provider exceeds timeout", async () => {
+		const game = createInitialState(1, undefined, ["agent-a", "agent-b"]);
+		const expectedFallback =
+			listLegalMoves(game).find(
+				(move) => move.action !== "end_turn" && move.action !== "pass",
+			) ?? listLegalMoves(game)[0];
+		const outcomeEvents: Array<Record<string, unknown>> = [];
 		const stopStream = vi.fn();
 		const subscribeMatchStream = vi.fn(
 			async (
@@ -830,8 +837,17 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		);
 
 		const submitMove = vi.fn(
-			async (_matchId: string, payload: { move: { action: string } }) => {
-				expect(payload.move.action).toBe("pass");
+			async (
+				_matchId: string,
+				payload: { move: { action: string; unitId?: string; to?: string } },
+			) => {
+				expect(payload.move.action).toBe(expectedFallback?.action);
+				if (expectedFallback && "unitId" in expectedFallback) {
+					expect(payload.move.unitId).toBe(expectedFallback.unitId);
+				}
+				if (expectedFallback && "to" in expectedFallback) {
+					expect(payload.move.to).toBe(expectedFallback.to);
+				}
 				return {
 					ok: true as const,
 					state: {
@@ -852,6 +868,13 @@ describe("agent-client runMatch canonical SSE flow", () => {
 				opponentId: "agent-b",
 			})),
 			waitForMatch: vi.fn(),
+			getMatchState: vi.fn(async () => ({
+				state: {
+					stateVersion: 0,
+					status: "active" as const,
+					game,
+				},
+			})),
 			submitMove,
 			subscribeMatchStream,
 		};
@@ -868,11 +891,192 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		await runMatch(client as never, {
 			moveProvider: slowMoveProvider,
 			moveProviderTimeoutMs: 5,
+			resolveTimeoutFallbackMove: async () => expectedFallback ?? null,
+			onMoveResolution: (event) =>
+				outcomeEvents.push(event as unknown as Record<string, unknown>),
 		});
 
+		expect(outcomeEvents).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					outcome: "provider_timeout",
+					fallbackUsed: true,
+					fallbackKind: "non_terminal",
+				}),
+			]),
+		);
+		expect(outcomeEvents).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					outcome: "provider_success",
+				}),
+			]),
+		);
 		expect(submitMove).toHaveBeenCalledTimes(1);
 		expect(slowMoveProvider.nextMove).toHaveBeenCalledTimes(1);
 		expect(stopStream).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not resolve timeout fallback unless the provider actually times out", async () => {
+		const stopStream = vi.fn();
+		const submitMove = vi.fn(async () => ({
+			ok: true as const,
+			state: {
+				stateVersion: 1,
+				status: "ended" as const,
+				winnerAgentId: "agent-a",
+				endReason: "terminal",
+			},
+		}));
+		const subscribeMatchStream = vi.fn(
+			async (
+				matchId: string,
+				handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+			) => {
+				queueMicrotask(() => {
+					void handler({
+						eventVersion: 2,
+						eventId: 1,
+						ts: "2026-03-18T12:00:00.000Z",
+						matchId,
+						stateVersion: 0,
+						event: "your_turn",
+						payload: {},
+					});
+				});
+				return stopStream;
+			},
+		);
+		const resolveTimeoutFallbackMove = vi.fn(async () => ({ action: "pass" }));
+
+		const client = {
+			me: vi.fn(async () => ({ agentId: "agent-a" })),
+			queueJoin: vi.fn(async () => ({
+				status: "ready" as const,
+				matchId: "match-1",
+				opponentId: "agent-b",
+			})),
+			waitForMatch: vi.fn(),
+			getMatchState: vi.fn(async () => ({
+				state: {
+					stateVersion: 0,
+					status: "active" as const,
+				},
+			})),
+			submitMove,
+			subscribeMatchStream,
+		};
+
+		const session = createRunnerSession(client as never);
+		await session.start();
+
+		await runMatch(client as never, {
+			moveProvider: {
+				nextMove: vi.fn(async () => ({ action: "end_turn" })),
+			},
+			moveProviderTimeoutMs: 50,
+			resolveTimeoutFallbackMove,
+			session,
+		});
+
+		expect(resolveTimeoutFallbackMove).not.toHaveBeenCalled();
+		expect(submitMove).toHaveBeenCalledTimes(1);
+		expect(stopStream).toHaveBeenCalledTimes(1);
+	});
+
+	it("falls back quickly when the timeout fallback resolver also hangs", async () => {
+		vi.useFakeTimers();
+		try {
+			const stopStream = vi.fn();
+			const outcomeEvents: Array<Record<string, unknown>> = [];
+			const subscribeMatchStream = vi.fn(
+				async (
+					matchId: string,
+					handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+				) => {
+					queueMicrotask(() => {
+						void handler({
+							eventVersion: 2,
+							eventId: 1,
+							ts: "2026-03-18T12:00:00.000Z",
+							matchId,
+							stateVersion: 0,
+							event: "your_turn",
+							payload: {},
+						});
+					});
+					return stopStream;
+				},
+			);
+			const submitMove = vi.fn(async (_matchId, body) => ({
+				ok: true as const,
+				state: {
+					stateVersion: 1,
+					status: "ended" as const,
+					winnerAgentId: body.move.action === "pass" ? "agent-a" : "agent-b",
+					endReason: "terminal",
+				},
+			}));
+			const client = {
+				me: vi.fn(async () => ({ agentId: "agent-a" })),
+				queueJoin: vi.fn(async () => ({
+					status: "ready" as const,
+					matchId: "match-1",
+					opponentId: "agent-b",
+				})),
+				waitForMatch: vi.fn(),
+				getMatchState: vi.fn(async () => ({
+					state: {
+						stateVersion: 0,
+						status: "active" as const,
+					},
+				})),
+				submitMove,
+				subscribeMatchStream,
+			};
+
+			const resultPromise = runMatch(client as never, {
+				moveProvider: {
+					nextMove: vi.fn(
+						() =>
+							new Promise((resolve) => {
+								setTimeout(() => resolve({ action: "end_turn" }), 50);
+							}),
+					),
+				},
+				moveProviderTimeoutMs: 5,
+				resolveTimeoutFallbackMove: async () =>
+					new Promise<never>(() => {
+						// Never resolves.
+					}),
+				onMoveResolution: (event) =>
+					outcomeEvents.push(event as unknown as Record<string, unknown>),
+			});
+
+			const outcome = await Promise.race([
+				resultPromise.then((result) => ({ kind: "result" as const, result })),
+				vi.advanceTimersByTimeAsync(1000).then(() => ({
+					kind: "timeout" as const,
+				})),
+			]);
+
+			expect(outcome.kind).toBe("result");
+			if (outcome.kind !== "result") return;
+			expect(outcome.result.winnerAgentId).toBe("agent-a");
+			expect(submitMove).toHaveBeenCalledTimes(1);
+			expect(outcomeEvents).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						outcome: "provider_timeout",
+						fallbackUsed: true,
+						fallbackResolverTimedOut: true,
+						moveAction: "pass",
+					}),
+				]),
+			);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("falls back to authoritative terminal state after repeated reconnects at the same cursor", async () => {

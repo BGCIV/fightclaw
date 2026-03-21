@@ -215,8 +215,6 @@ function buildMassSharedArgs(params: {
 		"true",
 		"--storeFullOutput",
 		"true",
-		"--harness",
-		"boardgameio",
 		"--boardColumns",
 		String(BOARD_COLUMNS),
 		"--turnLimit",

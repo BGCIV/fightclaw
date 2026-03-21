@@ -1,5 +1,4 @@
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -12,10 +11,8 @@ export async function runTournament(opts: {
 	seed: number;
 	maxTurns: number;
 	players: [Bot, Bot];
-	autofixIllegal?: boolean;
 	engineConfig?: EngineConfigInput;
 	scenario?: ScenarioName;
-	harness?: HarnessMode;
 	invalidPolicy?: InvalidPolicy;
 	moveValidationMode?: MoveValidationMode;
 	strict?: boolean;
@@ -31,10 +28,8 @@ export async function runTournament(opts: {
 			players: opts.players,
 			maxTurns: opts.maxTurns,
 			verbose: false,
-			autofixIllegal: opts.autofixIllegal,
 			engineConfig: opts.engineConfig,
 			scenario: opts.scenario,
-			harness: opts.harness,
 			invalidPolicy: opts.invalidPolicy,
 			moveValidationMode: opts.moveValidationMode,
 			strict: opts.strict,

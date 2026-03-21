@@ -124,4 +124,39 @@ describe("spectator desk projections", () => {
 		});
 		expect(projection.topBarRightLabel).toBe("A wins");
 	});
+
+	test("treats finished featured snapshots as ended desks", () => {
+		const state = createInitialState(7, undefined, ["Alpha", "Bravo"]);
+		const terminalEvent: MatchEndedEvent = {
+			eventVersion: 2,
+			eventId: 44,
+			ts: "2026-03-19T12:02:00.000Z",
+			matchId: "match-3",
+			stateVersion: 22,
+			event: "match_ended",
+			payload: {
+				winnerAgentId: "Alpha",
+				loserAgentId: "Bravo",
+				reasonCode: "elimination",
+			},
+		};
+
+		const projection = buildSpectatorDeskProjection({
+			connectionStatus: "replay",
+			featured: {
+				matchId: "match-3",
+				status: "finished",
+				players: ["Alpha", "Bravo"],
+			},
+			state,
+			thoughtsA: [],
+			thoughtsB: [],
+			tickerItems: [],
+			terminalEvent,
+			publicIdentityById: buildPublicAgentIdentityMap([]),
+		});
+
+		expect(projection.featuredDesk.status).toBe("ended");
+		expect(projection.featuredDesk.label).toBe("Featured final");
+	});
 });

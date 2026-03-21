@@ -4,7 +4,7 @@ import { z } from "zod";
 
 export type AgentId = string;
 export type PlayerSide = "A" | "B";
-export type HexId = string; // "A1".."I17" or "A1".."I21"
+export type HexId = string; // current runtime default: "A1".."I17"
 export type HexType =
 	| "plains"
 	| "forest"
@@ -918,7 +918,7 @@ function strongholdHexesForState(state: MatchState, side: PlayerSide): HexId[] {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical board layout (21x9 = 189 hexes)
+// Canonical terrain source layout (21x9 = 189 hexes) used to derive the current 17x9 runtime board
 // ---------------------------------------------------------------------------
 
 type TerrainToken =

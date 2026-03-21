@@ -25,6 +25,7 @@ type SpectatorArenaProps = {
 		B: BroadcastAgentCard;
 	};
 	tickerItems: BroadcastTickerItem[];
+	tickerVisibleLimit?: number;
 	resultSummary: BroadcastResultSummary | null;
 } & Pick<
 	HexBoardProps,
@@ -101,6 +102,7 @@ export function SpectatorArena({
 	featuredDesk,
 	agentCards,
 	tickerItems,
+	tickerVisibleLimit,
 	resultSummary,
 	effects,
 	unitAnimStates,
@@ -109,7 +111,7 @@ export function SpectatorArena({
 	lungeTargets,
 }: SpectatorArenaProps) {
 	return (
-		<div className="spectator-landing">
+		<div className="spectator-landing spectator-layout-contained">
 			<div className="spectator-top-bar">
 				<span className="status-badge">{statusBadge}</span>
 				<div className="top-bar-center">
@@ -147,24 +149,31 @@ export function SpectatorArena({
 				<div className="spectator-broadcast-grid">
 					<AgentBroadcastCard card={agentCards.A} />
 					<div className="spectator-stage">
-						<div className="spectator-stage-board">
-							{state ? (
-								<HexBoard
-									state={state}
-									effects={effects}
-									unitAnimStates={unitAnimStates}
-									dyingUnitIds={dyingUnitIds}
-									damageNumbers={damageNumbers}
-									lungeTargets={lungeTargets}
-									activePlayer={state.activePlayer}
-								/>
-							) : (
-								<div className="spectator-board-empty">
-									<div className="muted">{emptyStateLabel}</div>
-								</div>
-							)}
+						<div className="spectator-stage-body">
+							<div className="spectator-stage-board">
+								{state ? (
+									<HexBoard
+										state={state}
+										effects={effects}
+										unitAnimStates={unitAnimStates}
+										dyingUnitIds={dyingUnitIds}
+										damageNumbers={damageNumbers}
+										lungeTargets={lungeTargets}
+										activePlayer={state.activePlayer}
+									/>
+								) : (
+									<div className="spectator-board-empty">
+										<div className="muted">{emptyStateLabel}</div>
+									</div>
+								)}
+							</div>
 						</div>
-						<ActionTicker items={tickerItems} />
+						<div className="spectator-stage-ticker">
+							<ActionTicker
+								items={tickerItems}
+								visibleItemLimit={tickerVisibleLimit}
+							/>
+						</div>
 					</div>
 					<AgentBroadcastCard card={agentCards.B} />
 				</div>

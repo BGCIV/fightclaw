@@ -1,8 +1,17 @@
-# War of Attrition (Arena 21x9) - Canonical Engine Spec v1
+# War of Attrition - Current Runtime Rules Reference
 
-Last updated: 2026-02-05
+Last updated: 2026-03-20
 
-This document is the single source of truth for the War of Attrition ruleset. Engine, server, and bots must implement *exactly* what is specified here. If any earlier design doc disagrees, this spec wins.
+Code is the source of truth for current behavior. This document is the maintained project-doc companion to the current War of Attrition runtime and should be kept aligned with the repo's actual engine/server state.
+
+Implementation companions:
+- `packages/engine/src/index.ts` is the current engine implementation for this ruleset.
+- `CONTRACTS.md` is the current source of truth for API/event/runtime contracts layered on top of these rules.
+
+Current runtime board note:
+- The engine currently defaults to a **17 x 9** board (`boardColumns: 17` in `DEFAULT_CONFIG`).
+- That 17-column runtime board is derived from the engine's older **21-column canonical terrain source** using `BOARD_17_CANONICAL_COL_MAP`.
+- Unless stated otherwise, treat current runtime play as `A1..I17`.
 
 Related (non-canonical) docs:
 - `project docs/game design/war-of-attrition-arena.md` (arena layout + inspiration)
@@ -22,21 +31,22 @@ Related (non-canonical) docs:
 
 ### 2.1 Board size
 
-- Rectangular hex grid: **21 columns x 9 rows** = **189 hexes**.
-- Hex IDs are `A1..I21`:
+- Current runtime board: **17 columns x 9 rows** = **153 hexes**.
+- Current runtime Hex IDs are `A1..I17`:
   - Rows: `A..I` (top to bottom)
-  - Columns: `1..21` (left to right)
+  - Columns: `1..17` (left to right)
+- The engine still stores a 21-column canonical terrain source and maps it down to the current 17-column runtime shape.
 
 ### 2.2 HexId format
 
 `HexId := "<Row><Col>"`
 
 Examples:
-- `"A1"`, `"E11"`, `"I21"`
+- `"A1"`, `"E11"`, `"I17"`
 
 Parsing:
 - `rowIndex = RowChar - 'A'` (0..8)
-- `colIndex = Col - 1` (0..20)
+- `colIndex = Col - 1` (0..16) for the current runtime board
 
 ### 2.3 Adjacency (odd-r offset, pointy-top)
 
@@ -76,7 +86,7 @@ This spec uses explicit hex types so setup/victory can be derived from board dat
 - `lumber_camp`
 - `crown`
 - `stronghold_a` (Player A strongholds: `B2`, `H2`)
-- `stronghold_b` (Player B strongholds: `B20`, `H20`)
+- `stronghold_b` (Player B strongholds: runtime `B17`, `H17`; canonical-source `B20`, `H20`)
 - `deploy_a`
 - `deploy_b`
 
@@ -131,6 +141,8 @@ Token mapping from the block to this spec's hex types:
 - `STRONGHOLD_B` -> `stronghold_b`
 - `DEPLOY_A` -> `deploy_a`
 - `DEPLOY_B` -> `deploy_b`
+
+The terrain matrix below is shown in the older 21-column canonical-source coordinate space. Before runtime use, map canonical columns through `BOARD_17_CANONICAL_COL_MAP` to the current 17-column board.
 
 ```
 ROW A:
@@ -271,8 +283,8 @@ Player A:
 - `A-6` archer at `C2`
 
 Player B:
-- `B-1` infantry at `B20`
-- `B-2` infantry at `H20`
+- `B-1` infantry at runtime `B17` (canonical-source `B20`)
+- `B-2` infantry at runtime `H17` (canonical-source `H20`)
 - `B-3` infantry at `G20`
 - `B-4` cavalry at `B19`
 - `B-5` cavalry at `H19`
@@ -354,7 +366,7 @@ All actions are deterministic and validated strictly.
 ### 9.1 MoveSchema (wire)
 
 ```ts
-type HexId = string; // "A1".."I21"
+type HexId = string; // runtime "A1".."I17"; canonical-source docs may still show mapped 21-column coordinates
 
 type Move =
 	| { action: "move"; unitId: string; to: HexId; reasoning?: string }
@@ -465,7 +477,7 @@ Ranged attacks never move the attacker.
 ### 10.1 Stronghold capture (instant)
 
 After end-of-player-turn control update:
-- Player A wins if both `B20` and `H20` are controlled by A.
+- Player A wins if both runtime B strongholds (`B17` and `H17`) are controlled by A.
 - Player B wins if both `B2` and `H2` are controlled by B.
 
 ### 10.2 Elimination (instant)

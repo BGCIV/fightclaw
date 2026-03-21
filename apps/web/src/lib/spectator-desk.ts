@@ -31,6 +31,7 @@ export type BroadcastTickerItem = {
 
 export type BroadcastAgentCard = {
 	side: PlayerSide;
+	agentId: string | null;
 	name: string;
 	publicPersona: string | null;
 	styleTag: string;
@@ -72,7 +73,7 @@ export type BroadcastDeskInput = {
 		| FeaturedSnapshot
 		| {
 				matchId: string | null;
-				status: "replay";
+				status: "replay" | "finished";
 				players: string[] | null;
 		  }
 		| null;
@@ -191,6 +192,15 @@ function buildFeaturedDesk(
 		};
 	}
 
+	if (featured.status === "finished") {
+		return {
+			matchId: featured.matchId,
+			label: "Featured final",
+			status: "ended",
+			playersLabel: formatPlayers(featured.players),
+		};
+	}
+
 	return {
 		matchId: featured.matchId,
 		label: hasTerminalResult
@@ -225,6 +235,7 @@ function buildAgentCard(
 
 	return {
 		side,
+		agentId: player?.id ?? null,
 		name: identity.name,
 		publicPersona: identity.publicPersona,
 		styleTag: identity.styleTag,

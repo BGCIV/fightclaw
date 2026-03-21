@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import {
 	ArenaClient,
 	createRunnerSession,
@@ -8,7 +9,7 @@ import {
 	type RunMatchResult,
 	runMatch,
 } from "@fightclaw/agent-client";
-import type { Move } from "@fightclaw/engine";
+import { listLegalMoves, type Move } from "@fightclaw/engine";
 import {
 	bindRunnerAgent,
 	InternalRunnerClient,
@@ -17,6 +18,12 @@ import {
 	runHouseOpponent,
 	runTesterBetaJourney,
 } from "./beta";
+import {
+	buildMoveProviderTurnKey,
+	movesMatchByIdentity,
+	resolveEarlyEndTurnOverride,
+} from "./finishPressure";
+import { selectPreferredLegalFallbackMove } from "./legalFallback";
 import { MatchContextStore } from "./match-context";
 import { publishAgentStrategy, resolveStrategySelection } from "./presets";
 
@@ -282,73 +289,181 @@ const fallbackMove: Move = {
 	action: "pass",
 	reasoning: "Public-safe fallback: pass turn.",
 };
+const CLI_FINISH_ATTACK_REASONING =
+	"Public-safe summary: continuing pressure with a legal attack before ending the turn.";
+const CLI_FINISH_FOLLOW_UP_REASONING =
+	"Public-safe summary: taking a legal follow-up before ending the turn.";
 
-const createMoveProvider = (
+const selectCliFallbackMove = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+): Move | null => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]),
+	);
+};
+
+const createCliTimeoutFallbackResolver =
+	(client: ArenaClient) =>
+	async ({ matchId }: MoveProviderContext): Promise<Move | null> => {
+		const state = await client.getMatchState(matchId).catch(() => null);
+		if (!state) return null;
+		return selectCliFallbackMove(state);
+	};
+
+export const createMoveProvider = (
 	client: ArenaClient,
 	agentId: string,
 	agentName: string,
 	strategyPrompt: string,
 	matchContextStore: MatchContextStore,
 	gatewayCmd?: string,
-	options?: { singleActionTurns?: boolean; gatewayTimeoutMs?: number },
-): MoveProvider => ({
-	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
-		const state = await client.getMatchState(matchId);
-		const game = (state.state?.game ?? null) as {
-			actionsRemaining?: number;
-		} | null;
-		if (
-			options?.singleActionTurns &&
-			typeof game?.actionsRemaining === "number" &&
-			game.actionsRemaining <= 5
-		) {
-			return {
-				action: "end_turn",
-				reasoning: "Ending turn after one action for stable realtime cadence.",
-			};
-		}
-		if (gatewayCmd) {
-			let turnContext: unknown;
-			try {
-				turnContext = await matchContextStore.buildTurnContext({
-					matchId,
-					agentId,
-					state,
-				});
-			} catch {
-				turnContext = undefined;
-			}
-			try {
-				const gateway = await invokeGateway(
-					gatewayCmd,
-					{
-						agentId,
-						agentName,
-						matchId,
-						stateVersion,
-						state,
-						strategyPrompt,
-						...(turnContext === undefined ? {} : { turnContext }),
-					},
-					options?.gatewayTimeoutMs ?? 4000,
-				);
-				if (gateway?.move) {
-					const thought =
-						typeof gateway.publicThought === "string"
-							? gateway.publicThought
-							: "Public-safe summary unavailable.";
-					return {
-						...gateway.move,
-						reasoning: thought,
-					};
-				}
-			} catch {
-				return fallbackMove;
-			}
-		}
-		return fallbackMove;
+	options?: {
+		singleActionTurns?: boolean;
+		gatewayTimeoutMs?: number;
+		invokeGatewayImpl?: typeof invokeGateway;
 	},
-});
+): MoveProvider => {
+	let turnKey: string | null = null;
+	let actionsTakenThisTurn = 0;
+	const invokeGatewayImpl = options?.invokeGatewayImpl ?? invokeGateway;
+	const resetTurnState = (nextTurnKey: string) => {
+		turnKey = nextTurnKey;
+		actionsTakenThisTurn = 0;
+	};
+	return {
+		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
+			const state = await client.getMatchState(matchId);
+			const game = (state.state?.game ?? null) as {
+				actionsRemaining?: number;
+				turn?: number;
+				activePlayer?: string;
+			} | null;
+			const nextTurnKey = buildMoveProviderTurnKey(matchId, game);
+			if (turnKey !== nextTurnKey) {
+				resetTurnState(nextTurnKey);
+			}
+			const legalMoves =
+				game && typeof game === "object"
+					? listLegalMoves(game as Parameters<typeof listLegalMoves>[0])
+					: [];
+			if (
+				options?.singleActionTurns &&
+				typeof game?.actionsRemaining === "number" &&
+				game.actionsRemaining <= 5
+			) {
+				return {
+					action: "end_turn",
+					reasoning:
+						"Ending turn after one action for stable realtime cadence.",
+				};
+			}
+			if (gatewayCmd) {
+				let turnContext: unknown;
+				try {
+					turnContext = await matchContextStore.buildTurnContext({
+						matchId,
+						agentId,
+						state,
+					});
+				} catch {
+					turnContext = undefined;
+				}
+				try {
+					const gateway = await invokeGatewayImpl(
+						gatewayCmd,
+						{
+							agentId,
+							agentName,
+							matchId,
+							stateVersion,
+							state,
+							strategyPrompt,
+							...(turnContext === undefined ? {} : { turnContext }),
+						},
+						options?.gatewayTimeoutMs ?? 4000,
+					);
+					if (gateway?.move) {
+						const chosenMove =
+							legalMoves.find((candidate) =>
+								movesMatchByIdentity(candidate, gateway.move),
+							) ?? null;
+						if (!chosenMove) {
+							throw new Error(
+								"Gateway returned a move outside the current legal set.",
+							);
+						}
+						const thought =
+							typeof gateway.publicThought === "string"
+								? gateway.publicThought
+								: "Public-safe summary unavailable.";
+						const finishPressureOverride = resolveEarlyEndTurnOverride({
+							chosenMove,
+							legalMoves,
+							actionsTakenThisTurn,
+							minActionsBeforeEndTurn: 1,
+						});
+						if (finishPressureOverride) {
+							if (
+								finishPressureOverride.action !== "end_turn" &&
+								finishPressureOverride.action !== "pass"
+							) {
+								actionsTakenThisTurn += 1;
+							}
+							return {
+								...finishPressureOverride,
+								reasoning:
+									finishPressureOverride.action === "attack"
+										? CLI_FINISH_ATTACK_REASONING
+										: CLI_FINISH_FOLLOW_UP_REASONING,
+							};
+						}
+						if (
+							chosenMove.action !== "end_turn" &&
+							chosenMove.action !== "pass"
+						) {
+							actionsTakenThisTurn += 1;
+						}
+						return {
+							...chosenMove,
+							reasoning: thought,
+						};
+					}
+				} catch {
+					const legalFallback = selectCliFallbackMove(state);
+					if (legalFallback) {
+						if (
+							legalFallback.action !== "end_turn" &&
+							legalFallback.action !== "pass"
+						) {
+							actionsTakenThisTurn += 1;
+						}
+						return {
+							...legalFallback,
+							reasoning: "Public-safe fallback: selected a clearly legal move.",
+						};
+					}
+					return fallbackMove;
+				}
+			}
+			const legalFallback = selectCliFallbackMove(state);
+			if (legalFallback) {
+				if (
+					legalFallback.action !== "end_turn" &&
+					legalFallback.action !== "pass"
+				) {
+					actionsTakenThisTurn += 1;
+				}
+				return {
+					...legalFallback,
+					reasoning: "Public-safe fallback: selected a clearly legal move.",
+				};
+			}
+			return fallbackMove;
+		},
+	};
+};
 
 const runDuel = async (args: ArgMap) => {
 	const baseUrl = asString(args.baseUrl) ?? "http://127.0.0.1:3000";
@@ -484,11 +599,15 @@ const runDuel = async (args: ArgMap) => {
 			runMatch(runnerClientA, {
 				moveProvider: moveProviderA,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				resolveTimeoutFallbackMove:
+					createCliTimeoutFallbackResolver(runnerClientA),
 				session: sessionA,
 			}),
 			runMatch(runnerClientB, {
 				moveProvider: moveProviderB,
 				moveProviderTimeoutMs: moveTimeoutMs,
+				resolveTimeoutFallbackMove:
+					createCliTimeoutFallbackResolver(runnerClientB),
 				session: sessionB,
 			}),
 		]);
@@ -532,8 +651,14 @@ const main = async () => {
 	throw new Error(`Unknown command: ${command}`);
 };
 
-main().catch((error) => {
-	const message = error instanceof Error ? error.message : String(error);
-	console.error(message);
-	process.exit(1);
-});
+const isMainModule =
+	typeof process.argv[1] === "string" &&
+	import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+	main().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(message);
+		process.exit(1);
+	});
+}

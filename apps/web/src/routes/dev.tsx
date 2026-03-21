@@ -7,14 +7,28 @@ import {
 	type MatchState,
 	type Move,
 } from "@fightclaw/engine";
+import type { MatchEndedEvent } from "@fightclaw/protocol";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { SpectatorArenaMain } from "@/components/arena/spectator-arena";
+import { SpectatorArena } from "@/components/arena/spectator-arena";
 import {
 	type EngineEventsEnvelope,
 	useArenaAnimator,
 } from "@/lib/arena-animator";
+import { evaluateDevLayoutHealth } from "@/lib/dev-layout-health";
+import {
+	buildDevSpectatorLabModel,
+	DEV_LAB_LAYOUT_PRESETS,
+	DEV_LAB_SCENARIOS,
+	type DevLabLayoutPresetId,
+	type DevLabScenarioId,
+} from "@/lib/dev-spectator-lab";
+import { buildPublicAgentIdentityMap } from "@/lib/public-agent-identity";
+import {
+	type BroadcastTickerItem,
+	buildSpectatorDeskProjection,
+} from "@/lib/spectator-desk";
 
 export const Route = createFileRoute("/dev")({
 	component: DevConsole,
@@ -53,7 +67,111 @@ type ReplayBundle = {
 
 // ── Mode type ───────────────────────────────────────────────────────────
 
-type DevMode = "sandbox" | "replay";
+type DevMode = "lab" | "sandbox" | "replay";
+
+type DevMeasuredLayout = {
+	frameHeightPx: number;
+	boardHeightPx: number;
+	tickerHeightPx: number;
+	resultBandHeightPx: number;
+	viewportWidthPx: number;
+	viewportHeightPx: number;
+};
+
+type DevActionLogEntry = {
+	id: string;
+	eventId: number;
+	ts: string;
+	label: string;
+	player: "A" | "B" | null;
+	turn: number | null;
+	tone: "neutral" | "danger" | "warning";
+};
+
+function deriveReplaySide(playerId: string): "A" | "B" | null {
+	if (playerId === "0" || playerId === "A") return "A";
+	if (playerId === "1" || playerId === "B") return "B";
+	return null;
+}
+
+function buildActionLogEntry(
+	id: string,
+	eventId: number,
+	ts: string,
+	label: string,
+	player: "A" | "B" | null,
+	turn: number | null,
+	tone: DevActionLogEntry["tone"],
+): DevActionLogEntry {
+	return {
+		id,
+		eventId,
+		ts,
+		label,
+		player,
+		turn,
+		tone,
+	};
+}
+
+export function projectAdvancedTickerItems(
+	actionLog: DevActionLogEntry[],
+	fallbackTurn: number,
+): BroadcastTickerItem[] {
+	return [...actionLog].reverse().map((entry, index) => ({
+		eventId: entry.eventId,
+		ts: entry.ts,
+		turn: entry.turn ?? Math.max(1, fallbackTurn - Math.floor(index / 2)),
+		player: entry.player,
+		text: entry.label,
+		tone: entry.tone,
+	}));
+}
+
+function synthesizeReplayTerminalEvent(
+	match: ReplayMatch | null,
+): MatchEndedEvent | null {
+	if (!match) return null;
+
+	const winnerAgentId = match.result.winner ?? null;
+	const loserAgentId =
+		winnerAgentId === null
+			? null
+			: (match.participants.find(
+					(participant) => participant !== winnerAgentId,
+				) ?? null);
+
+	return {
+		eventVersion: 2,
+		eventId: match.steps.length + 1,
+		ts: "1970-01-01T00:00:00.000Z",
+		matchId: match.id,
+		stateVersion: match.steps.length,
+		event: "match_ended",
+		payload: {
+			winnerAgentId,
+			loserAgentId,
+			reasonCode: match.result.reason,
+		},
+	};
+}
+
+export function resolveAdvancedTerminalEvent(input: {
+	mode: DevMode;
+	boardState: MatchState;
+	selectedMatch: ReplayMatch | null;
+}): MatchEndedEvent | null {
+	const stateWithTerminalEvent = input.boardState as MatchState & {
+		terminalEvent?: MatchEndedEvent | null;
+	};
+	if (stateWithTerminalEvent.terminalEvent) {
+		return stateWithTerminalEvent.terminalEvent;
+	}
+	if (input.mode === "replay") {
+		return synthesizeReplayTerminalEvent(input.selectedMatch);
+	}
+	return null;
+}
 
 // ── Component ───────────────────────────────────────────────────────────
 
@@ -74,24 +192,37 @@ function DevConsole() {
 	return <DevLayout />;
 }
 
-function DevLayout() {
-	const [mode, setMode] = useState<DevMode>("sandbox");
+export function DevLayout(props?: { initialMode?: DevMode }) {
+	const [mode, setMode] = useState<DevMode>(props?.initialMode ?? "lab");
+	const [labLayoutPreset, setLabLayoutPreset] =
+		useState<DevLabLayoutPresetId>("desktop");
+	const [labScenarioId, setLabScenarioId] =
+		useState<DevLabScenarioId>("live-board");
+	const [labTickerCountOverride, setLabTickerCountOverride] = useState<
+		number | null
+	>(null);
+	const [labSeed, setLabSeed] = useState(42);
+	const [labLongNames, setLabLongNames] = useState(false);
+	const [labLongPersona, setLabLongPersona] = useState(false);
+	const [labLongCommentary, setLabLongCommentary] = useState(false);
+	const [labResultBandVisibleOverride, setLabResultBandVisibleOverride] =
+		useState<boolean | null>(null);
+	const [measuredLayout, setMeasuredLayout] = useState<DevMeasuredLayout>({
+		frameHeightPx: 0,
+		boardHeightPx: 0,
+		tickerHeightPx: 0,
+		resultBandHeightPx: 0,
+		viewportWidthPx: 0,
+		viewportHeightPx: 0,
+	});
+	const stageFrameRef = useRef<HTMLDivElement | null>(null);
 
 	// ── Shared board state ──────────────────────────────────────────────
 	const [boardState, setBoardState] = useState<MatchState>(() =>
 		createInitialState(42, { boardColumns: 17 }, ["dev-a", "dev-b"]),
 	);
 
-	const {
-		effects,
-		unitAnimStates,
-		dyingUnitIds,
-		hudFx,
-		damageNumbers,
-		lungeTargets,
-		enqueue,
-		reset: resetAnimator,
-	} = useArenaAnimator({
+	const { enqueue, reset: resetAnimator } = useArenaAnimator({
 		onApplyBaseState: (state) => setBoardState(state),
 	});
 
@@ -110,6 +241,7 @@ function DevLayout() {
 			resetAnimator();
 			setBoardState(createPreviewState(s));
 			setMoveCount(0);
+			setActionLog([]);
 		},
 		[createPreviewState, resetAnimator],
 	);
@@ -142,6 +274,17 @@ function DevLayout() {
 			},
 		};
 		enqueue(envelope, { postState: result.state });
+		setActionLog((prev) =>
+			[
+				createLogEntry(
+					`[${moveCount + 1}] sandbox: ${move.action}${"unitId" in move ? ` ${move.unitId}` : ""}`,
+					boardState.activePlayer,
+					boardState.turn,
+					"neutral",
+				),
+				...prev,
+			].slice(0, 200),
+		);
 		setMoveCount((n) => n + 1);
 	}, [boardState, legalMoves, moveCount, enqueue]);
 
@@ -154,6 +297,8 @@ function DevLayout() {
 				const moves = listLegalMoves(state);
 				if (moves.length === 0) break;
 				const move = moves[Math.floor(Math.random() * moves.length)] as Move;
+				const actingPlayer = state.activePlayer;
+				const actingTurn = state.turn;
 				const result = applyMove(state, move);
 				if (!result.ok) break;
 				state = result.state;
@@ -174,6 +319,17 @@ function DevLayout() {
 					},
 				};
 				enqueue(envelope, { postState: state });
+				setActionLog((prev) =>
+					[
+						createLogEntry(
+							`[${mc}] sandbox: ${move.action}${"unitId" in move ? ` ${move.unitId}` : ""}`,
+							actingPlayer,
+							actingTurn,
+							"neutral",
+						),
+						...prev,
+					].slice(0, 200),
+				);
 			}
 			setMoveCount(mc);
 		},
@@ -187,13 +343,161 @@ function DevLayout() {
 	const [replayPly, setReplayPly] = useState(0);
 	const [replayPlaying, setReplayPlaying] = useState(false);
 	const [stepMs, setStepMs] = useState(400);
-	const [actionLog, setActionLog] = useState<string[]>([]);
+	const [actionLog, setActionLog] = useState<DevActionLogEntry[]>([]);
 	const [logExpanded, setLogExpanded] = useState(false);
 	const [replayError, setReplayError] = useState<string | null>(null);
+	const nextActionLogIdRef = useRef(1);
+	const observerRef = useRef<ResizeObserver | null>(null);
 	const playIntervalRef = useRef<number | null>(null);
 	const replayStateRef = useRef<MatchState | null>(null);
+	const measureStageLayout = useCallback(() => {
+		const root = stageFrameRef.current;
+		if (!root) return;
+		const board = root.querySelector(".spectator-stage-board");
+		const ticker = root.querySelector(".action-ticker");
+		const resultBand = root.querySelector(".result-band");
+
+		setMeasuredLayout({
+			frameHeightPx: Math.round(root.getBoundingClientRect().height),
+			boardHeightPx: Math.round(board?.getBoundingClientRect().height ?? 0),
+			tickerHeightPx: Math.round(ticker?.getBoundingClientRect().height ?? 0),
+			resultBandHeightPx: Math.round(
+				resultBand?.getBoundingClientRect().height ?? 0,
+			),
+			viewportWidthPx: window.innerWidth,
+			viewportHeightPx: window.innerHeight,
+		});
+	}, []);
+	function createLogEntry(
+		label: string,
+		player: "A" | "B" | null,
+		turn: number | null,
+		tone: DevActionLogEntry["tone"],
+	) {
+		const eventId = nextActionLogIdRef.current++;
+		return buildActionLogEntry(
+			`log-${eventId}`,
+			eventId,
+			new Date().toISOString(),
+			label,
+			player,
+			turn,
+			tone,
+		);
+	}
 
 	const selectedMatch = bundle?.matches[selectedMatchIdx] ?? null;
+	const selectedLabScenario = useMemo(
+		() =>
+			DEV_LAB_SCENARIOS.find((scenario) => scenario.id === labScenarioId) ??
+			DEV_LAB_SCENARIOS[0],
+		[labScenarioId],
+	);
+	const labTickerCount =
+		labTickerCountOverride ?? selectedLabScenario.defaultTickerCount;
+	const labResultBandVisible =
+		labResultBandVisibleOverride ?? selectedLabScenario.resultBandVisible;
+	const labModel = useMemo(
+		() =>
+			buildDevSpectatorLabModel({
+				layoutPreset: labLayoutPreset,
+				scenarioId: labScenarioId,
+				tickerCount:
+					labTickerCountOverride === null ? undefined : labTickerCountOverride,
+				seed: labSeed,
+				longNames: labLongNames,
+				longPersona: labLongPersona,
+				longCommentary: labLongCommentary,
+				resultBandVisible:
+					labResultBandVisibleOverride === null
+						? undefined
+						: labResultBandVisibleOverride,
+			}),
+		[
+			labLayoutPreset,
+			labScenarioId,
+			labTickerCountOverride,
+			labSeed,
+			labLongNames,
+			labLongPersona,
+			labLongCommentary,
+			labResultBandVisibleOverride,
+		],
+	);
+	const advancedTickerItems = useMemo(
+		() => projectAdvancedTickerItems(actionLog, boardState.turn),
+		[actionLog, boardState.turn],
+	);
+	const advancedTerminalEvent = useMemo(
+		() =>
+			resolveAdvancedTerminalEvent({
+				mode,
+				boardState,
+				selectedMatch,
+			}),
+		[boardState, mode, selectedMatch],
+	);
+	const advancedProjection = useMemo(
+		() =>
+			buildSpectatorDeskProjection({
+				connectionStatus: mode === "replay" ? "replay" : "live",
+				featured:
+					mode === "replay"
+						? {
+								matchId: selectedMatch?.id ?? null,
+								status: advancedTerminalEvent ? "finished" : "replay",
+								players: selectedMatch ? [...selectedMatch.participants] : null,
+							}
+						: {
+								matchId: "dev-preview",
+								status: advancedTerminalEvent ? "finished" : "active",
+								players: ["dev-a", "dev-b"],
+							},
+				state: boardState,
+				thoughtsA:
+					actionLog.length > 0
+						? [actionLog[0]?.label ?? "Advanced tool state active."]
+						: ["Advanced tool state active."],
+				thoughtsB:
+					mode === "replay"
+						? ["Replay tool is driving the visible stage."]
+						: ["Sandbox tools are driving the visible stage."],
+				tickerItems: advancedTickerItems,
+				terminalEvent: advancedTerminalEvent,
+				publicIdentityById: buildPublicAgentIdentityMap([
+					{
+						agentId: "dev-a",
+						agentName: "Alpha",
+						publicPersona: "Sandbox-side agent under local test.",
+						styleTag: "GENERAL",
+					},
+					{
+						agentId: "dev-b",
+						agentName: "Bravo",
+						publicPersona: "Replay-side agent under local test.",
+						styleTag: "GENERAL",
+					},
+				]),
+			}),
+		[
+			advancedTerminalEvent,
+			advancedTickerItems,
+			actionLog,
+			boardState,
+			mode,
+			selectedMatch,
+		],
+	);
+	const advancedStage = useMemo(
+		() => ({
+			state: boardState,
+			featuredDesk: advancedProjection.featuredDesk,
+			agentCards: advancedProjection.agentCards,
+			tickerItems: advancedProjection.tickerItems,
+			resultSummary: advancedProjection.resultSummary,
+		}),
+		[advancedProjection, boardState],
+	);
 
 	const bindReplayState = useCallback((match: ReplayMatch): MatchState => {
 		return bindEngineConfig(
@@ -269,8 +573,17 @@ function DevLayout() {
 			replayStateRef.current ?? bindReplayState(selectedMatch);
 		const result = applyMove(replayState, step.move);
 		if (!result.ok) {
+			setReplayPlaying(false);
 			setActionLog((prev) =>
-				[`[${replayPly}] ERR: ${result.error}`, ...prev].slice(0, 200),
+				[
+					createLogEntry(
+						`[${replayPly}] ERR: ${result.error}`,
+						deriveReplaySide(step.playerID),
+						replayState.turn,
+						"danger",
+					),
+					...prev,
+				].slice(0, 200),
 			);
 			return;
 		}
@@ -294,7 +607,15 @@ function DevLayout() {
 
 		const moveText = `${step.move.action}${step.move.action === "move" || step.move.action === "attack" ? ` ${step.move.unitId}` : ""}`;
 		setActionLog((prev) =>
-			[`[${replayPly}] ${step.playerID}: ${moveText}`, ...prev].slice(0, 200),
+			[
+				createLogEntry(
+					`[${replayPly}] ${step.playerID}: ${moveText}`,
+					deriveReplaySide(step.playerID),
+					replayState.turn,
+					"neutral",
+				),
+				...prev,
+			].slice(0, 200),
 		);
 		setReplayPly((p) => p + 1);
 	}, [selectedMatch, replayPly, bindReplayState, enqueue]);
@@ -333,39 +654,84 @@ function DevLayout() {
 		}
 	}, [replayPlaying, stepMs, selectedMatch, replayPly, stepReplay]);
 
+	useEffect(() => {
+		const root = stageFrameRef.current;
+		if (!root || typeof ResizeObserver === "undefined") return;
+		measureStageLayout();
+		const observer = new ResizeObserver(() => {
+			measureStageLayout();
+		});
+		observerRef.current = observer;
+		observer.observe(root);
+		for (const selector of [
+			".spectator-stage-board",
+			".action-ticker",
+			".result-band",
+		]) {
+			const element = root.querySelector(selector);
+			if (element) observer.observe(element);
+		}
+		window.addEventListener("resize", measureStageLayout);
+
+		return () => {
+			window.removeEventListener("resize", measureStageLayout);
+			observerRef.current?.disconnect();
+			observerRef.current = null;
+		};
+	}, [
+		actionLog.length,
+		advancedStage.resultSummary,
+		advancedTickerItems.length,
+		boardState.status,
+		boardState.turn,
+		labLayoutPreset,
+		labModel.resultSummary,
+		labModel.tickerItems.length,
+		labScenarioId,
+		labTickerCount,
+		measureStageLayout,
+		mode,
+		replayPly,
+		selectedMatch?.id,
+	]);
+
 	// Switch mode resets
 	const switchMode = useCallback(
 		(m: DevMode) => {
 			setMode(m);
 			setReplayPlaying(false);
 			resetAnimator();
-			if (m === "sandbox") {
+			if (m === "lab") {
 				replayStateRef.current = null;
+				setActionLog([]);
+			} else if (m === "sandbox") {
+				replayStateRef.current = null;
+				setActionLog([]);
 				setBoardState(createPreviewState(seed));
 				setMoveCount(0);
-			} else if (m === "replay" && selectedMatch) {
-				const initial = bindReplayState(selectedMatch);
-				replayStateRef.current = initial;
-				setBoardState(initial);
+			} else if (m === "replay") {
 				setReplayPly(0);
 				setActionLog([]);
+				if (selectedMatch) {
+					const initial = bindReplayState(selectedMatch);
+					replayStateRef.current = initial;
+					setBoardState(initial);
+				} else {
+					replayStateRef.current = null;
+					setBoardState(createPreviewState(seed));
+				}
 			}
 		},
 		[createPreviewState, bindReplayState, resetAnimator, seed, selectedMatch],
 	);
 
 	// ── Derived ─────────────────────────────────────────────────────────
-	const unitCountA = useMemo(
-		() => boardState.players.A.units.length,
-		[boardState.players.A.units.length],
-	);
-	const unitCountB = useMemo(
-		() => boardState.players.B.units.length,
-		[boardState.players.B.units.length],
-	);
-
-	const topBarRight =
-		mode === "sandbox" ? (
+	const _topBarRight =
+		mode === "lab" ? (
+			<span className="muted">
+				{labModel.layout.preset.label} · {labModel.scenario.label}
+			</span>
+		) : mode === "sandbox" ? (
 			<span className="muted">seed:{seed}</span>
 		) : selectedMatch ? (
 			<span className="muted">
@@ -375,48 +741,298 @@ function DevLayout() {
 			<span className="muted">no replay</span>
 		);
 
+	const stageModel = mode === "lab" ? labModel : advancedStage;
+	const visibleState = stageModel.state;
+	const unitCountA = visibleState.players.A.units.length;
+	const unitCountB = visibleState.players.B.units.length;
+	const stageTickerVisibleLimit =
+		mode === "lab"
+			? Math.max(8, stageModel.tickerItems.length)
+			: Math.max(8, advancedTickerItems.length);
+	const layoutHealth = useMemo(
+		() =>
+			evaluateDevLayoutHealth({
+				...measuredLayout,
+			}),
+		[measuredLayout],
+	);
+	const activeDiagnostics =
+		layoutHealth.frameHeightPx > 0
+			? {
+					boardShrinkRisk: layoutHealth.severity === "risk",
+					overflowRisk:
+						layoutHealth.severity !== "clear" ||
+						layoutHealth.tickerShare > 0.24,
+					resultBandVisible: stageModel.resultSummary !== null,
+					tickerCount: stageModel.tickerItems.length,
+				}
+			: mode === "lab"
+				? labModel.diagnostics
+				: {
+						boardShrinkRisk:
+							advancedTickerItems.length > 8 || boardState.status === "ended",
+						overflowRisk: advancedTickerItems.length > 8,
+						resultBandVisible: stageModel.resultSummary !== null,
+						tickerCount: advancedTickerItems.length,
+					};
+	const stageLabel =
+		mode === "lab"
+			? "Spectator lab"
+			: mode === "sandbox"
+				? "Sandbox tools"
+				: "Replay tools";
+
 	return (
-		<div className="spectator-landing">
-			<div className="spectator-top-bar">
-				<span className="status-badge">DEV</span>
-				<span className="top-bar-center">
-					T{boardState.turn}{" "}
-					<span
-						className={
-							boardState.activePlayer === "A"
-								? "player-a-color"
-								: "player-b-color"
-						}
-					>
-						{boardState.activePlayer}
-					</span>{" "}
-					| AP {boardState.actionsRemaining}
-					{hudFx.passPulse ? " | PASS" : ""}
-				</span>
-				{topBarRight}
+		<div
+			style={{
+				padding: "12px",
+				display: "grid",
+				gap: "12px",
+				minHeight: "100%",
+				background: "var(--spectator-bg)",
+			}}
+		>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "320px minmax(0, 1fr)",
+					gap: "12px",
+					alignItems: "start",
+					minHeight: "100%",
+				}}
+			>
+				<aside
+					className="dev-panel"
+					style={{ maxHeight: "calc(100vh - 96px)" }}
+				>
+					<div className="dev-panel-section" style={{ minWidth: 0 }}>
+						<div className="dev-panel-label">Layout presets</div>
+						<div className="dev-panel-row" style={{ flexWrap: "wrap" }}>
+							{DEV_LAB_LAYOUT_PRESETS.map((preset) => (
+								<button
+									key={preset.id}
+									type="button"
+									className={`dev-panel-btn ${labLayoutPreset === preset.id ? "dev-panel-btn-primary" : ""}`}
+									onClick={() => setLabLayoutPreset(preset.id)}
+								>
+									{preset.label}
+								</button>
+							))}
+						</div>
+					</div>
+
+					<div className="dev-panel-divider" />
+
+					<div className="dev-panel-section" style={{ minWidth: 0 }}>
+						<div className="dev-panel-label">Scenario state</div>
+						<div className="dev-panel-row" style={{ flexWrap: "wrap" }}>
+							{DEV_LAB_SCENARIOS.map((scenario) => (
+								<button
+									key={scenario.id}
+									type="button"
+									className={`dev-panel-btn ${labScenarioId === scenario.id ? "dev-panel-btn-primary" : ""}`}
+									onClick={() => {
+										setLabScenarioId(scenario.id);
+										setLabTickerCountOverride(null);
+										setLabResultBandVisibleOverride(null);
+									}}
+								>
+									{scenario.label}
+								</button>
+							))}
+						</div>
+					</div>
+
+					<div className="dev-panel-divider" />
+
+					<div className="dev-panel-section">
+						<div className="dev-panel-label">Content stress</div>
+						<div className="dev-panel-row">
+							<span className="dev-panel-stat-label">Seed</span>
+							<input
+								type="number"
+								className="dev-panel-input"
+								style={{ width: 80 }}
+								value={labSeed}
+								onChange={(e) => setLabSeed(Number(e.target.value) || 0)}
+							/>
+						</div>
+						<div className="dev-panel-row">
+							<span className="dev-panel-stat-label">Ticker</span>
+							<input
+								type="number"
+								className="dev-panel-input"
+								style={{ width: 80 }}
+								value={labTickerCount}
+								onChange={(e) =>
+									setLabTickerCountOverride(
+										Math.max(0, Number(e.target.value) || 0),
+									)
+								}
+							/>
+						</div>
+						<div className="dev-panel-row">
+							<label className="dev-panel-row">
+								<input
+									type="checkbox"
+									checked={labLongNames}
+									onChange={(e) => setLabLongNames(e.target.checked)}
+								/>
+								<span className="dev-panel-stat-label">Long names</span>
+							</label>
+						</div>
+						<div className="dev-panel-row">
+							<label className="dev-panel-row">
+								<input
+									type="checkbox"
+									checked={labLongPersona}
+									onChange={(e) => setLabLongPersona(e.target.checked)}
+								/>
+								<span className="dev-panel-stat-label">Long persona</span>
+							</label>
+						</div>
+						<div className="dev-panel-row">
+							<label className="dev-panel-row">
+								<input
+									type="checkbox"
+									checked={labLongCommentary}
+									onChange={(e) => setLabLongCommentary(e.target.checked)}
+								/>
+								<span className="dev-panel-stat-label">Long commentary</span>
+							</label>
+						</div>
+						<div className="dev-panel-row">
+							<label className="dev-panel-row">
+								<input
+									type="checkbox"
+									checked={labResultBandVisible}
+									onChange={(e) =>
+										setLabResultBandVisibleOverride(e.target.checked)
+									}
+								/>
+								<span className="dev-panel-stat-label">Result band</span>
+							</label>
+						</div>
+					</div>
+
+					<div className="dev-panel-divider" />
+
+					<div className="dev-panel-section">
+						<div className="dev-panel-label">Diagnostics</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Board shrink</span>
+							<span className="dev-panel-stat-accent">
+								{activeDiagnostics.boardShrinkRisk ? "risk" : "clear"}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Overflow</span>
+							<span className="dev-panel-stat-accent">
+								{activeDiagnostics.overflowRisk ? "risk" : "clear"}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Ticker</span>
+							<span className="dev-panel-stat-accent">
+								{activeDiagnostics.tickerCount}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Stage shell</span>
+							<span className="dev-panel-stat-accent">
+								{layoutHealth.frameHeightPx > 0
+									? `${layoutHealth.frameHeightPx}px`
+									: "measuring"}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Board footprint</span>
+							<span className="dev-panel-stat-accent">
+								{layoutHealth.boardHeightPx > 0
+									? `${layoutHealth.boardHeightPx}px (${Math.round(layoutHealth.boardShare * 100)}%)`
+									: "measuring"}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Ticker share</span>
+							<span className="dev-panel-stat-accent">
+								{layoutHealth.tickerHeightPx > 0
+									? `${layoutHealth.tickerHeightPx}px (${Math.round(layoutHealth.tickerShare * 100)}%)`
+									: "measuring"}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Summary</span>
+							<span className="dev-panel-stat-accent">
+								{layoutHealth.summary}
+							</span>
+						</div>
+						<div className="dev-panel-stat">
+							<span className="dev-panel-stat-label">Result band</span>
+							<span className="dev-panel-stat-accent">
+								{activeDiagnostics.resultBandVisible ? "on" : "off"}
+							</span>
+						</div>
+					</div>
+				</aside>
+
+				<div
+					ref={stageFrameRef}
+					className={`dev-lab-stage-frame dev-lab-stage-frame-${layoutHealth.severity}`}
+					style={{
+						minWidth: 0,
+						height: `min(calc(100vh - 120px), ${labModel.layout.height}px)`,
+						maxWidth: `${labModel.layout.width}px`,
+						margin: "0 auto",
+					}}
+				>
+					<div className="dev-lab-stage-overlay">
+						<span className="dev-lab-stage-pill">
+							{layoutHealth.severity.toUpperCase()}
+						</span>
+						<span className="dev-lab-stage-metric">
+							Board {Math.round(layoutHealth.boardShare * 100)}%
+						</span>
+						<span className="dev-lab-stage-metric">
+							Ticker {Math.round(layoutHealth.tickerShare * 100)}%
+						</span>
+						<span className="dev-lab-stage-metric">
+							Result {Math.round(layoutHealth.resultBandShare * 100)}%
+						</span>
+					</div>
+					<SpectatorArena
+						statusBadge="DEV"
+						state={stageModel.state}
+						topBarCenterFallback={stageLabel}
+						topBarRight={_topBarRight}
+						featuredDesk={stageModel.featuredDesk}
+						agentCards={stageModel.agentCards}
+						tickerItems={stageModel.tickerItems}
+						tickerVisibleLimit={stageTickerVisibleLimit}
+						resultSummary={stageModel.resultSummary}
+						effects={[]}
+						unitAnimStates={new Map()}
+						dyingUnitIds={new Set()}
+						damageNumbers={[]}
+						lungeTargets={new Map()}
+					/>
+				</div>
 			</div>
 
-			<div className="dev-main">
-				<SpectatorArenaMain
-					state={boardState}
-					thoughtsA={[]}
-					thoughtsB={[]}
-					isThinkingA={false}
-					isThinkingB={false}
-					mainStyle={{ height: "100%" }}
-					effects={effects}
-					unitAnimStates={unitAnimStates}
-					dyingUnitIds={dyingUnitIds}
-					damageNumbers={damageNumbers}
-					lungeTargets={lungeTargets}
-				/>
-
-				{/* Horizontal dev controls bar */}
-				<div className="dev-panel">
-					{/* Mode toggle */}
+			<details className="dev-panel" style={{ marginTop: "12px" }}>
+				<summary className="dev-panel-label">Advanced tools</summary>
+				<div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
 					<div className="dev-panel-section" style={{ minWidth: 140 }}>
 						<div className="dev-panel-label">Mode</div>
 						<div className="dev-panel-row">
+							<button
+								type="button"
+								className={`dev-panel-btn ${mode === "lab" ? "dev-panel-btn-primary" : ""}`}
+								style={{ flex: 1 }}
+								onClick={() => switchMode("lab")}
+							>
+								Lab
+							</button>
 							<button
 								type="button"
 								className={`dev-panel-btn ${mode === "sandbox" ? "dev-panel-btn-primary" : ""}`}
@@ -436,9 +1052,17 @@ function DevLayout() {
 						</div>
 					</div>
 
-					<div className="dev-panel-divider" />
-
-					{mode === "sandbox" ? (
+					{mode === "lab" ? (
+						<div className="dev-panel-section">
+							<div className="dev-panel-stat-label">Lab stage</div>
+							<div className="dev-panel-row">
+								<span className="dev-panel-stat-label">
+									Advanced controls are parked while the spectator lab presets
+									drive the visible stage.
+								</span>
+							</div>
+						</div>
+					) : mode === "sandbox" ? (
 						<>
 							<div className="dev-panel-section">
 								<div className="dev-panel-stat-label">Seed</div>
@@ -459,8 +1083,6 @@ function DevLayout() {
 									</button>
 								</div>
 							</div>
-
-							<div className="dev-panel-divider" />
 
 							<div className="dev-panel-section">
 								<div className="dev-panel-stat-label">Actions</div>
@@ -632,14 +1254,12 @@ function DevLayout() {
 													className={`dev-panel-log ${logExpanded ? "" : "dev-panel-log-collapsed"}`}
 												>
 													{logExpanded ? (
-														actionLog.map((line, i) => (
-															<div key={`log-${actionLog.length - i}`}>
-																{line}
-															</div>
+														actionLog.map((entry) => (
+															<div key={entry.id}>{entry.label}</div>
 														))
 													) : actionLog.length > 0 ? (
 														<div style={{ opacity: 0.6 }}>
-															Last: {actionLog[0]}
+															Last: {actionLog[0]?.label}
 														</div>
 													) : null}
 												</div>
@@ -653,38 +1273,37 @@ function DevLayout() {
 
 					<div className="dev-panel-divider" />
 
-					{/* State readout */}
 					<div className="dev-panel-section">
 						<div className="dev-panel-label">State</div>
 						<div className="dev-panel-row">
 							<span className="dev-panel-stat-label">
-								{boardState.status === "active" ? (
+								{visibleState.status === "active" ? (
 									<span className="dev-panel-stat-accent">active</span>
 								) : (
-									boardState.status
+									visibleState.status
 								)}
 							</span>
-							<span className="dev-panel-stat-label">T{boardState.turn}</span>
+							<span className="dev-panel-stat-label">T{visibleState.turn}</span>
 							<span className="dev-panel-stat-label">
 								<span
 									className={
-										boardState.activePlayer === "A"
+										visibleState.activePlayer === "A"
 											? "player-a-color"
 											: "player-b-color"
 									}
 								>
-									{boardState.activePlayer}
+									{visibleState.activePlayer}
 								</span>
 							</span>
 							<span className="dev-panel-stat-label">
-								AP {boardState.actionsRemaining}
+								AP {visibleState.actionsRemaining}
 							</span>
 							<span className="player-a-color">{unitCountA}u</span>
 							<span className="player-b-color">{unitCountB}u</span>
 						</div>
 					</div>
 				</div>
-			</div>
+			</details>
 		</div>
 	);
 }

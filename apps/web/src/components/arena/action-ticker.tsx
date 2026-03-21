@@ -2,12 +2,16 @@ import type { BroadcastTickerItem } from "@/lib/spectator-desk";
 
 type ActionTickerProps = {
 	items: BroadcastTickerItem[];
+	visibleItemLimit?: number;
 };
 
 const MAX_VISIBLE_ITEMS = 8;
 
-export function ActionTicker({ items }: ActionTickerProps) {
-	const visibleItems = [...items.slice(-MAX_VISIBLE_ITEMS)].reverse();
+export function ActionTicker({
+	items,
+	visibleItemLimit = MAX_VISIBLE_ITEMS,
+}: ActionTickerProps) {
+	const visibleItems = [...items.slice(-visibleItemLimit)].reverse();
 
 	return (
 		<section className="action-ticker" aria-label="Recent actions">
@@ -20,24 +24,26 @@ export function ActionTicker({ items }: ActionTickerProps) {
 			{visibleItems.length === 0 ? (
 				<div className="action-ticker-empty">Awaiting live action...</div>
 			) : (
-				<ul className="action-ticker-list">
-					{visibleItems.map((item) => (
-						<li
-							key={item.eventId}
-							className={`action-ticker-item action-ticker-item-${item.tone}`}
-						>
-							<span className="action-ticker-turn">
-								{item.turn === null ? "T?" : `T${item.turn}`}
-							</span>
-							<span
-								className={`action-ticker-player ${item.player ? `player-${item.player.toLowerCase()}-color` : ""}`}
+				<div className="action-ticker-scroll">
+					<ul className="action-ticker-list">
+						{visibleItems.map((item) => (
+							<li
+								key={item.eventId}
+								className={`action-ticker-item action-ticker-item-${item.tone}`}
 							>
-								{item.player ?? "?"}
-							</span>
-							<span className="action-ticker-text">{item.text}</span>
-						</li>
-					))}
-				</ul>
+								<span className="action-ticker-turn">
+									{item.turn === null ? "T?" : `T${item.turn}`}
+								</span>
+								<span
+									className={`action-ticker-player ${item.player ? `player-${item.player.toLowerCase()}-color` : ""}`}
+								>
+									{item.player ?? "?"}
+								</span>
+								<span className="action-ticker-text">{item.text}</span>
+							</li>
+						))}
+					</ul>
+				</div>
 			)}
 		</section>
 	);

@@ -9,6 +9,7 @@ import type {
 	MoveSubmitResponse,
 	QueueWaitEvent,
 	QueueWaitResponse,
+	RunMatchMoveResolutionEvent,
 	RunMatchOptions,
 	RunMatchResult,
 	RunnerSession,
@@ -21,6 +22,7 @@ const DEFAULT_TIMEOUT_FALLBACK_MOVE: Move = {
 };
 
 const MAX_CONSECUTIVE_ACTIONS_PER_TURN = 32;
+const TIMEOUT_FALLBACK_RESOLVER_TIMEOUT_MS = 250;
 
 const getActiveAgentIdFromGame = (
 	game:
@@ -114,6 +116,27 @@ const shouldRetryQueueWait = (error: unknown) => {
 const sleep = async (ms: number) => {
 	if (ms <= 0) return;
 	await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+const isTerminalMove = (move: Move) =>
+	move.action === "end_turn" || move.action === "pass";
+
+const classifyFallbackKind = (
+	move: Move | null,
+): RunMatchMoveResolutionEvent["fallbackKind"] => {
+	if (!move) return null;
+	return isTerminalMove(move) ? "terminal" : "non_terminal";
+};
+
+const emitMoveResolution = (
+	options: RunMatchOptions,
+	event: RunMatchMoveResolutionEvent,
+) => {
+	try {
+		options.onMoveResolution?.(event);
+	} catch {
+		// Observer hooks are best-effort only and must not break gameplay.
+	}
 };
 
 const shouldFailStreamConnect = (error: unknown) => {
@@ -403,12 +426,59 @@ export const runMatch = async (
 		}
 
 		let timeout: ReturnType<typeof setTimeout> | null = null;
+		let moveSettled = false;
+		const timeoutFallbackState: { value: Move } = {
+			value: moveProviderTimeoutFallbackMove,
+		};
 		try {
 			return await Promise.race([
-				options.moveProvider.nextMove(moveContext),
+				options.moveProvider.nextMove(moveContext).then((move) => {
+					if (moveSettled) {
+						return new Promise<Move>(() => {
+							// The timeout path already owns resolution.
+						});
+					}
+					moveSettled = true;
+					emitMoveResolution(options, {
+						outcome: "provider_success",
+						fallbackUsed: false,
+						fallbackKind: null,
+						fallbackResolverTimedOut: false,
+						moveAction: move.action,
+					});
+					return move;
+				}),
 				new Promise<Move>((resolveTimeout) => {
 					timeout = setTimeout(() => {
-						resolveTimeout(moveProviderTimeoutFallbackMove);
+						void (async () => {
+							moveSettled = true;
+							let fallbackResolverTimedOut = false;
+							try {
+								const fallback = await Promise.race([
+									Promise.resolve(
+										options.resolveTimeoutFallbackMove?.(moveContext),
+									),
+									sleep(TIMEOUT_FALLBACK_RESOLVER_TIMEOUT_MS).then(() => {
+										fallbackResolverTimedOut = true;
+										return null;
+									}),
+								]);
+								if (fallback) {
+									timeoutFallbackState.value = fallback;
+								}
+							} catch {
+								// Keep the configured fallback if the resolver fails.
+							}
+							const fallbackMove = timeoutFallbackState.value;
+							emitMoveResolution(options, {
+								outcome: "provider_timeout",
+								fallbackUsed: true,
+								fallbackKind: classifyFallbackKind(fallbackMove),
+								fallbackResolverTimedOut,
+								moveAction: fallbackMove.action,
+							});
+							resolveTimeout(fallbackMove);
+						})();
 					}, moveProviderTimeoutMs);
 				}),
 			]);

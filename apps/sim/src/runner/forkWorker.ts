@@ -5,7 +5,6 @@
  */
 
 import type {
-	HarnessMode,
 	InvalidPolicy,
 	MoveValidationMode,
 	ScenarioName,
@@ -34,7 +33,6 @@ interface BatchRequest {
 	botConfigs: BotConfig[];
 	engineConfig?: EngineConfigInput;
 	harnessOptions?: {
-		harness?: HarnessMode;
 		scenario?: ScenarioName;
 		invalidPolicy?: InvalidPolicy;
 		moveValidationMode?: MoveValidationMode;
@@ -91,10 +89,8 @@ process.on("message", async (msg: WorkerMessage) => {
 					maxTurns: msg.maxTurns,
 					verbose: false,
 					record: false,
-					autofixIllegal: true,
 					engineConfig: msg.engineConfig,
 					scenario: msg.harnessOptions?.scenario,
-					harness: msg.harnessOptions?.harness,
 					invalidPolicy: msg.harnessOptions?.invalidPolicy,
 					moveValidationMode: msg.harnessOptions?.moveValidationMode,
 					strict: msg.harnessOptions?.strict,

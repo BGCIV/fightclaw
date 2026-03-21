@@ -151,10 +151,22 @@ export type RunnerSession = {
 	close: () => void;
 };
 
+export type RunMatchMoveResolutionEvent = {
+	outcome: "provider_success" | "provider_timeout";
+	fallbackUsed: boolean;
+	fallbackKind: "non_terminal" | "terminal" | null;
+	fallbackResolverTimedOut?: boolean;
+	moveAction: Move["action"];
+};
+
 export type RunMatchOptions = RunnerSessionOptions & {
 	moveProvider: MoveProvider;
 	moveProviderTimeoutMs?: number;
 	moveProviderTimeoutFallbackMove?: Move;
+	resolveTimeoutFallbackMove?: (
+		context: MoveProviderContext,
+	) => Promise<Move | null> | Move | null;
+	onMoveResolution?: (event: RunMatchMoveResolutionEvent) => void;
 	session?: RunnerSession;
 };
 

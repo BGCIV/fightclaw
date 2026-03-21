@@ -9,7 +9,6 @@ describe("structural diagnostics", () => {
 			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
 			maxTurns: 600,
 			record: true,
-			autofixIllegal: true,
 			scenario: "midfield",
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});

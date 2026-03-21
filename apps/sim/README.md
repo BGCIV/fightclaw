@@ -5,12 +5,7 @@ It is for simulation, diagnostics, and bot iteration (not production runtime).
 
 ## Runners
 
-`apps/sim` now supports two harnesses:
-
-- `legacy` (default): existing direct runner
-- `boardgameio`: new dev/sim harness using boardgame.io `Client + Local()`
-
-Use `--harness boardgameio` to opt in.
+`apps/sim` uses the `boardgameio` harness for all current simulator runs.
 
 ## Install and quick start
 
@@ -20,17 +15,10 @@ From repo root:
 pnpm -C apps/sim install
 ```
 
-Single match (legacy default):
-
-```bash
-pnpm -C apps/sim exec tsx src/cli.ts single --seed 1 --maxTurns 200 --bot1 greedy --bot2 random
-```
-
-Single match (boardgame harness):
+Single match:
 
 ```bash
 pnpm -C apps/sim exec tsx src/cli.ts single \
-  --harness boardgameio \
   --seed 1 \
   --maxTurns 200 \
   --bot1 aggressive \
@@ -41,13 +29,13 @@ pnpm -C apps/sim exec tsx src/cli.ts single \
 Tournament:
 
 ```bash
-pnpm -C apps/sim exec tsx src/cli.ts tourney --games 200 --seed 1 --maxTurns 200 --harness boardgameio
+pnpm -C apps/sim exec tsx src/cli.ts tourney --games 200 --seed 1 --maxTurns 200
 ```
 
 Mass simulation:
 
 ```bash
-pnpm -C apps/sim exec tsx src/cli.ts mass --games 10000 --parallel 4 --output ./results --harness boardgameio
+pnpm -C apps/sim exec tsx src/cli.ts mass --games 10000 --parallel 4 --output ./results
 ```
 
 ## Scratch probes
@@ -60,11 +48,10 @@ pnpm -C apps/sim run scratch:test-llm
 pnpm -C apps/sim run scratch:test-parse
 ```
 
-## Boardgame harness flags
+## Simulation Flags
 
 Use these with `single`, `tourney`, or `mass`:
 
-- `--harness legacy|boardgameio`
 - `--invalidPolicy skip|stop_turn|forfeit`
 - `--moveValidationMode strict|relaxed`
 - `--strict` (fail on harness divergence checks)
@@ -78,7 +65,7 @@ Scenarios:
 
 ## Replay
 
-Replay supports both legacy logs and boardgame artifacts.
+Replay accepts current match logs and boardgame artifacts.
 
 ```bash
 pnpm -C apps/sim exec tsx src/cli.ts replay --logFile ./path/to/log-or-artifact.json

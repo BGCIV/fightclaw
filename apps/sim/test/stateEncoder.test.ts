@@ -47,8 +47,11 @@ describe("stateEncoder", () => {
 	test("encodeState includes contested nearby terrain context", () => {
 		const state = createCombatScenario(1, ["a", "b"], "high_ground_clash");
 		const encoded = encodeState(state, "A");
+		expect(encoded).toContain("TERRAIN_NEAR_UNITS:");
+		expect(encoded).toContain("D9=high_ground");
+		expect(encoded).toContain("F9=high_ground");
 		expect(encoded).toContain("TERRAIN_CONTESTED_NEARBY:");
-		expect(encoded).toContain("D11=high_ground");
+		expect(encoded).toContain("C10=lumber_camp");
 	});
 
 	test("encodeLegalMoves categorizes by action type", () => {
