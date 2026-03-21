@@ -73,7 +73,7 @@ export type BroadcastDeskInput = {
 		| FeaturedSnapshot
 		| {
 				matchId: string | null;
-				status: "replay";
+				status: "replay" | "finished";
 				players: string[] | null;
 		  }
 		| null;
@@ -188,6 +188,15 @@ function buildFeaturedDesk(
 			matchId: featured.matchId,
 			label: "Replay featured",
 			status: "replay",
+			playersLabel: formatPlayers(featured.players),
+		};
+	}
+
+	if (featured.status === "finished") {
+		return {
+			matchId: featured.matchId,
+			label: "Featured final",
+			status: "ended",
 			playersLabel: formatPlayers(featured.players),
 		};
 	}

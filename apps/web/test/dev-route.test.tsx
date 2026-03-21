@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { DevLayout } from "../src/routes/dev";
+import { createInitialState } from "@fightclaw/engine";
+import {
+	DevLayout,
+	projectAdvancedTickerItems,
+	resolveAdvancedTerminalEvent,
+} from "../src/routes/dev";
 import { renderWithRouterToStaticMarkup } from "./render-with-router";
 
 describe("Dev spectator lab route", () => {
@@ -39,5 +44,67 @@ describe("Dev spectator lab route", () => {
 		expect(sandboxMarkup).toContain("seed:42");
 		expect(replayMarkup).toContain("Replay tool is driving the visible stage.");
 		expect(replayMarkup).toContain("no replay");
+	});
+
+	test("projects stable ticker metadata from action log entries", () => {
+		const items = projectAdvancedTickerItems(
+			[
+				{
+					id: "log-7",
+					eventId: 7,
+					ts: "2026-03-20T12:00:07.000Z",
+					label: "sandbox: pass",
+					player: "A",
+					turn: 3,
+					tone: "neutral",
+				},
+			],
+			10,
+		);
+
+		expect(items).toEqual([
+			{
+				eventId: 7,
+				ts: "2026-03-20T12:00:07.000Z",
+				turn: 3,
+				player: "A",
+				text: "sandbox: pass",
+				tone: "neutral",
+			},
+		]);
+	});
+
+	test("synthesizes a replay terminal event from the selected match result", () => {
+		const terminalEvent = resolveAdvancedTerminalEvent({
+			mode: "replay",
+			boardState: createInitialState(1, { boardColumns: 17 }, [
+				"Alpha",
+				"Bravo",
+			]),
+			selectedMatch: {
+				id: "match-42",
+				label: "Replay",
+				scenario: null,
+				seed: 1,
+				engineConfig: null,
+				participants: ["Alpha", "Bravo"],
+				result: { winner: "Alpha", reason: "elimination" },
+				initialState: createInitialState(1, { boardColumns: 17 }, [
+					"Alpha",
+					"Bravo",
+				]),
+				steps: [],
+			},
+		});
+
+		expect(terminalEvent).toMatchObject({
+			matchId: "match-42",
+			event: "match_ended",
+			payload: {
+				winnerAgentId: "Alpha",
+				loserAgentId: "Bravo",
+				reasonCode: "elimination",
+			},
+		});
 	});
 });

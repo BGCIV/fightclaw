@@ -7,6 +7,7 @@ import {
 	type MatchState,
 	type Move,
 } from "@fightclaw/engine";
+import type { MatchEndedEvent } from "@fightclaw/protocol";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -79,6 +80,8 @@ type DevMeasuredLayout = {
 
 type DevActionLogEntry = {
 	id: string;
+	eventId: number;
+	ts: string;
 	label: string;
 	player: "A" | "B" | null;
 	turn: number | null;
@@ -93,6 +96,8 @@ function deriveReplaySide(playerId: string): "A" | "B" | null {
 
 function buildActionLogEntry(
 	id: string,
+	eventId: number,
+	ts: string,
 	label: string,
 	player: "A" | "B" | null,
 	turn: number | null,
@@ -100,11 +105,72 @@ function buildActionLogEntry(
 ): DevActionLogEntry {
 	return {
 		id,
+		eventId,
+		ts,
 		label,
 		player,
 		turn,
 		tone,
 	};
+}
+
+export function projectAdvancedTickerItems(
+	actionLog: DevActionLogEntry[],
+	fallbackTurn: number,
+): BroadcastTickerItem[] {
+	return [...actionLog].reverse().map((entry, index) => ({
+		eventId: entry.eventId,
+		ts: entry.ts,
+		turn: entry.turn ?? Math.max(1, fallbackTurn - Math.floor(index / 2)),
+		player: entry.player,
+		text: entry.label,
+		tone: entry.tone,
+	}));
+}
+
+function synthesizeReplayTerminalEvent(
+	match: ReplayMatch | null,
+): MatchEndedEvent | null {
+	if (!match) return null;
+
+	const winnerAgentId = match.result.winner ?? null;
+	const loserAgentId =
+		winnerAgentId === null
+			? null
+			: (match.participants.find(
+					(participant) => participant !== winnerAgentId,
+				) ?? null);
+
+	return {
+		eventVersion: 2,
+		eventId: match.steps.length + 1,
+		ts: "1970-01-01T00:00:00.000Z",
+		matchId: match.id,
+		stateVersion: match.steps.length,
+		event: "match_ended",
+		payload: {
+			winnerAgentId,
+			loserAgentId,
+			reasonCode: match.result.reason,
+		},
+	};
+}
+
+export function resolveAdvancedTerminalEvent(input: {
+	mode: DevMode;
+	boardState: MatchState;
+	selectedMatch: ReplayMatch | null;
+}): MatchEndedEvent | null {
+	const stateWithTerminalEvent = input.boardState as MatchState & {
+		terminalEvent?: MatchEndedEvent | null;
+	};
+	if (stateWithTerminalEvent.terminalEvent) {
+		return stateWithTerminalEvent.terminalEvent;
+	}
+	if (input.mode === "replay") {
+		return synthesizeReplayTerminalEvent(input.selectedMatch);
+	}
+	return null;
 }
 
 // ── Component ───────────────────────────────────────────────────────────
@@ -284,14 +350,35 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 	const observerRef = useRef<ResizeObserver | null>(null);
 	const playIntervalRef = useRef<number | null>(null);
 	const replayStateRef = useRef<MatchState | null>(null);
+	const measureStageLayout = useCallback(() => {
+		const root = stageFrameRef.current;
+		if (!root) return;
+		const board = root.querySelector(".spectator-stage-board");
+		const ticker = root.querySelector(".action-ticker");
+		const resultBand = root.querySelector(".result-band");
+
+		setMeasuredLayout({
+			frameHeightPx: Math.round(root.getBoundingClientRect().height),
+			boardHeightPx: Math.round(board?.getBoundingClientRect().height ?? 0),
+			tickerHeightPx: Math.round(ticker?.getBoundingClientRect().height ?? 0),
+			resultBandHeightPx: Math.round(
+				resultBand?.getBoundingClientRect().height ?? 0,
+			),
+			viewportWidthPx: window.innerWidth,
+			viewportHeightPx: window.innerHeight,
+		});
+	}, []);
 	function createLogEntry(
 		label: string,
 		player: "A" | "B" | null,
 		turn: number | null,
 		tone: DevActionLogEntry["tone"],
 	) {
+		const eventId = nextActionLogIdRef.current++;
 		return buildActionLogEntry(
-			`log-${nextActionLogIdRef.current++}`,
+			`log-${eventId}`,
+			eventId,
+			new Date().toISOString(),
 			label,
 			player,
 			turn,
@@ -337,18 +424,18 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 			labResultBandVisibleOverride,
 		],
 	);
-	const advancedTickerItems = useMemo<BroadcastTickerItem[]>(
-		() =>
-			[...actionLog].reverse().map((entry, index) => ({
-				eventId: 10_000 + index + 1,
-				ts: new Date(Date.UTC(2026, 2, 20, 12, index, 0)).toISOString(),
-				turn:
-					entry.turn ?? Math.max(1, boardState.turn - Math.floor(index / 2)),
-				player: entry.player,
-				text: entry.label,
-				tone: entry.tone,
-			})),
+	const advancedTickerItems = useMemo(
+		() => projectAdvancedTickerItems(actionLog, boardState.turn),
 		[actionLog, boardState.turn],
+	);
+	const advancedTerminalEvent = useMemo(
+		() =>
+			resolveAdvancedTerminalEvent({
+				mode,
+				boardState,
+				selectedMatch,
+			}),
+		[boardState, mode, selectedMatch],
 	);
 	const advancedProjection = useMemo(
 		() =>
@@ -358,12 +445,12 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 					mode === "replay"
 						? {
 								matchId: selectedMatch?.id ?? null,
-								status: "replay",
+								status: advancedTerminalEvent ? "finished" : "replay",
 								players: selectedMatch ? [...selectedMatch.participants] : null,
 							}
 						: {
 								matchId: "dev-preview",
-								status: "active",
+								status: advancedTerminalEvent ? "finished" : "active",
 								players: ["dev-a", "dev-b"],
 							},
 				state: boardState,
@@ -376,7 +463,7 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 						? ["Replay tool is driving the visible stage."]
 						: ["Sandbox tools are driving the visible stage."],
 				tickerItems: advancedTickerItems,
-				terminalEvent: null,
+				terminalEvent: advancedTerminalEvent,
 				publicIdentityById: buildPublicAgentIdentityMap([
 					{
 						agentId: "dev-a",
@@ -392,7 +479,14 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 					},
 				]),
 			}),
-		[advancedTickerItems, actionLog, boardState, mode, selectedMatch],
+		[
+			advancedTerminalEvent,
+			advancedTickerItems,
+			actionLog,
+			boardState,
+			mode,
+			selectedMatch,
+		],
 	);
 	const advancedStage = useMemo(
 		() => ({
@@ -562,74 +656,10 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 
 	useEffect(() => {
 		const root = stageFrameRef.current;
-		if (!root) return;
-
-		const measure = () => {
-			const board = root.querySelector(".spectator-stage-board");
-			const ticker = root.querySelector(".action-ticker");
-			const resultBand = root.querySelector(".result-band");
-
-			setMeasuredLayout({
-				frameHeightPx: Math.round(root.getBoundingClientRect().height),
-				boardHeightPx: Math.round(board?.getBoundingClientRect().height ?? 0),
-				tickerHeightPx: Math.round(ticker?.getBoundingClientRect().height ?? 0),
-				resultBandHeightPx: Math.round(
-					resultBand?.getBoundingClientRect().height ?? 0,
-				),
-				viewportWidthPx: window.innerWidth,
-				viewportHeightPx: window.innerHeight,
-			});
-		};
-
-		measure();
-		observerRef.current?.observe(root);
-		for (const selector of [
-			".spectator-stage-board",
-			".action-ticker",
-			".result-band",
-		]) {
-			const element = root.querySelector(selector);
-			if (element) observerRef.current?.observe(element);
-		}
-	}, [
-		mode,
-		actionLog.length,
-		advancedStage.resultSummary,
-		advancedTickerItems.length,
-		boardState.status,
-		boardState.turn,
-		labLayoutPreset,
-		labScenarioId,
-		labModel.resultSummary,
-		labModel.tickerItems.length,
-		labTickerCount,
-		replayPly,
-		selectedMatch?.id,
-	]);
-
-	useEffect(() => {
-		const root = stageFrameRef.current;
 		if (!root || typeof ResizeObserver === "undefined") return;
-
-		const measure = () => {
-			const board = root.querySelector(".spectator-stage-board");
-			const ticker = root.querySelector(".action-ticker");
-			const resultBand = root.querySelector(".result-band");
-
-			setMeasuredLayout({
-				frameHeightPx: Math.round(root.getBoundingClientRect().height),
-				boardHeightPx: Math.round(board?.getBoundingClientRect().height ?? 0),
-				tickerHeightPx: Math.round(ticker?.getBoundingClientRect().height ?? 0),
-				resultBandHeightPx: Math.round(
-					resultBand?.getBoundingClientRect().height ?? 0,
-				),
-				viewportWidthPx: window.innerWidth,
-				viewportHeightPx: window.innerHeight,
-			});
-		};
-
+		measureStageLayout();
 		const observer = new ResizeObserver(() => {
-			measure();
+			measureStageLayout();
 		});
 		observerRef.current = observer;
 		observer.observe(root);
@@ -641,16 +671,29 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 			const element = root.querySelector(selector);
 			if (element) observer.observe(element);
 		}
-		window.addEventListener("resize", measure);
+		window.addEventListener("resize", measureStageLayout);
 
 		return () => {
-			window.removeEventListener("resize", measure);
-			observer.disconnect();
-			if (observerRef.current === observer) {
-				observerRef.current = null;
-			}
+			window.removeEventListener("resize", measureStageLayout);
+			observerRef.current?.disconnect();
+			observerRef.current = null;
 		};
-	}, [stageFrameRef]);
+	}, [
+		actionLog.length,
+		advancedStage.resultSummary,
+		advancedTickerItems.length,
+		boardState.status,
+		boardState.turn,
+		labLayoutPreset,
+		labModel.resultSummary,
+		labModel.tickerItems.length,
+		labScenarioId,
+		labTickerCount,
+		measureStageLayout,
+		mode,
+		replayPly,
+		selectedMatch?.id,
+	]);
 
 	// Switch mode resets
 	const switchMode = useCallback(
