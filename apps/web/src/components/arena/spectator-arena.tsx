@@ -111,7 +111,7 @@ export function SpectatorArena({
 	lungeTargets,
 }: SpectatorArenaProps) {
 	return (
-		<div className="spectator-landing">
+		<div className="spectator-landing spectator-layout-contained">
 			<div className="spectator-top-bar">
 				<span className="status-badge">{statusBadge}</span>
 				<div className="top-bar-center">

@@ -82,6 +82,7 @@ describe("SpectatorArena broadcast desk", () => {
 		expect(markup).toContain("A advanced u_a_1 to B2");
 		expect(markup).toContain("Alpha wins");
 		expect(markup).toContain("Elimination");
+		expect(markup).toContain("spectator-layout-contained");
 		expect(markup).toContain("spectator-stage-body");
 		expect(markup).toContain("spectator-stage-ticker");
 	});
