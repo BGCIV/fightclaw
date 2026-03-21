@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import minimist from "minimist";
 import { replayBoardgameArtifact } from "./boardgameio/replay";
 import type {
@@ -505,7 +506,6 @@ type CliContext = {
 	verbose: boolean;
 	log: boolean;
 	logFile?: string;
-	autofix: boolean;
 	output: string;
 	quiet: boolean;
 	json: boolean;
@@ -571,7 +571,6 @@ function createCliContext(argv: Args): CliContext {
 	const verbose = !!argv.verbose;
 	const log = !!argv.log;
 	const logFile = stringArg(argv, "logFile");
-	const autofix = !!argv.autofix;
 	const output = stringArg(argv, "output") ?? "./results";
 	const quiet = !!argv.quiet;
 	const json = !!argv.json;
@@ -694,7 +693,6 @@ function createCliContext(argv: Args): CliContext {
 		verbose,
 		log,
 		logFile,
-		autofix,
 		output,
 		quiet,
 		json,
@@ -737,7 +735,6 @@ async function handleSingleCommand(context: CliContext): Promise<void> {
 		players: [context.p1, context.p2],
 		verbose: context.verbose,
 		record: context.log || !!context.logFile,
-		autofixIllegal: context.autofix,
 		enableDiagnostics: context.enableDiagnostics,
 		engineConfig: context.engineConfig,
 		scenario: context.scenario,
@@ -784,7 +781,6 @@ async function handleTourneyCommand(
 		seed: context.seed,
 		maxTurns: context.maxTurns,
 		players: [context.p1, context.p2],
-		autofixIllegal: context.autofix,
 		engineConfig: context.engineConfig,
 		invalidPolicy: context.invalidPolicy,
 		moveValidationMode: context.moveValidationMode,
@@ -989,7 +985,10 @@ function num(v: unknown, def: number) {
 	return Number.isFinite(n) ? n : def;
 }
 
-if (import.meta.main) {
+if (
+	process.argv[1] &&
+	import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
 	main().catch((e) => {
 		console.error(e);
 		process.exit(1);

@@ -399,7 +399,6 @@ export async function runMassSimulation(
 			maxTurns: options.maxTurns,
 			verbose: false,
 			record: false,
-			autofixIllegal: true,
 			engineConfig,
 			scenario: harnessOptions?.scenario,
 			invalidPolicy: harnessOptions?.invalidPolicy,

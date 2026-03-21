@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "react-dom/server";
-
 import { DevLayout } from "../src/routes/dev";
+import { renderWithRouterToStaticMarkup } from "./render-with-router";
 
 describe("Dev spectator lab route", () => {
-	test("renders spectator-first controls and keeps advanced tooling available", () => {
-		const markup = renderToStaticMarkup(<DevLayout />);
+	test("renders spectator-first controls and keeps advanced tooling available", async () => {
+		const markup = await renderWithRouterToStaticMarkup("/", <DevLayout />);
 
 		expect(markup.match(/spectator-top-bar/g)?.length).toBe(1);
 		expect(markup).toContain("Desktop");
@@ -26,11 +25,13 @@ describe("Dev spectator lab route", () => {
 		expect(markup).not.toContain("Final result");
 	});
 
-	test("switches the visible stage when advanced tool modes are selected", () => {
-		const sandboxMarkup = renderToStaticMarkup(
+	test("switches the visible stage when advanced tool modes are selected", async () => {
+		const sandboxMarkup = await renderWithRouterToStaticMarkup(
+			"/",
 			<DevLayout initialMode="sandbox" />,
 		);
-		const replayMarkup = renderToStaticMarkup(
+		const replayMarkup = await renderWithRouterToStaticMarkup(
+			"/",
 			<DevLayout initialMode="replay" />,
 		);
 

@@ -482,6 +482,134 @@ test("tester beta journey prints the final match summary with URLs", async () =>
 	}
 });
 
+test("tester beta journey timeout fallback resolver returns only terminal moves", async () => {
+	let capturedResolver:
+		| ((context: {
+				matchId: string;
+				stateVersion: number;
+		  }) => Promise<Move | null>)
+		| null = null;
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async (input, _init) => {
+		const url = String(input);
+
+		if (url.endsWith("/v1/auth/register")) {
+			return new Response(
+				JSON.stringify({
+					agent: {
+						id: "agent-789",
+						name: "BetaTester",
+						verified: false,
+					},
+					apiKey: "agent-key-789",
+					claimCode: "CODE-1234",
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		if (url.endsWith("/v1/auth/me")) {
+			return new Response(
+				JSON.stringify({
+					agent: {
+						id: "agent-789",
+						name: "BetaTester",
+						verified: true,
+					},
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		if (url.endsWith("/v1/agents/me/strategy/hex_conquest")) {
+			return new Response(JSON.stringify({ created: { version: 1 } }), {
+				status: 201,
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		if (url.endsWith("/v1/internal/runners/agents/bind")) {
+			return new Response(JSON.stringify({ ok: true }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
+
+		if (url.endsWith("/v1/queue/join")) {
+			return new Response(
+				JSON.stringify({
+					status: "ready",
+					matchId: "match-789",
+					opponentId: "house-1",
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		if (url.endsWith("/v1/matches/match-789/state")) {
+			return new Response(
+				JSON.stringify({
+					state: {
+						stateVersion: 3,
+						status: "active",
+						game: createInitialState(1, undefined, ["agent-789", "house-1"]),
+					},
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}
+
+		throw new Error(`Unhandled fetch: ${url}`);
+	}) as typeof fetch;
+
+	try {
+		await runTesterBetaJourney({
+			baseUrl: "https://api.fightclaw.com",
+			name: "BetaTester",
+			selection: resolveBetaStrategySelection({
+				side: "A",
+			}),
+			adminKey: "admin-key",
+			runnerKey: "runner-key",
+			runnerId: "runner-1",
+			moveTimeoutMs: 4000,
+			runMatchImpl: async (_client, options) => {
+				assert.equal(typeof options.resolveTimeoutFallbackMove, "function");
+				capturedResolver = options.resolveTimeoutFallbackMove;
+				return {
+					matchId: "match-789",
+					transport: "sse",
+					reason: "match_ended",
+					winnerAgentId: "agent-789",
+					loserAgentId: "house-1",
+				};
+			},
+		});
+
+		assert.ok(capturedResolver);
+		const move = await capturedResolver({
+			matchId: "match-789",
+			stateVersion: 3,
+		});
+		assert.ok(move);
+		assert.ok(move.action === "end_turn" || move.action === "pass");
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test("beta move provider caps a player-turn at three actions before forcing end_turn", async () => {
 	let game = createInitialState(7, undefined, ["agent-a", "agent-b"]);
 	let stateVersion = 1;

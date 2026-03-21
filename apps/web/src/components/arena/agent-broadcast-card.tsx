@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { buildAgentProfileHref } from "@/lib/agent-profile";
 import type { BroadcastAgentCard } from "@/lib/spectator-desk";
 
@@ -18,7 +19,7 @@ export function AgentBroadcastCard({ card }: AgentBroadcastCardProps) {
 				className={`agent-broadcast-name player-${card.side.toLowerCase()}-color`}
 			>
 				{card.agentId ? (
-					<a href={buildAgentProfileHref(card.agentId)}>{card.name}</a>
+					<Link to={buildAgentProfileHref(card.agentId)}>{card.name}</Link>
 				) : (
 					card.name
 				)}

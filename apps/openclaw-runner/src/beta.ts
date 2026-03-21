@@ -260,12 +260,24 @@ const selectLegalFallbackMove = (
 	);
 };
 
+const selectLegalTerminalFallbackMove = (
+	state: Awaited<ReturnType<ArenaClient["getMatchState"]>>,
+): Move | null => {
+	const game = state.state?.game;
+	if (!game || typeof game !== "object") return null;
+	return selectPreferredLegalFallbackMove(
+		listLegalMoves(game as Parameters<typeof listLegalMoves>[0]).filter(
+			(move) => move.action === "end_turn" || move.action === "pass",
+		),
+	);
+};
+
 const createTimeoutFallbackResolver =
 	(client: ArenaClient) =>
 	async ({ matchId }: MoveProviderContext): Promise<Move | null> => {
 		const state = await client.getMatchState(matchId).catch(() => null);
 		if (!state) return null;
-		return selectLegalFallbackMove(state);
+		return selectLegalTerminalFallbackMove(state);
 	};
 
 const extractGatewayGameState = (

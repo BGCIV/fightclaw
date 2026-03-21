@@ -86,7 +86,7 @@ This spec uses explicit hex types so setup/victory can be derived from board dat
 - `lumber_camp`
 - `crown`
 - `stronghold_a` (Player A strongholds: `B2`, `H2`)
-- `stronghold_b` (Player B strongholds: `B20`, `H20`)
+- `stronghold_b` (Player B strongholds: runtime `B17`, `H17`; canonical-source `B20`, `H20`)
 - `deploy_a`
 - `deploy_b`
 
@@ -141,6 +141,8 @@ Token mapping from the block to this spec's hex types:
 - `STRONGHOLD_B` -> `stronghold_b`
 - `DEPLOY_A` -> `deploy_a`
 - `DEPLOY_B` -> `deploy_b`
+
+The terrain matrix below is shown in the older 21-column canonical-source coordinate space. Before runtime use, map canonical columns through `BOARD_17_CANONICAL_COL_MAP` to the current 17-column board.
 
 ```
 ROW A:
@@ -281,8 +283,8 @@ Player A:
 - `A-6` archer at `C2`
 
 Player B:
-- `B-1` infantry at `B20`
-- `B-2` infantry at `H20`
+- `B-1` infantry at runtime `B17` (canonical-source `B20`)
+- `B-2` infantry at runtime `H17` (canonical-source `H20`)
 - `B-3` infantry at `G20`
 - `B-4` cavalry at `B19`
 - `B-5` cavalry at `H19`
@@ -364,7 +366,7 @@ All actions are deterministic and validated strictly.
 ### 9.1 MoveSchema (wire)
 
 ```ts
-type HexId = string; // "A1".."I21"
+type HexId = string; // runtime "A1".."I17"; canonical-source docs may still show mapped 21-column coordinates
 
 type Move =
 	| { action: "move"; unitId: string; to: HexId; reasoning?: string }
@@ -475,7 +477,7 @@ Ranged attacks never move the attacker.
 ### 10.1 Stronghold capture (instant)
 
 After end-of-player-turn control update:
-- Player A wins if both `B20` and `H20` are controlled by A.
+- Player A wins if both runtime B strongholds (`B17` and `H17`) are controlled by A.
 - Player B wins if both `B2` and `H2` are controlled by B.
 
 ### 10.2 Elimination (instant)

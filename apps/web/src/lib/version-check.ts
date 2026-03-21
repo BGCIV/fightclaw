@@ -22,10 +22,11 @@ export function shouldProbeServerVersion(
 ) {
 	if (!serverUrl) return false;
 	try {
+		const windowOriginNorm = new URL(windowOrigin).origin;
 		const serverOrigin = new URL(serverUrl).origin;
 		if (!isDev) return true;
-		if (serverOrigin === windowOrigin) return true;
-		if (isLocalOrigin(serverOrigin) && isLocalOrigin(windowOrigin)) {
+		if (serverOrigin === windowOriginNorm) return true;
+		if (isLocalOrigin(serverOrigin) && isLocalOrigin(windowOriginNorm)) {
 			return false;
 		}
 		return true;

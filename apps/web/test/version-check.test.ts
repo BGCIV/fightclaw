@@ -23,6 +23,16 @@ describe("shouldProbeServerVersion", () => {
 		).toBe(true);
 	});
 
+	test("normalizes window origin before same-origin comparisons in dev", () => {
+		expect(
+			shouldProbeServerVersion(
+				"http://127.0.0.1:3101",
+				"http://127.0.0.1:3101/",
+				true,
+			),
+		).toBe(true);
+	});
+
 	test("keeps remote cross-origin probes enabled in dev", () => {
 		expect(
 			shouldProbeServerVersion(

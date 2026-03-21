@@ -11,7 +11,6 @@ describe("integration", () => {
 			seed: 42,
 			players: [makeGreedyBot("P1"), makeAggressiveBot("P2")],
 			maxTurns: 600,
-			autofixIllegal: true,
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});
 		expect(result.turns).toBeGreaterThan(0);
@@ -24,7 +23,6 @@ describe("integration", () => {
 			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
 			maxTurns: 200,
 			record: true,
-			autofixIllegal: true,
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});
 
@@ -49,7 +47,6 @@ describe("integration", () => {
 			seed: 1,
 			players: [makeAggressiveBot("P1"), makeAggressiveBot("P2")],
 			maxTurns: 600,
-			autofixIllegal: true,
 			scenario: "midfield",
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});
@@ -90,7 +87,6 @@ describe("integration", () => {
 			seed: 7,
 			players: [makeBatchAttackBot("P1"), makeBatchAttackBot("P2")],
 			maxTurns: 600,
-			autofixIllegal: true,
 			scenario: "midfield",
 			engineConfig: { turnLimit: 40, actionsPerTurn: 7 },
 		});

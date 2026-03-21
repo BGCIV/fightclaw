@@ -186,12 +186,7 @@ export function buildDevSpectatorLabModel(
 
 	const tickerItems = buildTickerItems(tickerCount, seed);
 	const projection = buildSpectatorDeskProjection({
-		connectionStatus:
-			scenario.id === "replay-snapshot"
-				? "replay"
-				: scenario.id === "terminal-board"
-					? "live"
-					: "live",
+		connectionStatus: scenario.id === "replay-snapshot" ? "replay" : "live",
 		featured,
 		state,
 		thoughtsA,

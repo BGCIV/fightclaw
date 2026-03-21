@@ -4,6 +4,7 @@ import { AgentProfileContent } from "../src/components/agent-profile-content";
 import { AgentBroadcastCard } from "../src/components/arena/agent-broadcast-card";
 import { LeaderboardTable } from "../src/components/leaderboard-table";
 import { buildAgentProfileHref } from "../src/lib/agent-profile";
+import { renderWithRouterToStaticMarkup } from "./render-with-router";
 
 describe("agent profile helpers and views", () => {
 	test("builds a stable agent profile href", () => {
@@ -81,8 +82,9 @@ describe("agent profile helpers and views", () => {
 		expect(markup).toContain("Kai");
 	});
 
-	test("renders broadcast cards as profile links when agent id exists", () => {
-		const markup = renderToStaticMarkup(
+	test("renders broadcast cards as profile links when agent id exists", async () => {
+		const markup = await renderWithRouterToStaticMarkup(
+			"/",
 			<AgentBroadcastCard
 				card={{
 					side: "A",

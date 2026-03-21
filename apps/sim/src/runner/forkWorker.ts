@@ -89,7 +89,6 @@ process.on("message", async (msg: WorkerMessage) => {
 					maxTurns: msg.maxTurns,
 					verbose: false,
 					record: false,
-					autofixIllegal: true,
 					engineConfig: msg.engineConfig,
 					scenario: msg.harnessOptions?.scenario,
 					invalidPolicy: msg.harnessOptions?.invalidPolicy,

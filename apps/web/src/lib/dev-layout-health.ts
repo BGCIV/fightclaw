@@ -110,15 +110,22 @@ export function evaluateDevLayoutHealth(
 function getSeverity(
 	shares: DevLayoutHealth["shares"],
 ): DevLayoutHealthSeverity {
-	if (shares.board <= 0.5 || shares.chrome >= 0.35) {
+	const boardRisk = 0.5;
+	const boardWatch = 0.65;
+	const boardClear = 0.7;
+	const chromeRisk = 0.35;
+	const chromeWatch = 0.18;
+	const chromeClear = 0.25;
+
+	if (shares.board <= boardRisk || shares.chrome >= chromeRisk) {
 		return "risk";
 	}
 
-	if (shares.board >= 0.7 && shares.chrome <= 0.25) {
+	if (shares.board >= boardClear && shares.chrome <= chromeClear) {
 		return "clear";
 	}
 
-	if (shares.board <= 0.65 || shares.chrome >= 0.18) {
+	if (shares.board <= boardWatch || shares.chrome >= chromeWatch) {
 		return "watch";
 	}
 

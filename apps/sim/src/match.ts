@@ -13,7 +13,6 @@ export async function playMatch(opts: {
 	maxTurns: number;
 	verbose?: boolean;
 	record?: boolean;
-	autofixIllegal?: boolean;
 	enableDiagnostics?: boolean;
 	engineConfig?: import("./types").EngineConfigInput;
 	scenario?: ScenarioName;

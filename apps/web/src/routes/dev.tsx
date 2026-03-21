@@ -78,6 +78,7 @@ type DevMeasuredLayout = {
 };
 
 type DevActionLogEntry = {
+	id: string;
 	label: string;
 	player: "A" | "B" | null;
 	turn: number | null;
@@ -91,12 +92,14 @@ function deriveReplaySide(playerId: string): "A" | "B" | null {
 }
 
 function buildActionLogEntry(
+	id: string,
 	label: string,
 	player: "A" | "B" | null,
 	turn: number | null,
 	tone: DevActionLogEntry["tone"],
 ): DevActionLogEntry {
 	return {
+		id,
 		label,
 		player,
 		turn,
@@ -207,7 +210,7 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 		enqueue(envelope, { postState: result.state });
 		setActionLog((prev) =>
 			[
-				buildActionLogEntry(
+				createLogEntry(
 					`[${moveCount + 1}] sandbox: ${move.action}${"unitId" in move ? ` ${move.unitId}` : ""}`,
 					boardState.activePlayer,
 					boardState.turn,
@@ -228,6 +231,8 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 				const moves = listLegalMoves(state);
 				if (moves.length === 0) break;
 				const move = moves[Math.floor(Math.random() * moves.length)] as Move;
+				const actingPlayer = state.activePlayer;
+				const actingTurn = state.turn;
 				const result = applyMove(state, move);
 				if (!result.ok) break;
 				state = result.state;
@@ -250,10 +255,10 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 				enqueue(envelope, { postState: state });
 				setActionLog((prev) =>
 					[
-						buildActionLogEntry(
+						createLogEntry(
 							`[${mc}] sandbox: ${move.action}${"unitId" in move ? ` ${move.unitId}` : ""}`,
-							state.activePlayer === "A" ? "B" : "A",
-							state.turn,
+							actingPlayer,
+							actingTurn,
 							"neutral",
 						),
 						...prev,
@@ -275,8 +280,23 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 	const [actionLog, setActionLog] = useState<DevActionLogEntry[]>([]);
 	const [logExpanded, setLogExpanded] = useState(false);
 	const [replayError, setReplayError] = useState<string | null>(null);
+	const nextActionLogIdRef = useRef(1);
 	const playIntervalRef = useRef<number | null>(null);
 	const replayStateRef = useRef<MatchState | null>(null);
+	function createLogEntry(
+		label: string,
+		player: "A" | "B" | null,
+		turn: number | null,
+		tone: DevActionLogEntry["tone"],
+	) {
+		return buildActionLogEntry(
+			`log-${nextActionLogIdRef.current++}`,
+			label,
+			player,
+			turn,
+			tone,
+		);
+	}
 
 	const selectedMatch = bundle?.matches[selectedMatchIdx] ?? null;
 	const selectedLabScenario = useMemo(
@@ -458,9 +478,10 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 			replayStateRef.current ?? bindReplayState(selectedMatch);
 		const result = applyMove(replayState, step.move);
 		if (!result.ok) {
+			setReplayPlaying(false);
 			setActionLog((prev) =>
 				[
-					buildActionLogEntry(
+					createLogEntry(
 						`[${replayPly}] ERR: ${result.error}`,
 						deriveReplaySide(step.playerID),
 						replayState.turn,
@@ -492,7 +513,7 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 		const moveText = `${step.move.action}${step.move.action === "move" || step.move.action === "attack" ? ` ${step.move.unitId}` : ""}`;
 		setActionLog((prev) =>
 			[
-				buildActionLogEntry(
+				createLogEntry(
 					`[${replayPly}] ${step.playerID}: ${moveText}`,
 					deriveReplaySide(step.playerID),
 					replayState.turn,
@@ -625,15 +646,6 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 	);
 
 	// ── Derived ─────────────────────────────────────────────────────────
-	const unitCountA = useMemo(
-		() => boardState.players.A.units.length,
-		[boardState.players.A.units.length],
-	);
-	const unitCountB = useMemo(
-		() => boardState.players.B.units.length,
-		[boardState.players.B.units.length],
-	);
-
 	const _topBarRight =
 		mode === "lab" ? (
 			<span className="muted">
@@ -650,6 +662,15 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 		);
 
 	const stageModel = mode === "lab" ? labModel : advancedStage;
+	const visibleState = stageModel.state;
+	const unitCountA = useMemo(
+		() => visibleState.players.A.units.length,
+		[visibleState.players.A.units.length],
+	);
+	const unitCountB = useMemo(
+		() => visibleState.players.B.units.length,
+		[visibleState.players.B.units.length],
+	);
 	const stageTickerVisibleLimit =
 		mode === "lab"
 			? Math.max(8, stageModel.tickerItems.length)
@@ -1159,10 +1180,8 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 													className={`dev-panel-log ${logExpanded ? "" : "dev-panel-log-collapsed"}`}
 												>
 													{logExpanded ? (
-														actionLog.map((entry, i) => (
-															<div key={`log-${actionLog.length - i}`}>
-																{entry.label}
-															</div>
+														actionLog.map((entry) => (
+															<div key={entry.id}>{entry.label}</div>
 														))
 													) : actionLog.length > 0 ? (
 														<div style={{ opacity: 0.6 }}>
@@ -1184,26 +1203,26 @@ export function DevLayout(props?: { initialMode?: DevMode }) {
 						<div className="dev-panel-label">State</div>
 						<div className="dev-panel-row">
 							<span className="dev-panel-stat-label">
-								{boardState.status === "active" ? (
+								{visibleState.status === "active" ? (
 									<span className="dev-panel-stat-accent">active</span>
 								) : (
-									boardState.status
+									visibleState.status
 								)}
 							</span>
-							<span className="dev-panel-stat-label">T{boardState.turn}</span>
+							<span className="dev-panel-stat-label">T{visibleState.turn}</span>
 							<span className="dev-panel-stat-label">
 								<span
 									className={
-										boardState.activePlayer === "A"
+										visibleState.activePlayer === "A"
 											? "player-a-color"
 											: "player-b-color"
 									}
 								>
-									{boardState.activePlayer}
+									{visibleState.activePlayer}
 								</span>
 							</span>
 							<span className="dev-panel-stat-label">
-								AP {boardState.actionsRemaining}
+								AP {visibleState.actionsRemaining}
 							</span>
 							<span className="player-a-color">{unitCountA}u</span>
 							<span className="player-b-color">{unitCountB}u</span>

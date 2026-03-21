@@ -430,19 +430,6 @@ export const runMatch = async (
 			value: moveProviderTimeoutFallbackMove,
 		};
 		try {
-			void Promise.resolve(options.resolveTimeoutFallbackMove?.(moveContext))
-				.then((fallback) => {
-					if (fallback) {
-						timeoutFallbackState.value = fallback;
-					}
-				})
-				.catch(() => {
-					// Keep the configured fallback if the resolver fails.
-				});
-		} catch {
-			// Keep the configured fallback if the resolver throws synchronously.
-		}
-		try {
 			return await Promise.race([
 				options.moveProvider.nextMove(moveContext).then((move) => {
 					if (moveSettled) return move;
@@ -457,15 +444,26 @@ export const runMatch = async (
 				}),
 				new Promise<Move>((resolveTimeout) => {
 					timeout = setTimeout(() => {
-						moveSettled = true;
-						const fallbackMove = timeoutFallbackState.value;
-						emitMoveResolution(options, {
-							outcome: "provider_timeout",
-							fallbackUsed: true,
-							fallbackKind: classifyFallbackKind(fallbackMove),
-							moveAction: fallbackMove.action,
-						});
-						resolveTimeout(fallbackMove);
+						void (async () => {
+							moveSettled = true;
+							try {
+								const fallback =
+									await options.resolveTimeoutFallbackMove?.(moveContext);
+								if (fallback) {
+									timeoutFallbackState.value = fallback;
+								}
+							} catch {
+								// Keep the configured fallback if the resolver fails.
+							}
+							const fallbackMove = timeoutFallbackState.value;
+							emitMoveResolution(options, {
+								outcome: "provider_timeout",
+								fallbackUsed: true,
+								fallbackKind: classifyFallbackKind(fallbackMove),
+								moveAction: fallbackMove.action,
+							});
+							resolveTimeout(fallbackMove);
+						})();
 					}, moveProviderTimeoutMs);
 				}),
 			]);

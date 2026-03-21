@@ -917,6 +917,73 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		expect(stopStream).toHaveBeenCalledTimes(1);
 	});
 
+	it("does not resolve timeout fallback unless the provider actually times out", async () => {
+		const stopStream = vi.fn();
+		const submitMove = vi.fn(async () => ({
+			ok: true as const,
+			state: {
+				stateVersion: 1,
+				status: "ended" as const,
+				winnerAgentId: "agent-a",
+				endReason: "terminal",
+			},
+		}));
+		const subscribeMatchStream = vi.fn(
+			async (
+				matchId: string,
+				handler: (event: Parameters<typeof handler>[0]) => Promise<void>,
+			) => {
+				queueMicrotask(() => {
+					void handler({
+						eventVersion: 2,
+						eventId: 1,
+						ts: "2026-03-18T12:00:00.000Z",
+						matchId,
+						stateVersion: 0,
+						event: "your_turn",
+						payload: {},
+					});
+				});
+				return stopStream;
+			},
+		);
+		const resolveTimeoutFallbackMove = vi.fn(async () => ({ action: "pass" }));
+
+		const client = {
+			me: vi.fn(async () => ({ agentId: "agent-a" })),
+			queueJoin: vi.fn(async () => ({
+				status: "ready" as const,
+				matchId: "match-1",
+				opponentId: "agent-b",
+			})),
+			waitForMatch: vi.fn(),
+			getMatchState: vi.fn(async () => ({
+				state: {
+					stateVersion: 0,
+					status: "active" as const,
+				},
+			})),
+			submitMove,
+			subscribeMatchStream,
+		};
+
+		const session = createRunnerSession(client as never);
+		await session.start();
+
+		await runMatch(client as never, {
+			moveProvider: {
+				nextMove: vi.fn(async () => ({ action: "end_turn" })),
+			},
+			moveProviderTimeoutMs: 50,
+			resolveTimeoutFallbackMove,
+			session,
+		});
+
+		expect(resolveTimeoutFallbackMove).not.toHaveBeenCalled();
+		expect(submitMove).toHaveBeenCalledTimes(1);
+		expect(stopStream).toHaveBeenCalledTimes(1);
+	});
+
 	it("falls back to authoritative terminal state after repeated reconnects at the same cursor", async () => {
 		vi.useFakeTimers();
 		try {

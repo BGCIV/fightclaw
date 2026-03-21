@@ -2,9 +2,9 @@ export function getUsageText(): string {
 	return [
 		"Usage:",
 		"  tsx src/cli.ts single  --seed 1 --maxTurns 200 --verbose --log --logFile ./match.json",
-		"  tsx src/cli.ts single  --autofix",
+		"  tsx src/cli.ts single",
 		"  tsx src/cli.ts replay  --logFile ./match.json",
-		"  tsx src/cli.ts tourney --games 200 --seed 1 --maxTurns 200 --autofix",
+		"  tsx src/cli.ts tourney --games 200 --seed 1 --maxTurns 200",
 		"  tsx src/cli.ts mass    --games 10000 --parallel 4 --output ./results",
 		"  tsx src/cli.ts analyze --input ./results [--json]",
 		"  tsx src/cli.ts dashboard --input ./results --output ./dashboard.html",

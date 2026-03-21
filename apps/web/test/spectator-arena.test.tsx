@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { createInitialState } from "@fightclaw/engine";
-import { renderToStaticMarkup } from "react-dom/server";
 
 import { SpectatorArena } from "../src/components/arena/spectator-arena";
+import { renderWithRouterToStaticMarkup } from "./render-with-router";
 
 describe("SpectatorArena broadcast desk", () => {
-	test("renders featured status, broadcast cards, ticker items, and a result band", () => {
+	test("renders featured status, broadcast cards, ticker items, and a result band", async () => {
 		const state = createInitialState(11, undefined, ["Alpha", "Bravo"]);
 
-		const markup = renderToStaticMarkup(
+		const markup = await renderWithRouterToStaticMarkup(
+			"/",
 			<SpectatorArena
 				statusBadge="LIVE"
 				state={state}

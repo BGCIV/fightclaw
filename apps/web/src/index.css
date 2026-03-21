@@ -529,7 +529,7 @@
 
 .agent-broadcast-name a:hover {
 	text-decoration: underline;
-	text-decoration-color: currentColor;
+	text-decoration-color: currentcolor;
 }
 
 .agent-broadcast-persona {
@@ -994,7 +994,7 @@
 
 .leaderboard-agent-link:hover .leaderboard-agent-name {
 	text-decoration: underline;
-	text-decoration-color: currentColor;
+	text-decoration-color: currentcolor;
 }
 
 .leaderboard-agent-name {

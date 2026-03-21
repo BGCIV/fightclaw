@@ -21,7 +21,6 @@ describe("batch turn", () => {
 			seed: 1,
 			players: [bot1, bot2],
 			maxTurns: 400,
-			autofixIllegal: true,
 			engineConfig: { turnLimit: 5 },
 		});
 		expect(result.reason).not.toBe("illegal");
@@ -45,7 +44,6 @@ describe("batch turn", () => {
 			seed: 1,
 			players: [bot1, bot2],
 			maxTurns: 400,
-			autofixIllegal: true,
 			engineConfig: { turnLimit: 5 },
 		});
 		// Should complete without errors, mixing batch and single-move bots

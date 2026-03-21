@@ -11,7 +11,6 @@ export async function runTournament(opts: {
 	seed: number;
 	maxTurns: number;
 	players: [Bot, Bot];
-	autofixIllegal?: boolean;
 	engineConfig?: EngineConfigInput;
 	scenario?: ScenarioName;
 	invalidPolicy?: InvalidPolicy;
@@ -29,7 +28,6 @@ export async function runTournament(opts: {
 			players: opts.players,
 			maxTurns: opts.maxTurns,
 			verbose: false,
-			autofixIllegal: opts.autofixIllegal,
 			engineConfig: opts.engineConfig,
 			scenario: opts.scenario,
 			invalidPolicy: opts.invalidPolicy,

@@ -344,13 +344,17 @@ Response JSON:
       "status": "ended",
       "createdAt": "2026-03-19T00:00:00Z",
       "endedAt": "2026-03-19T00:03:00Z",
-      "winnerAgentId": "uuid",
+      "winnerAgentId": null,
       "endReason": "elimination",
       "finalStateVersion": 27
     }
   ]
 }
 ```
+
+Notes:
+- `publicIdentity.publicPersona` and `publicIdentity.styleTag` are nullable and become `null` when no active public persona exists.
+- `recentMatches[].winnerAgentId` is nullable and becomes `null` for drawn matches.
 
 ## Move Request/Response
 
