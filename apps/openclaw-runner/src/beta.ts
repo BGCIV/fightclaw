@@ -353,8 +353,20 @@ export const createBetaMoveProvider = (
 	};
 
 	return {
-		nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
-			const state = await client.getMatchState(matchId);
+		nextMove: async (context: MoveProviderContext) => {
+			const { matchId, stateVersion } = context;
+			const useCache =
+				context.lastKnownGame !== undefined &&
+				context.lastKnownGameVersion === stateVersion;
+			const state = useCache
+				? ({
+						state: {
+							stateVersion,
+							status: "active" as const,
+							game: context.lastKnownGame,
+						},
+					} as unknown as Awaited<ReturnType<ArenaClient["getMatchState"]>>)
+				: await client.getMatchState(matchId);
 			const game = extractGatewayGameState(state);
 			const nextTurnKey = buildMoveProviderTurnKey(matchId, game);
 			if (turnKey !== nextTurnKey) {
@@ -479,8 +491,20 @@ export const createMoveProvider = (
 	agentName: string,
 	gatewayCmd?: string,
 ): MoveProvider => ({
-	nextMove: async ({ matchId, stateVersion }: MoveProviderContext) => {
-		const state = await client.getMatchState(matchId);
+	nextMove: async (context: MoveProviderContext) => {
+		const { matchId, stateVersion } = context;
+		const useCache =
+			context.lastKnownGame !== undefined &&
+			context.lastKnownGameVersion === stateVersion;
+		const state = useCache
+			? ({
+					state: {
+						stateVersion,
+						status: "active" as const,
+						game: context.lastKnownGame,
+					},
+				} as unknown as Awaited<ReturnType<ArenaClient["getMatchState"]>>)
+			: await client.getMatchState(matchId);
 		if (gatewayCmd) {
 			try {
 				const gateway = await invokeGateway(gatewayCmd, {

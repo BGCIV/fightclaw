@@ -618,13 +618,13 @@ export const createMoveProvider = (
 				context.lastKnownGameVersion === stateVersion;
 
 			const state = useCache
-				? {
+				? ({
 						state: {
 							stateVersion,
 							status: "active" as const,
 							game: context.lastKnownGame,
 						},
-					}
+					} as unknown as Awaited<ReturnType<typeof client.getMatchState>>)
 				: await client.getMatchState(matchId);
 
 			const game = (state.state?.game ?? null) as {
