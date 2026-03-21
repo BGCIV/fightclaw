@@ -191,6 +191,30 @@ export const bindRunnerAgent = async (
 	}
 };
 
+export const revokeRunnerAgent = async (
+	baseUrl: string,
+	runnerKey: string,
+	runnerId: string,
+	agentId: string,
+) => {
+	const res = await fetch(
+		`${baseUrl}/v1/internal/runners/agents/${agentId}/revoke`,
+		{
+			method: "POST",
+			headers: {
+				accept: "application/json",
+				"x-runner-key": runnerKey,
+				"x-runner-id": runnerId,
+				"x-request-id": randomUUID(),
+			},
+		},
+	);
+	if (!res.ok) {
+		const body = await res.text();
+		throw new Error(`Failed revoking runner->agent (${res.status}): ${body}`);
+	}
+};
+
 export const invokeGateway = async (
 	command: string,
 	input: GatewayInvocationInput,

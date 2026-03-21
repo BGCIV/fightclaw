@@ -160,3 +160,39 @@ export async function publishAgentStrategy(input: {
 	}
 	return (await res.json()) as unknown;
 }
+
+export async function fetchActiveAgentStrategy(input: {
+	baseUrl: string;
+	apiKey: string;
+}): Promise<string> {
+	const res = await fetch(
+		`${input.baseUrl}/v1/agents/me/strategy/hex_conquest`,
+		{
+			headers: {
+				accept: "application/json",
+				authorization: `Bearer ${input.apiKey}`,
+				"x-request-id": randomUUID(),
+			},
+		},
+	);
+	if (!res.ok) {
+		const body = await res.text();
+		throw new Error(
+			`Failed fetching active strategy prompt (${res.status}): ${body}`,
+		);
+	}
+
+	const parsed = (await res.json()) as {
+		active?: {
+			privateStrategy?: unknown;
+		};
+	};
+	const privateStrategy = parsed.active?.privateStrategy;
+	if (
+		typeof privateStrategy !== "string" ||
+		privateStrategy.trim().length === 0
+	) {
+		throw new Error("Active strategy prompt is missing privateStrategy.");
+	}
+	return privateStrategy;
+}
