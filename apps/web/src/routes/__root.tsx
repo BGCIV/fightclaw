@@ -12,6 +12,7 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { shouldProbeServerVersion } from "@/lib/version-check";
 
 import "../index.css";
 
@@ -49,6 +50,16 @@ function RootComponent() {
 	useEffect(() => {
 		let active = true;
 		const checkProtocolVersion = async () => {
+			if (
+				typeof window !== "undefined" &&
+				!shouldProbeServerVersion(
+					env.VITE_SERVER_URL,
+					window.location.origin,
+					import.meta.env.DEV,
+				)
+			) {
+				return;
+			}
 			try {
 				const res = await fetch(`${env.VITE_SERVER_URL}/v1/system/version`);
 				if (!res.ok) return;
