@@ -113,6 +113,10 @@ export type MoveProviderContext = {
 	agentId: string;
 	matchId: string;
 	stateVersion: number;
+	/** Raw game state from the most recent SSE "state" event, if version matches. */
+	lastKnownGame?: unknown;
+	/** stateVersion of the cached lastKnownGame. */
+	lastKnownGameVersion?: number;
 };
 
 export type MoveProvider = {
