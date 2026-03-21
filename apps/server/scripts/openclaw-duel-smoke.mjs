@@ -681,7 +681,8 @@ const main = async () => {
 					ok: true,
 					matchId: observedMatchId,
 					stateVersion: finalState.json?.state?.stateVersion ?? null,
-					logDir: logFiles.dir,
+					logDir: process.env.SMOKE_KEEP_LOGS === "1" ? logFiles.dir : null,
+					logDirKept: process.env.SMOKE_KEEP_LOGS === "1",
 				},
 				null,
 				2,
@@ -729,7 +730,7 @@ const main = async () => {
 		if (cli) cli.stop();
 		server.stop();
 		await sleep(500);
-		if (success) {
+		if (success && process.env.SMOKE_KEEP_LOGS !== "1") {
 			rmSync(logFiles.dir, { recursive: true, force: true });
 		}
 	}
