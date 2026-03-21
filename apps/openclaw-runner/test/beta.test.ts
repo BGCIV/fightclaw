@@ -437,6 +437,7 @@ test("tester beta journey prints the final match summary with URLs", async () =>
 			onProgress: (line) => progress.push(line),
 			runMatchImpl: async (_client, options) => {
 				assert.ok(options.session);
+				assert.equal(typeof options.resolveTimeoutFallbackMove, "function");
 				const started = await options.session.start();
 				assert.equal(started.matchId, "match-789");
 				return {

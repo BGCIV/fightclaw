@@ -1,3 +1,4 @@
+import { createInitialState, listLegalMoves } from "@fightclaw/engine";
 import { describe, expect, it, vi } from "vitest";
 import { ArenaHttpError } from "../../../packages/agent-client/src/errors";
 import {
@@ -807,7 +808,13 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		expect(stopStream).toHaveBeenCalledTimes(1);
 	});
 
-	it("falls back to pass when move provider exceeds timeout", async () => {
+	it("uses a non-terminal legal fallback when move provider exceeds timeout", async () => {
+		const game = createInitialState(1, undefined, ["agent-a", "agent-b"]);
+		const expectedFallback =
+			listLegalMoves(game).find(
+				(move) => move.action !== "end_turn" && move.action !== "pass",
+			) ?? listLegalMoves(game)[0];
+		const outcomeEvents: Array<Record<string, unknown>> = [];
 		const stopStream = vi.fn();
 		const subscribeMatchStream = vi.fn(
 			async (
@@ -830,8 +837,17 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		);
 
 		const submitMove = vi.fn(
-			async (_matchId: string, payload: { move: { action: string } }) => {
-				expect(payload.move.action).toBe("pass");
+			async (
+				_matchId: string,
+				payload: { move: { action: string; unitId?: string; to?: string } },
+			) => {
+				expect(payload.move.action).toBe(expectedFallback?.action);
+				if (expectedFallback && "unitId" in expectedFallback) {
+					expect(payload.move.unitId).toBe(expectedFallback.unitId);
+				}
+				if (expectedFallback && "to" in expectedFallback) {
+					expect(payload.move.to).toBe(expectedFallback.to);
+				}
 				return {
 					ok: true as const,
 					state: {
@@ -852,6 +868,13 @@ describe("agent-client runMatch canonical SSE flow", () => {
 				opponentId: "agent-b",
 			})),
 			waitForMatch: vi.fn(),
+			getMatchState: vi.fn(async () => ({
+				state: {
+					stateVersion: 0,
+					status: "active" as const,
+					game,
+				},
+			})),
 			submitMove,
 			subscribeMatchStream,
 		};
@@ -868,8 +891,27 @@ describe("agent-client runMatch canonical SSE flow", () => {
 		await runMatch(client as never, {
 			moveProvider: slowMoveProvider,
 			moveProviderTimeoutMs: 5,
+			resolveTimeoutFallbackMove: async () => expectedFallback ?? null,
+			onMoveResolution: (event) =>
+				outcomeEvents.push(event as unknown as Record<string, unknown>),
 		});
 
+		expect(outcomeEvents).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					outcome: "provider_timeout",
+					fallbackUsed: true,
+					fallbackKind: "non_terminal",
+				}),
+			]),
+		);
+		expect(outcomeEvents).not.toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					outcome: "provider_success",
+				}),
+			]),
+		);
 		expect(submitMove).toHaveBeenCalledTimes(1);
 		expect(slowMoveProvider.nextMove).toHaveBeenCalledTimes(1);
 		expect(stopStream).toHaveBeenCalledTimes(1);
