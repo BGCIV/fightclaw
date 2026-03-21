@@ -50,3 +50,4 @@ Use this when adding/refactoring code or validating behavior changes.
 - Durable tests can intermittently fail with isolated-storage issues in Miniflare.
 - `apps/sim` focused tests use Bun path-style file arguments, so prefer the package scripts above over ad hoc shell variants.
 - Treat durable failures as best-effort unless explicitly required for gating.
+- For local browser checks, start both `pnpm run dev:web` and `pnpm run dev:server` first. The web app expects `VITE_SERVER_URL` to resolve to a live local server, and `/dev` or spectator checks can look healthy while still logging backend connection failures if the server is not running.

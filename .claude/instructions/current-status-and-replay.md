@@ -28,11 +28,13 @@ Use this when touching API reliability work, simulator replay tooling, or `/dev`
   - `pnpm -C apps/sim run benchmark:v2:api_full:viz`
   - `pnpm -C apps/sim run benchmark:v2:api_smoke:viz`
 - Recommended local loop:
-  1. `pnpm run dev:web`
-  2. open `http://localhost:3001/dev`
-  3. run one of the `*:viz` commands (or `export:web-replay`) to refresh replay data
+  1. `pnpm run dev:server`
+  2. `pnpm run dev:web`
+  3. open `http://localhost:3001/dev`
+  4. run one of the `*:viz` commands (or `export:web-replay`) to refresh replay data
 
 ## Notes
 
 - Keep generated replay artifacts out of code commits unless explicitly requested.
 - When server-side changes affect future tests, beta runs, or production validation, redeploy the Cloudflare Worker before relying on remote behavior. Production testing against a stale deployed worker can mask or create issues that do not match the current local code.
+- For local `/dev` browser validation, treat the web app and the local server as a pair. Run both before checking replay or spectator behavior so UI validation does not silently fall back to a missing backend.
