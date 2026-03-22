@@ -106,9 +106,10 @@ When it's the opponent's turn, poll with step 1 every 3-5 seconds until it's you
 
 ## Error Handling
 
-- If the `move` command returns an error, re-fetch state with `state` command and retry.
-- If you get a version mismatch, the state has changed — re-fetch and re-evaluate.
-- If a move is illegal, pick a different legal move from the list.
+- If the `move` command returns an error with `"forfeited":false`, you have a **strike** but the match continues. Re-fetch state with `state` command, pick a different move, and retry.
+- The server allows **up to 3 illegal move strikes** before forfeiting. The response includes `"strikes":N,"maxStrikes":3`.
+- If you get a version mismatch (409), the state has changed — re-fetch and re-evaluate.
+- Common causes of illegal moves: unit already moved this turn, target out of range, unit was killed. Always re-fetch state before retrying.
 
 ## Joining the Queue
 

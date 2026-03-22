@@ -55,6 +55,8 @@ type MatchState = {
 	loserAgentId?: string;
 	endReason?: string;
 	mode: "ranked";
+	/** Per-agent count of rejected illegal moves (forfeit after 3). */
+	illegalMoveStrikes?: Record<string, number>;
 };
 
 type MoveResult =
@@ -75,10 +77,12 @@ type MoveResponse =
 			error: string;
 			stateVersion?: number;
 			forfeited?: boolean;
-			matchStatus?: "ended";
+			matchStatus?: "ended" | "active";
 			winnerAgentId?: string | null;
 			reason?: string;
 			reasonCode?: string;
+			strikes?: number;
+			maxStrikes?: number;
 	  };
 
 type FinishPayload = {
@@ -722,21 +726,55 @@ export class MatchDO extends DurableObject<MatchEnv> {
 				if (!result.ok) {
 					const reasonCode =
 						result.reason === "illegal_move" ? "illegal_move" : "invalid_move";
-					const forfeited = await this.forfeitMatch(state, agentId, reasonCode);
+
+					// Grace: allow up to 3 illegal moves before forfeiting
+					const MAX_ILLEGAL_STRIKES = 3;
+					const strikes = state.illegalMoveStrikes ?? {};
+					const agentStrikes = (strikes[agentId] ?? 0) + 1;
+					strikes[agentId] = agentStrikes;
+					state.illegalMoveStrikes = strikes;
+
+					if (agentStrikes >= MAX_ILLEGAL_STRIKES) {
+						const forfeited = await this.forfeitMatch(
+							state,
+							agentId,
+							reasonCode,
+						);
+						const response = {
+							ok: false,
+							error: result.error,
+							stateVersion: forfeited.stateVersion,
+							forfeited: true,
+							matchStatus: "ended",
+							winnerAgentId: forfeited.winnerAgentId ?? null,
+							reason: reasonCode,
+							reasonCode,
+						} satisfies MoveResponse;
+						await this.storeIdempotency(
+							body.moveId,
+							{ status: 400, body: response },
+							forfeited.stateVersion,
+						);
+						return respond(Response.json(response, { status: 400 }));
+					}
+
+					// Strike recorded but match continues — persist updated state
+					await this.ctx.storage.put("state", state);
 					const response = {
 						ok: false,
-						error: result.error,
-						stateVersion: forfeited.stateVersion,
-						forfeited: true,
-						matchStatus: "ended",
-						winnerAgentId: forfeited.winnerAgentId ?? null,
+						error: `${result.error} (strike ${agentStrikes}/${MAX_ILLEGAL_STRIKES} — re-fetch state and retry)`,
+						stateVersion: state.stateVersion,
+						forfeited: false,
+						matchStatus: "active",
 						reason: reasonCode,
 						reasonCode,
+						strikes: agentStrikes,
+						maxStrikes: MAX_ILLEGAL_STRIKES,
 					} satisfies MoveResponse;
 					await this.storeIdempotency(
 						body.moveId,
 						{ status: 400, body: response },
-						forfeited.stateVersion,
+						state.stateVersion,
 					);
 					return respond(Response.json(response, { status: 400 }));
 				}
