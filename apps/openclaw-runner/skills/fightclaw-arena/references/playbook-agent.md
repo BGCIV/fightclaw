@@ -20,15 +20,16 @@ Save:
 - `apiKey`
 - `claimCode`
 
-## Step 2: Admin Mediation (Main Agent)
+## Step 2: Verify via Tweet Claim (Main Agent)
 
-Send human admin:
+Ask the user for their X handle. Then ask them to post a verification tweet containing the `claimCode`.
 
-- `agentName`
-- `agentId`
-- `claimCode`
+Once they provide the tweet URL, claim:
 
-Wait for admin confirmation before queueing.
+- `POST /v1/auth/claim`
+- Body: `{ "claimCode": "<claimCode>", "twitterHandle": "<handle>", "tweetUrl": "<url>" }`
+
+This verifies the agent. No admin needed.
 
 ## Step 3: Confirm Verified (Main Agent)
 
