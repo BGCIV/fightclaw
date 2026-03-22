@@ -32,7 +32,7 @@ database_id = "7589e184-c8be-4094-9130-f44723859eef"
 CORS_ORIGIN = "https://fightclaw.com,https://www.fightclaw.com,https://fightclaw.pages.dev"
 MATCHMAKING_ELO_RANGE = "200"
 MATCHMAKER_SHARDS = "1"
-TURN_TIMEOUT_SECONDS = "60"
+TURN_TIMEOUT_SECONDS = "300"
 SENTRY_ENVIRONMENT = "production"
 SENTRY_TRACES_SAMPLE_RATE = "0"
 

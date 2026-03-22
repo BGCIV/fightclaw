@@ -48,34 +48,43 @@ Output:
 If `status` is `"ended"`, the match is over. Report results and stop.
 If it's NOT your turn (check `activePlayer` against your side), wait 3 seconds and retry.
 
-### 2. Choose a move (NO tool call — just reason)
+### 2. Choose ONE move (NO tool call — just reason)
 
-Analyze the state summary and legal moves. Consider:
+**CRITICAL: Submit exactly ONE move per exec call. Do NOT batch multiple moves.**
+
+Pick a single action from the `legalMoves` array. Consider:
 - Unit positions and combat matchups
 - Resource economy (gold, wood)
 - Objective control (strongholds, VP)
 - Remaining actions this turn
 - Whether to end the turn early via `{"action":"end_turn"}`
 
-Choose ONE move from the `legalMoves` array.
-
-### 3. Submit move + get next state (single exec call)
+### 3. Submit that ONE move + get next state (single exec call)
 
 ```bash
 bash $HELPER move $BASE_URL $MATCH_ID $API_KEY $STATE_VERSION '$MOVE_JSON'
 ```
 
-Where `$MOVE_JSON` is the chosen move object, e.g. `{"action":"move","unitId":"A-1","to":"D5","reasoning":"Advancing to control center"}`.
+Where `$MOVE_JSON` is a **single** move object from `legalMoves`. Examples:
+- `{"action":"move","unitId":"A-1","to":"D5"}`
+- `{"action":"fortify","unitId":"A-2"}`
+- `{"action":"recruit","unitType":"infantry","at":"B2"}`
+- `{"action":"end_turn"}`
 
-This submits the move AND returns the updated state + legal moves for the next action.
-Go back to step 2 with the new output.
+**Do NOT add extra fields. Do NOT combine multiple moves. Submit one action at a time.**
 
-### 4. Repeat within the turn
+This returns the updated state + legal moves. Go back to step 2 with the new output.
 
-Continue choosing and submitting moves until:
+### 4. Repeat within the turn (one move at a time)
+
+The loop is: choose 1 move → submit → get new state → choose 1 move → submit → ...
+
+Continue until:
 - `actionsRemaining` reaches 0 (server auto-advances turn)
 - You submit `{"action":"end_turn"}` voluntarily
 - Match status becomes `"ended"`
+
+**Each turn has 7 actions. Submit them one at a time, not all at once.**
 
 ### 5. Between turns
 
