@@ -93,16 +93,93 @@ const main = async () => {
 
 	const legalMoves = listLegalMoves(gameState);
 
-	const output = {
-		turn: gameState.turn,
-		activePlayer: gameState.activePlayer,
-		actionsRemaining: gameState.actionsRemaining,
-		status: gameState.status,
-		legalMoveCount: legalMoves.length,
-		legalMoves,
-	};
+	// Compact mode: group moves by unit to reduce output size (~80% smaller)
+	// Instead of 139 individual move objects, produce grouped summaries.
+	const compact = process.argv.includes("--compact");
 
-	process.stdout.write(JSON.stringify(output));
+	if (compact) {
+		const grouped: Record<
+			string,
+			{
+				moveTo?: string[];
+				attackTargets?: string[];
+				canFortify?: boolean;
+				canUpgrade?: boolean;
+			}
+		> = {};
+		const recruitOptions: Array<{ unitType: string; at: string }> = [];
+		let hasEndTurn = false;
+		let hasPass = false;
+
+		const ensureGroup = (id: string) => {
+			if (!grouped[id]) grouped[id] = {};
+			return grouped[id];
+		};
+
+		for (const m of legalMoves) {
+			switch (m.action) {
+				case "move": {
+					const g = ensureGroup(m.unitId);
+					if (!g.moveTo) g.moveTo = [];
+					g.moveTo.push(m.to);
+					break;
+				}
+				case "attack": {
+					const g = ensureGroup(m.unitId);
+					if (!g.attackTargets) g.attackTargets = [];
+					g.attackTargets.push(m.target);
+					break;
+				}
+				case "fortify": {
+					ensureGroup(m.unitId).canFortify = true;
+					break;
+				}
+				case "upgrade": {
+					ensureGroup(m.unitId).canUpgrade = true;
+					break;
+				}
+				case "recruit":
+					recruitOptions.push({ unitType: m.unitType, at: m.at });
+					break;
+				case "end_turn":
+					hasEndTurn = true;
+					break;
+				case "pass":
+					hasPass = true;
+					break;
+			}
+		}
+
+		const units = Object.entries(grouped).map(([unitId, opts]) => ({
+			unitId,
+			...opts,
+		}));
+
+		process.stdout.write(
+			JSON.stringify({
+				turn: gameState.turn,
+				activePlayer: gameState.activePlayer,
+				actionsRemaining: gameState.actionsRemaining,
+				status: gameState.status,
+				legalMoveCount: legalMoves.length,
+				units,
+				recruit: recruitOptions.length > 0 ? recruitOptions : undefined,
+				endTurn: hasEndTurn || undefined,
+				pass: hasPass || undefined,
+			}),
+		);
+	} else {
+		process.stdout.write(
+			JSON.stringify({
+				turn: gameState.turn,
+				activePlayer: gameState.activePlayer,
+				actionsRemaining: gameState.actionsRemaining,
+				status: gameState.status,
+				legalMoveCount: legalMoves.length,
+				legalMoves,
+			}),
+		);
+	}
 };
 
 void main();

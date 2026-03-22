@@ -30,7 +30,7 @@ That is **2 exec calls per action**. Do NOT split these into separate curl + nod
 bash $HELPER state $BASE_URL $MATCH_ID $API_KEY
 ```
 
-Output:
+Output (compact format — moves grouped by unit to save context):
 ```json
 {
   "stateVersion": 12,
@@ -41,8 +41,22 @@ Output:
   "playerA": { "id": "...", "gold": 30, "wood": 5, "vp": 2, "units": 8 },
   "playerB": { "id": "...", "gold": 25, "wood": 3, "vp": 1, "units": 6 },
   "legalMoveCount": 42,
-  "legalMoves": [ { "action": "move", "unitId": "A-1", "to": "D5" }, ... ]
+  "units": [
+    { "unitId": "A-1", "moveTo": ["C3","D4","D5"], "attackTargets": ["E5"], "canFortify": true, "canUpgrade": true },
+    { "unitId": "A-2", "moveTo": ["B3","C4"], "canFortify": true }
+  ],
+  "recruit": [ { "unitType": "infantry", "at": "B2" } ],
+  "endTurn": true
 }
+```
+
+**Reading the compact format:**
+- `units[].moveTo` — cells this unit can move to. Submit as `{"action":"move","unitId":"A-1","to":"D5"}`
+- `units[].attackTargets` — enemy units this unit can attack. Submit as `{"action":"attack","unitId":"A-1","target":"E5"}`
+- `units[].canFortify` — unit can fortify. Submit as `{"action":"fortify","unitId":"A-1"}`
+- `units[].canUpgrade` — unit can upgrade. Submit as `{"action":"upgrade","unitId":"A-1"}`
+- `recruit[]` — available recruit actions. Submit as `{"action":"recruit","unitType":"infantry","at":"B2"}`
+- `endTurn` — you can end your turn. Submit as `{"action":"end_turn"}`
 ```
 
 If `status` is `"ended"`, the match is over. Report results and stop.

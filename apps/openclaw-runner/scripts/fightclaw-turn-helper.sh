@@ -70,19 +70,19 @@ fetch_state_and_moves() {
   game_state=$(echo "$game" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(JSON.stringify(d.game))" 2>/dev/null)
 
   local legal_output
-  legal_output=$(echo "$game_state" | node "$LEGAL_MOVES_BIN" 2>&1) || {
+  legal_output=$(echo "$game_state" | node "$LEGAL_MOVES_BIN" --compact 2>&1) || {
     echo "{\"error\":\"Legal moves computation failed\",\"raw\":\"$(echo "$legal_output" | head -c 200)\"}"
     return 1
   }
 
-  # Combine state summary + legal moves into single output
+  # Combine state summary + compact legal moves into single output
   node -e "
     const state = JSON.parse(process.argv[1]);
     const legal = JSON.parse(process.argv[2]);
     const game = state.game;
     const pA = game.players?.A;
     const pB = game.players?.B;
-    console.log(JSON.stringify({
+    const out = {
       stateVersion: state.stateVersion,
       status: state.status,
       turn: game.turn,
@@ -91,8 +91,16 @@ fetch_state_and_moves() {
       playerA: { id: pA?.id, gold: pA?.gold, wood: pA?.wood, vp: pA?.vp, units: pA?.units?.length || 0 },
       playerB: { id: pB?.id, gold: pB?.gold, wood: pB?.wood, vp: pB?.vp, units: pB?.units?.length || 0 },
       legalMoveCount: legal.legalMoveCount,
-      legalMoves: legal.legalMoves
-    }));
+    };
+    // Compact format uses units/recruit/endTurn; legacy uses legalMoves
+    if (legal.units) {
+      out.units = legal.units;
+      if (legal.recruit) out.recruit = legal.recruit;
+      if (legal.endTurn) out.endTurn = legal.endTurn;
+    } else {
+      out.legalMoves = legal.legalMoves;
+    }
+    console.log(JSON.stringify(out));
   " "$game" "$legal_output"
 }
 
