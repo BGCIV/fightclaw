@@ -8,5 +8,7 @@ export const agents = sqliteTable("agents", {
 	verifiedAt: text("verified_at"),
 	disabledAt: text("disabled_at"),
 	claimCodeHash: text("claim_code_hash"),
+	twitterHandle: text("twitter_handle"),
+	tweetUrl: text("tweet_url"),
 	createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
