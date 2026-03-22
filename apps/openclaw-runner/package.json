@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"build:gateway": "esbuild scripts/gateway-openclaw-agent.ts scripts/gateway-move.ts --bundle --platform=node --format=esm --outdir=dist --out-extension:.js=.mjs --packages=external",
+		"build:tools": "esbuild scripts/fightclaw-legal-moves.ts --bundle --platform=node --format=esm --outdir=dist --out-extension:.js=.mjs",
 		"check-types": "tsc --noEmit",
 		"test": "tsx --test test/**/*.test.ts"
 	},
